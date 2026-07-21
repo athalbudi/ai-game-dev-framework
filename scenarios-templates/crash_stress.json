@@ -1,0 +1,143 @@
+{
+  "scenario_id": "crash_stress",
+  "description": "Stress test universal: tekan berbagai input secara cepat dan berulang untuk mencari crash, hang, atau state corruption. Tidak membutuhkan game state khusus.",
+  "version": "1.0",
+  "tags": ["universal", "stress", "crash-detection", "robustness"],
+  "notes": [
+    "Template ini mencoba menemukan crash yang muncul dari input sequence tidak terduga.",
+    "Sesuaikan action list di setiap repeat block dengan kontrol yang tersedia di game kamu.",
+    "Tambahkan seed_override untuk reproduksi deterministik jika crash ditemukan.",
+    "Jalankan ini setelah setiap fitur besar selesai diimplementasikan."
+  ],
+  "steps": [
+    {
+      "type": "log",
+      "message": "=== CRASH STRESS TEST: Input cepat dan berulang ==="
+    },
+    {
+      "type": "seed_override",
+      "seed": 42,
+      "comment": "Seed deterministik — jika crash ditemukan, jalankan ulang dengan seed ini untuk reproduksi"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 60
+    },
+    {
+      "type": "wait_scene",
+      "scene": "MainMenu",
+      "timeout": 10.0,
+      "comment": "SESUAIKAN: nama scene main menu"
+    },
+    {
+      "type": "screenshot",
+      "name": "stress_01_before_gameplay",
+      "comment": "State sebelum stress test dimulai"
+    },
+
+    {
+      "type": "action",
+      "action": "ui_start_game",
+      "comment": "SESUAIKAN: action masuk ke gameplay"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 120
+    },
+    {
+      "type": "screenshot",
+      "name": "stress_02_gameplay_start"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Fase 1: Input movement berulang (10x) ---"
+    },
+    {
+      "type": "repeat",
+      "count": 10,
+      "steps": [
+        { "type": "action", "action": "move_right", "comment": "SESUAIKAN" },
+        { "type": "wait_frames", "frames": 8 },
+        { "type": "action", "action": "move_left", "comment": "SESUAIKAN" },
+        { "type": "wait_frames", "frames": 8 },
+        { "type": "action", "action": "move_up", "comment": "SESUAIKAN — hapus jika tidak relevan" },
+        { "type": "wait_frames", "frames": 8 },
+        { "type": "action", "action": "move_down", "comment": "SESUAIKAN — hapus jika tidak relevan" },
+        { "type": "wait_frames", "frames": 8 }
+      ]
+    },
+    {
+      "type": "screenshot",
+      "name": "stress_03_after_movement"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Fase 2: Action utama berulang (15x) ---"
+    },
+    {
+      "type": "repeat",
+      "count": 15,
+      "steps": [
+        { "type": "action", "action": "ui_accept", "comment": "SESUAIKAN: action utama (attack, confirm, interact, dll)" },
+        { "type": "wait_frames", "frames": 6 },
+        { "type": "action", "action": "ui_cancel", "comment": "SESUAIKAN: action sekunder (cancel, back, dll)" },
+        { "type": "wait_frames", "frames": 6 }
+      ]
+    },
+    {
+      "type": "screenshot",
+      "name": "stress_04_after_actions"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Fase 3: Spam pause/unpause (10x) ---"
+    },
+    {
+      "type": "repeat",
+      "count": 10,
+      "steps": [
+        { "type": "action", "action": "pause", "comment": "SESUAIKAN — hapus block ini jika belum ada pause" },
+        { "type": "wait_frames", "frames": 5 },
+        { "type": "action", "action": "pause" },
+        { "type": "wait_frames", "frames": 5 }
+      ]
+    },
+    {
+      "type": "screenshot",
+      "name": "stress_05_after_pause_spam"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Fase 4: Input acak campuran (20x) ---"
+    },
+    {
+      "type": "repeat",
+      "count": 20,
+      "steps": [
+        { "type": "action", "action": "move_right" },
+        { "type": "action", "action": "ui_accept" },
+        { "type": "wait_frames", "frames": 3 },
+        { "type": "action", "action": "move_left" },
+        { "type": "action", "action": "ui_cancel" },
+        { "type": "wait_frames", "frames": 3 }
+      ]
+    },
+    {
+      "type": "screenshot",
+      "name": "stress_06_after_mixed_input"
+    },
+    {
+      "type": "write_state",
+      "comment": "Catat game state setelah stress — deteksi state corruption"
+    },
+
+    {
+      "type": "log",
+      "message": "=== CRASH STRESS TEST SELESAI: Tidak ada crash terdeteksi ==="
+    }
+  ]
+}

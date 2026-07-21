@@ -1,0 +1,168 @@
+{
+  "scenario_id": "menu_navigation",
+  "description": "Navigasi semua menu utama yang dapat dicapai dari main menu tanpa crash. Verifikasi bahwa semua tombol navigasi berfungsi dan tidak ada dead end atau crash saat berpindah antar layar.",
+  "version": "1.0",
+  "tags": ["universal", "navigation", "smoke", "ui", "crash-detection"],
+  "notes": [
+    "Template ini tidak membutuhkan game state khusus - berjalan dari fase developing.",
+    "Sesuaikan action names dengan InputMap game kamu.",
+    "Hapus section yang tidak relevan (settings, credits, dll) jika belum diimplementasikan.",
+    "Cocok dijalankan sebagai extended smoke test setelah smoke.json berhasil."
+  ],
+  "steps": [
+    {
+      "type": "log",
+      "message": "=== MENU NAVIGATION: Verifikasi semua menu dapat dicapai ==="
+    },
+    {
+      "type": "wait_frames",
+      "frames": 60
+    },
+    {
+      "type": "wait_scene",
+      "scene": "MainMenu",
+      "timeout": 10.0,
+      "comment": "SESUAIKAN: nama scene main menu"
+    },
+    {
+      "type": "screenshot",
+      "name": "nav_01_main_menu"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Buka Settings ---"
+    },
+    {
+      "type": "action",
+      "action": "ui_open_settings",
+      "comment": "SESUAIKAN: action untuk settings. Hapus block ini jika belum ada."
+    },
+    {
+      "type": "wait_frames",
+      "frames": 30
+    },
+    {
+      "type": "screenshot",
+      "name": "nav_02_settings"
+    },
+    {
+      "type": "assert_no_error",
+      "window_frames": 5,
+      "comment": "Verifikasi tidak ada error saat buka settings"
+    },
+    {
+      "type": "action",
+      "action": "ui_back",
+      "comment": "SESUAIKAN: action untuk kembali"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 20
+    },
+
+    {
+      "type": "log",
+      "message": "--- Buka Credits ---"
+    },
+    {
+      "type": "action",
+      "action": "ui_open_credits",
+      "comment": "SESUAIKAN: action untuk credits. Hapus block ini jika belum ada."
+    },
+    {
+      "type": "wait_frames",
+      "frames": 30
+    },
+    {
+      "type": "screenshot",
+      "name": "nav_03_credits"
+    },
+    {
+      "type": "assert_no_error",
+      "window_frames": 5
+    },
+    {
+      "type": "action",
+      "action": "ui_back"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 20
+    },
+
+    {
+      "type": "log",
+      "message": "--- Masuk gameplay ---"
+    },
+    {
+      "type": "action",
+      "action": "ui_start_game",
+      "comment": "SESUAIKAN: action untuk mulai game"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 120,
+      "comment": "Tunggu transisi ke gameplay"
+    },
+    {
+      "type": "screenshot",
+      "name": "nav_04_gameplay"
+    },
+    {
+      "type": "assert_no_error",
+      "window_frames": 10,
+      "comment": "Verifikasi tidak ada error saat masuk gameplay"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Buka pause menu ---"
+    },
+    {
+      "type": "action",
+      "action": "pause",
+      "comment": "SESUAIKAN: action pause. Hapus jika belum ada."
+    },
+    {
+      "type": "wait_frames",
+      "frames": 20
+    },
+    {
+      "type": "screenshot",
+      "name": "nav_05_pause"
+    },
+    {
+      "type": "assert_no_error",
+      "window_frames": 5
+    },
+
+    {
+      "type": "log",
+      "message": "--- Kembali ke main menu dari pause ---"
+    },
+    {
+      "type": "action",
+      "action": "ui_back_to_menu",
+      "comment": "SESUAIKAN: action kembali ke main menu dari pause"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 60
+    },
+    {
+      "type": "screenshot",
+      "name": "nav_06_back_to_menu"
+    },
+    {
+      "type": "assert_no_error",
+      "window_frames": 10,
+      "comment": "Verifikasi tidak ada error saat kembali ke main menu"
+    },
+
+    {
+      "type": "log",
+      "message": "=== MENU NAVIGATION SELESAI: Semua layar dapat dicapai ==="
+    }
+  ]
+}

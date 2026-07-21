@@ -1,0 +1,101 @@
+{
+  "scenario_id": "progression_check",
+  "description": "Verifikasi bahwa player dapat advance ke level/stage berikutnya. Menguji progression gate, unlock condition, dan state transition dari satu level ke level berikutnya.",
+  "version": "1.0",
+  "tags": ["universal", "progression", "state-transition", "mature-phase"],
+  "notes": [
+    "Template ini membutuhkan game sudah memiliki sistem progression.",
+    "Sesuaikan action 'advance_level' dan assert_state keys dengan sistem game kamu.",
+    "Jika game tidak punya level progression, skip dan gunakan scenario lain.",
+    "Paling berguna di fase developing/mature ketika game_state tersedia."
+  ],
+  "steps": [
+    {
+      "type": "log",
+      "message": "=== PROGRESSION CHECK: Verifikasi player dapat advance ==="
+    },
+    {
+      "type": "wait_frames",
+      "frames": 60
+    },
+    {
+      "type": "write_state",
+      "comment": "Catat state awal sebelum progression"
+    },
+    {
+      "type": "screenshot",
+      "name": "prog_01_before_advance",
+      "comment": "State sebelum advance"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Verifikasi kondisi awal ---"
+    },
+    {
+      "type": "assert_state",
+      "key": "player.is_alive",
+      "op": "is_true",
+      "comment": "SESUAIKAN: verifikasi player masih hidup sebelum advance"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Trigger progression ---"
+    },
+    {
+      "type": "action",
+      "action": "ui_advance",
+      "comment": "SESUAIKAN: action yang men-trigger progression (complete level, next floor, dll)"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 120,
+      "comment": "Tunggu transisi scene/state"
+    },
+    {
+      "type": "screenshot",
+      "name": "prog_02_after_advance",
+      "comment": "State setelah advance"
+    },
+    {
+      "type": "write_state",
+      "comment": "Catat state setelah progression"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Verifikasi progression berhasil ---"
+    },
+    {
+      "type": "assert_state",
+      "key": "session.level",
+      "op": "gt",
+      "expected": 0,
+      "comment": "SESUAIKAN: verifikasi level/stage number bertambah"
+    },
+
+    {
+      "type": "wait_condition",
+      "key": "session.is_transitioning",
+      "op": "is_false",
+      "timeout_sec": 10,
+      "comment": "SESUAIKAN: tunggu transisi selesai jika game punya flag ini"
+    },
+
+    {
+      "type": "screenshot",
+      "name": "prog_03_new_level",
+      "comment": "State di level baru"
+    },
+    {
+      "type": "write_state",
+      "comment": "State final di level baru"
+    },
+
+    {
+      "type": "log",
+      "message": "=== PROGRESSION CHECK SELESAI ==="
+    }
+  ]
+}

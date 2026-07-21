@@ -1,0 +1,135 @@
+{
+  "scenario_id": "save_load",
+  "description": "Save/load integrity test universal: tulis state game, simpan, load ulang, dan verifikasi state identik. Deteksi data loss, corruption, dan serialization bug.",
+  "version": "1.0",
+  "tags": ["universal", "save-load", "persistence", "data-integrity"],
+  "notes": [
+    "Template ini membutuhkan game sudah memiliki sistem save/load.",
+    "Sesuaikan action 'save_game' dan 'load_game' dengan InputMap game kamu.",
+    "assert_state membandingkan field spesifik sebelum dan sesudah load.",
+    "Sesuaikan field di assert_state dengan struktur game_state.json game kamu.",
+    "Jika game belum punya save/load, skip scenario ini dan kembali saat sudah diimplementasikan."
+  ],
+  "steps": [
+    {
+      "type": "log",
+      "message": "=== SAVE/LOAD TEST: Verifikasi integritas data ==="
+    },
+    {
+      "type": "wait_frames",
+      "frames": 60
+    },
+    {
+      "type": "wait_scene",
+      "scene": "MainMenu",
+      "timeout": 10.0,
+      "comment": "SESUAIKAN: nama scene main menu"
+    },
+    {
+      "type": "action",
+      "action": "ui_start_game",
+      "comment": "SESUAIKAN: masuk ke gameplay"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 120
+    },
+    {
+      "type": "screenshot",
+      "name": "saveload_01_before_save",
+      "comment": "State sebelum save"
+    },
+    {
+      "type": "write_state",
+      "comment": "Tulis game_state.json — snapshot sebelum save"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Menyimpan game ---"
+    },
+    {
+      "type": "action",
+      "action": "save_game",
+      "comment": "SESUAIKAN: action untuk save (bisa juga set_state untuk trigger save lewat kode)"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 30,
+      "comment": "Tunggu save selesai ke disk"
+    },
+    {
+      "type": "screenshot",
+      "name": "saveload_02_after_save",
+      "comment": "Konfirmasi save berhasil (biasanya ada notifikasi UI)"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Set state berbeda untuk verifikasi load ---"
+    },
+    {
+      "type": "set_state",
+      "key": "_test_marker",
+      "value": "pre_load_dirty",
+      "comment": "Tandai state sebagai 'kotor' sebelum load untuk verifikasi bahwa load benar-benar menimpa state"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 10
+    },
+
+    {
+      "type": "log",
+      "message": "--- Load game ---"
+    },
+    {
+      "type": "action",
+      "action": "load_game",
+      "comment": "SESUAIKAN: action untuk load game"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 120,
+      "comment": "Tunggu load dan transisi scene selesai"
+    },
+    {
+      "type": "screenshot",
+      "name": "saveload_03_after_load",
+      "comment": "State setelah load — harus identik dengan saveload_01"
+    },
+    {
+      "type": "write_state",
+      "comment": "Tulis game_state.json post-load untuk dibandingkan AI"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Verifikasi integritas data ---"
+    },
+    {
+      "type": "assert_state",
+      "key": "player.level",
+      "op": "gt",
+      "value": 0,
+      "comment": "SESUAIKAN: sesuaikan key dan value dengan struktur game_state game kamu"
+    },
+    {
+      "type": "assert_state",
+      "key": "_test_marker",
+      "op": "ne",
+      "value": "pre_load_dirty",
+      "comment": "Marker dirty tidak boleh ada setelah load — membuktikan load berhasil menimpa state"
+    },
+
+    {
+      "type": "screenshot",
+      "name": "saveload_04_verification",
+      "comment": "State final setelah verifikasi"
+    },
+    {
+      "type": "log",
+      "message": "=== SAVE/LOAD TEST PASSED: Data integrity OK ==="
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+# Generated files
+*.tmp
+*.bak
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node (jika ada dependency management)
+node_modules/
+package-lock.json
+
+# Godot generated (jangan commit cache engine)
+.godot/
+*.import
+*.uid
+
+# Shot outputs (generated, bukan source)
+shots/
+*.png
+*.mp4
+
+# Windows
+$RECYCLE.BIN/
+
+# Editor
+.vscode/
+.idea/
+*.suo
+*.user

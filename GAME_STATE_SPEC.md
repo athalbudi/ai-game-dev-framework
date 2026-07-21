@@ -1,0 +1,249 @@
+# GAME_STATE_SPEC.md
+# Kontrak game_state.json — AI Game Development Framework
+
+Berlaku untuk semua project yang menggunakan framework ini.
+Versi spec: 1.0 | Terakhir diupdate: 2026-07-20
+
+---
+
+## Ringkasan
+
+`game_state.json` adalah file JSON yang ditulis oleh game saat `--shot` mode atau
+`--scenario` mode berjalan. File ini dibaca oleh harness dan autonomous-qa untuk
+memperkaya analisis visual dengan konteks internal game.
+
+File ditulis ke: `user://shots/game_state.json`
+(Godot: `%APPDATA%\Godot\app_userdata\<nama_project>\shots\game_state.json`)
+
+---
+
+## Prinsip Desain
+
+1. **Progressive capability** — harness tidak crash jika file tidak ada.
+   Fase telemetry dideteksi otomatis berdasarkan keberadaan file.
+2. **Schema bebas di luar core** — field universal wajib ada, sisanya bebas.
+3. **Backward compatible** — harness membaca field yang dikenali, ignore sisanya.
+4. **Tidak ada schema enforcement** — game tidak perlu validasi sisi harness.
+
+---
+
+## Fase Telemetry (Auto-detect)
+
+| Fase | Kondisi | Kemampuan AI |
+|---|---|---|
+| `prototype` | Tidak ada PNG, tidak ada `game_state.json` | Tahu game belum bisa di-screenshot |
+| `developing` | Ada PNG, tidak ada `game_state.json` | Analisis visual murni |
+| `mature` | Ada PNG **dan** ada `game_state.json` | Visual + konteks internal game |
+
+---
+
+## Layer 0: Universal Core (WAJIB, semua game)
+
+Field ini wajib ada di setiap implementasi `game_state.json`.
+Jika tidak ada, harness anggap fase `developing`.
+
+```json
+{
+  "schema_version": "1.0",
+  "build": "0.20a",
+  "timestamp": "2026-07-20T17:30:00",
+  "current_scene": "MainMenu",
+  "frame_count": 3600,
+  "error_log": []
+}
+```
+
+### Field Definitions
+
+| Field | Type | Keterangan |
+|---|---|---|
+| `schema_version` | string | Versi spec ini. Saat ini `"1.0"`. |
+| `build` | string | Versi build game. Baca dari konstanta game, jangan hardcode. |
+| `timestamp` | string | ISO 8601. `Time.get_datetime_string_from_system()` di Godot. |
+| `current_scene` | string | Nama scene/layar yang aktif saat `write_state` dipanggil. |
+| `frame_count` | int | `Engine.get_process_frames()` di Godot. Berguna untuk deteksi hang. |
+| `error_log` | array | Array string error yang terjadi selama sesi. Kosong = tidak ada error. |
+
+---
+
+## Layer 1: Session Context (Direkomendasikan)
+
+Field yang membantu AI memahami konteks sesi tanpa game-specific knowledge.
+
+```json
+{
+  "run_active": false,
+  "session_duration_sec": 42.5,
+  "session_events": [
+    { "t": 1.2, "event": "scene_changed", "data": "MainMenu" },
+    { "t": 5.8, "event": "user_action",   "data": "ui_accept" }
+  ]
+}
+```
+
+| Field | Type | Keterangan |
+|---|---|---|
+| `run_active` | bool | Apakah game sedang dalam sesi aktif (run, level, match). |
+| `session_duration_sec` | float | Lama sesi berjalan dalam detik. |
+| `session_events` | array | Array event penting selama sesi untuk replay/debugging. |
+
+### Format `session_events` entry
+
+```json
+{ "t": 1.23, "event": "nama_event", "data": "nilai_opsional" }
+```
+
+`t` = detik sejak game start. `event` = string bebas. `data` = opsional, string atau object.
+
+---
+
+## Layer 2: Player State (Opsional, fase developing+)
+
+Tersedia setelah game memiliki player system. Semua field opsional.
+
+```json
+{
+  "player": {
+    "hp": 80,
+    "max_hp": 100,
+    "hp_pct": 0.8,
+    "level": 3,
+    "position": { "x": 120.5, "y": 340.0 },
+    "state": "idle"
+  }
+}
+```
+
+Tidak ada schema ketat — sesuaikan dengan sistem game. AI akan membaca field yang ada.
+
+---
+
+## Layer 3: World / Environment State (Opsional, fase mature)
+
+```json
+{
+  "world": {
+    "current_level": "dungeon_floor_2",
+    "enemies_alive": 3,
+    "enemies_total": 5,
+    "time_of_day": "night",
+    "flags": ["boss_defeated", "chest_opened"]
+  }
+}
+```
+
+---
+
+## Layer 4: Full Telemetry (Opsional, fase production)
+
+Untuk game yang sudah mature dan ingin full autonomous QA:
+
+```json
+{
+  "economy": {
+    "currency": 150,
+    "resources": { "wood": 20, "stone": 5 }
+  },
+  "inventory": {
+    "items": ["sword", "potion_x2"],
+    "capacity": 10,
+    "used": 3
+  },
+  "progression": {
+    "quests_active": 2,
+    "quests_completed": 5,
+    "achievements": ["first_kill", "speedrunner"]
+  },
+  "combat": {
+    "in_combat": false,
+    "last_damage_dealt": 45,
+    "last_damage_taken": 12
+  },
+  "ai_agents": [
+    { "id": "enemy_01", "state": "patrol", "hp": 60 }
+  ]
+}
+```
+
+---
+
+## Implementasi di Godot 4
+
+### Minimal (fase prototype → developing)
+
+```gdscript
+# Taruh di node main atau autoload
+func _write_game_state() -> void:
+    var state := {
+        "schema_version": "1.0",
+        "build":          "0.1a",           # ganti dengan konstanta build kamu
+        "timestamp":      Time.get_datetime_string_from_system(),
+        "current_scene":  _get_current_scene_name(),
+        "frame_count":    Engine.get_process_frames(),
+        "error_log":      [],
+    }
+    DirAccess.make_dir_recursive_absolute("user://shots")
+    var f := FileAccess.open("user://shots/game_state.json", FileAccess.WRITE)
+    if f:
+        f.store_string(JSON.stringify(state, "\t"))
+        f.close()
+
+func _get_current_scene_name() -> String:
+    # Sesuaikan dengan cara game kamu mengelola scene
+    return get_tree().current_scene.name if get_tree().current_scene else "unknown"
+```
+
+### Dengan GameStateWriter autoload (direkomendasikan)
+
+Install `GameStateWriter.gd` (dari `godot-templates/`) sebagai autoload, lalu:
+
+```gdscript
+func _write_game_state() -> void:
+    GameStateWriter.write({
+        "schema_version": "1.0",
+        "build":          MY_VERSION_CONSTANT,
+        "timestamp":      Time.get_datetime_string_from_system(),
+        "current_scene":  _get_current_scene_name(),
+        "frame_count":    Engine.get_process_frames(),
+        "error_log":      ErrorTracker.get_errors() if has_node("/root/ErrorTracker") else [],
+        # tambah field game-specific di sini
+    })
+```
+
+### Hook ke ScenarioRunner
+
+`ScenarioRunner` mencari method `_write_game_state()` di scene tree secara otomatis
+via `_find_nodes_with_method(get_tree().root, "_write_game_state")`.
+
+Tidak perlu registrasi manual — cukup method ini ada di node manapun di tree.
+
+---
+
+## Debugging: Mengapa game_state.json Tidak Terbaca
+
+1. **Path salah** — pastikan menulis ke `user://shots/game_state.json`, bukan `res://`.
+2. **DirAccess tidak dipanggil** — `user://shots/` harus dibuat dulu sebelum FileAccess.
+3. **JSON tidak valid** — gunakan `JSON.stringify(state, "\t")`, bukan manual concat.
+4. **Ditulis setelah quit** — pastikan `_write_game_state()` dipanggil sebelum `get_tree().quit()`.
+5. **--shot mode tidak trigger write** — pastikan `_write_game_state()` dipanggil di `_shot_tour()`.
+
+---
+
+## Hubungan Tiga Layer Observasi
+
+```
+screenshot (visual)  +  shots-manifest.json (metadata)  +  game_state.json (internal)
+        │                          │                                │
+        ▼                          ▼                                ▼
+  "Layar ini         "Diambil 2 menit setelah      "run_active=true, HP 40%,
+   terlihat rusak"    launch, ada 18 shot total"    3 enemy di field"
+        │                          │                                │
+        └──────────────────────────┴────────────────────────────────┘
+                                   │
+                                   ▼
+                    AI memahami game secara menyeluruh:
+                    visual + timing + internal state
+```
+
+Kombinasi ketiganya memungkinkan analisis yang tidak mungkin dilakukan
+hanya dari screenshot atau hanya dari kode.

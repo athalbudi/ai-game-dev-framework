@@ -1,0 +1,20 @@
+# Normalize line endings
+* text=auto eol=lf
+
+# PowerShell scripts — keep LF
+*.ps1 text eol=lf
+
+# GDScript — keep LF
+*.gd text eol=lf
+
+# JSON
+*.json text eol=lf
+
+# Markdown
+*.md text eol=lf
+
+# Binary files
+*.ttf binary
+*.png binary
+*.zip binary
+*.exe binary

@@ -1,0 +1,46 @@
+{
+  "scenario_id": "smoke",
+  "description": "Smoke test universal: verifikasi game dapat launch, mencapai main menu, dan quit bersih. Tidak membutuhkan sistem game apapun — berlaku untuk semua genre dan engine.",
+  "version": "1.0",
+  "tags": ["universal", "smoke", "launch", "minimal"],
+  "notes": [
+    "Template ini tidak bergantung pada scene, action, atau sistem tertentu.",
+    "Sesuaikan 'wait_scene' dengan nama scene main menu game kamu.",
+    "Scenario ini adalah baseline minimum — jika ini gagal, tidak ada yang bisa dipercaya."
+  ],
+  "steps": [
+    {
+      "type": "log",
+      "message": "=== SMOKE TEST: Verifikasi launch dan main menu ==="
+    },
+    {
+      "type": "wait_frames",
+      "frames": 60,
+      "comment": "Tunggu engine selesai inisialisasi (1 detik di 60fps)"
+    },
+    {
+      "type": "screenshot",
+      "name": "smoke_01_launch",
+      "comment": "Tangkap kondisi awal setelah launch"
+    },
+    {
+      "type": "wait_scene",
+      "scene": "MainMenu",
+      "timeout": 10.0,
+      "comment": "SESUAIKAN: ganti 'MainMenu' dengan nama scene/node root main menu game kamu"
+    },
+    {
+      "type": "screenshot",
+      "name": "smoke_02_main_menu",
+      "comment": "Main menu berhasil dicapai"
+    },
+    {
+      "type": "write_state",
+      "comment": "Tulis game_state jika game mengimplementasikan hook (fase mature)"
+    },
+    {
+      "type": "log",
+      "message": "=== SMOKE TEST PASSED: Game launch dan main menu OK ==="
+    }
+  ]
+}

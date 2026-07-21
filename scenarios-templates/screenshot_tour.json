@@ -1,0 +1,141 @@
+{
+  "scenario_id": "screenshot_tour",
+  "description": "Screenshot tour universal: navigasi ke semua layar utama yang dapat dicapai dari main menu dan ambil screenshot. Menghasilkan dokumentasi visual lengkap state game saat ini.",
+  "version": "1.0",
+  "tags": ["universal", "visual", "tour", "documentation", "regression-baseline"],
+  "notes": [
+    "Template ini dirancang untuk menghasilkan baseline visual pertama dari sebuah game baru.",
+    "Tambahkan atau hapus step sesuai layar yang ada di game kamu.",
+    "Gunakan scenario ini setelah setiap milestone besar untuk update baseline.",
+    "Cocok dijalankan bersama /baseline save setelah selesai."
+  ],
+  "steps": [
+    {
+      "type": "log",
+      "message": "=== SCREENSHOT TOUR: Dokumentasi visual semua layar ==="
+    },
+    {
+      "type": "wait_frames",
+      "frames": 60
+    },
+    {
+      "type": "screenshot",
+      "name": "tour_01_initial_state",
+      "comment": "State awal saat game pertama dibuka"
+    },
+    {
+      "type": "wait_scene",
+      "scene": "MainMenu",
+      "timeout": 10.0,
+      "comment": "SESUAIKAN: nama scene main menu"
+    },
+    {
+      "type": "screenshot",
+      "name": "tour_02_main_menu",
+      "comment": "Main menu — layar utama"
+    },
+    {
+      "type": "write_state",
+      "comment": "Catat state di main menu"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Mencoba membuka Settings ---"
+    },
+    {
+      "type": "action",
+      "action": "ui_open_settings",
+      "comment": "SESUAIKAN: action untuk membuka settings. Hapus block ini jika belum ada."
+    },
+    {
+      "type": "wait_frames",
+      "frames": 30
+    },
+    {
+      "type": "screenshot",
+      "name": "tour_03_settings",
+      "comment": "Layar settings"
+    },
+    {
+      "type": "action",
+      "action": "ui_close",
+      "comment": "SESUAIKAN: action untuk menutup/kembali"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 20
+    },
+
+    {
+      "type": "log",
+      "message": "--- Mencoba masuk ke gameplay ---"
+    },
+    {
+      "type": "action",
+      "action": "ui_start_game",
+      "comment": "SESUAIKAN: action untuk memulai game / new game"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 120,
+      "comment": "Tunggu transisi scene gameplay (2 detik)"
+    },
+    {
+      "type": "screenshot",
+      "name": "tour_04_gameplay_start",
+      "comment": "Kondisi awal gameplay"
+    },
+    {
+      "type": "write_state",
+      "comment": "Catat game state di awal gameplay"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 60
+    },
+    {
+      "type": "screenshot",
+      "name": "tour_05_gameplay_active",
+      "comment": "Gameplay setelah beberapa frame"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Mencoba membuka pause menu ---"
+    },
+    {
+      "type": "action",
+      "action": "pause",
+      "comment": "SESUAIKAN: action pause. Hapus jika belum ada."
+    },
+    {
+      "type": "wait_frames",
+      "frames": 20
+    },
+    {
+      "type": "screenshot",
+      "name": "tour_06_pause_menu",
+      "comment": "Pause menu"
+    },
+    {
+      "type": "action",
+      "action": "pause",
+      "comment": "Unpause"
+    },
+    {
+      "type": "wait_frames",
+      "frames": 20
+    },
+
+    {
+      "type": "log",
+      "message": "=== SCREENSHOT TOUR SELESAI ==="
+    },
+    {
+      "type": "screenshot",
+      "name": "tour_99_final_state",
+      "comment": "State akhir setelah tour"
+    }
+  ]
+}
