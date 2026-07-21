@@ -127,14 +127,14 @@ Buat `screen-index.json` di root project (lihat `GAME_STATE_SPEC.md` untuk forma
 
 ---
 
-## Validasi dengan JIMAT
+## Validated in Production
 
-Framework ini divalidasi menggunakan [JIMAT](https://store.steampowered.com/app/) — roguelite berbasis folklor Indonesia — sebagai studi kasus dari prototype hingga batch playtesting ke-4 (40+ pemain).
+Framework ini divalidasi menggunakan sebuah roguelite indie berbasis folklor Indonesia sebagai studi kasus dari prototype hingga batch playtesting ke-4 (40+ pemain).
 
 Hasil validasi:
 - `--scenario smoke` → pass=8/8 end-to-end
-- `feedback-bridge` → tervalidasi dengan B01/B02/B03 (40 profil)
-- Frequency weighting → tervalidasi dengan simulasi B04 (10 profil, delimiter per profil)
+- `feedback-bridge` → tervalidasi dengan tiga batch playtesting (40 profil)
+- Frequency weighting → tervalidasi dengan simulasi batch ke-4 (10 profil, delimiter per profil)
 - Visual regression → `intentional_changes` annotation berfungsi
 
 ---
