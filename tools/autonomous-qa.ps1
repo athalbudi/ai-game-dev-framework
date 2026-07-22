@@ -260,7 +260,7 @@ function Detect-Anomalies {
     # --- Deteksi 4: State anomalies ---
     $gs = $manifest.game_state
     if ($gs) {
-        $player = $gs.player
+        $player = if ($gs.PSObject.Properties["player"]) { $gs.player } else { $null }
         if ($player) {
             $hp     = if ($player.hp     -ne $null) { [double]$player.hp }     else { -1 }
             $hpMax  = if ($player.hp_max -ne $null) { [double]$player.hp_max } else { -1 }
