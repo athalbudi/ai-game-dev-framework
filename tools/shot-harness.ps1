@@ -179,6 +179,90 @@ if (-not $NoRun) {
     Write-Ok "Godot: $GodotExe"
 }
 
+# -- 4. Preflight: populate Godot class name cache --------------------------------
+# Godot 4.7 hot-reload race condition: saat pertama kali dijalankan dari command
+# line, Godot memicu hot-reload script yang menyebabkan class_name globals tidak
+# ter-register pada saat main.gd di-parse. Ini terjadi karena Godot men-scan
+# perubahan file dan mereload semua script sebelum class registry siap.
+#
+# Solusi: generate global_script_class_cache.cfg secara programatik dari
+# PowerShell sebelum Godot dijalankan. Format file ini sudah diketahui dan
+# stabil di Godot 4.x. Ini menghilangkan dependency pada editor GUI dan membuat
+# harness bisa berjalan dari fresh clone tanpa intervensi manual.
+function Invoke-GodotClassCachePreflight {
+    param([string]$projectPath)
+
+    $cacheDir  = Join-Path $projectPath ".godot"
+    $cacheFile = Join-Path $cacheDir "global_script_class_cache.cfg"
+
+    # Buat .godot/ jika belum ada
+    if (-not (Test-Path -LiteralPath $cacheDir)) {
+        New-Item -ItemType Directory -Path $cacheDir | Out-Null
+    }
+
+    # Scan semua .gd files di project untuk class_name dan extends
+    $gdFiles = @(Get-ChildItem -LiteralPath $projectPath -Filter "*.gd" -Recurse -ErrorAction SilentlyContinue |
+                 Where-Object { $_.FullName -notmatch '\\.godot\\' })
+
+    $entries = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($gd in $gdFiles) {
+        $lines    = Get-Content -LiteralPath $gd.FullName -ErrorAction SilentlyContinue
+        if (-not $lines) { continue }
+
+        $className  = ""
+        $baseClass  = "RefCounted"   # default Godot base
+        $isTool     = $false
+
+        foreach ($line in $lines) {
+            $trimmed = $line.Trim()
+            if ($trimmed -match '^class_name\s+(\w+)') {
+                $className = $Matches[1]
+            }
+            if ($trimmed -match '^extends\s+(\w+)') {
+                $baseClass = $Matches[1]
+            }
+            if ($trimmed -eq '@tool' -or $trimmed -eq 'tool') {
+                $isTool = $true
+            }
+            # Stop setelah menemukan semua yang dibutuhkan atau lewat baris deklarasi awal
+            if ($className -ne "" -and ($trimmed -match '^(func|var|const|signal|enum)\s+')) { break }
+        }
+
+        if ($className -eq "") { continue }
+
+        # Konversi path absolut ke res:// path
+        $relPath = $gd.FullName.Substring($projectPath.Length).Replace("\", "/").TrimStart("/")
+        $resPath = "res://" + $relPath
+
+        $toolStr = if ($isTool) { "true" } else { "false" }
+        $entries.Add(('{' + "`n" +
+            '"base": &"' + $baseClass + '",' + "`n" +
+            '"class": &"' + $className + '",' + "`n" +
+            '"icon": "",' + "`n" +
+            '"is_abstract": false,' + "`n" +
+            '"is_tool": ' + $toolStr + ',' + "`n" +
+            '"language": &"GDScript",' + "`n" +
+            '"path": "' + $resPath + '"' + "`n" +
+            '}'))
+    }
+
+    if ($entries.Count -eq 0) { return }
+
+    # Sort by class name untuk konsistensi
+    $sortedEntries = $entries | Sort-Object { ($_ -split '"class": &"')[1].Split('"')[0] }
+
+    $content = "list=[" + ($sortedEntries -join ", ") + "]"
+    Set-Content -LiteralPath $cacheFile -Value $content -Encoding UTF8 -NoNewline
+
+    Write-Step ("Preflight: $($entries.Count) class_name ter-cache di .godot/global_script_class_cache.cfg")
+}
+
+# Jalankan preflight jika ada .gd files di project
+if (-not $NoRun -and (Test-Path -LiteralPath $ProjectPath)) {
+    Invoke-GodotClassCachePreflight -projectPath $ProjectPath
+}
+
 # -- 4. Jalankan Godot --shot ---------------------------------------------------
 if ($NoRun) {
     Write-Step "-NoRun diset - skip menjalankan Godot, langsung ke post-process zoom"

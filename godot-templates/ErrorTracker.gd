@@ -47,37 +47,58 @@ func _ready() -> void:
 		_scenario_bootstrap.call_deferred()
 
 func _shot_quit_watchdog() -> void:
-	# Watchdog: tunggu shot tour selesai, quit jika main tidak quit sendiri.
-	# --shot tour seharusnya quit via get_tree().quit() di akhir _shot_tour().
-	# Jika hot-reload menghancurkan instance yang memanggil quit(),
-	# watchdog ini memastikan game tetap bersih keluar.
+	# Bootstrap --shot: tunggu hot-reload selesai, lalu trigger _shot_tour di main node.
+	# Pola ini identik dengan _scenario_bootstrap — ErrorTracker sebagai autoload
+	# diload lebih stabil dari main.gd yang bergantung pada class_name globals.
+	# Dengan menunggu beberapa frame, hot-reload selesai dan semua class_name
+	# sudah ter-register sebelum _shot_tour dipanggil.
 	print("[ErrorTracker] --shot watchdog aktif")
-	# Tunggu sampai ada PNG pertama (tanda shot tour mulai)
-	var shotsDir := "user://shots"
-	var maxWaitFrames := 600  # 10 detik untuk mulai
-	var started := false
-	for _i in range(maxWaitFrames):
+
+	# Tunggu hot-reload selesai (4 frame cukup untuk class_name re-register)
+	for _i in range(4):
 		await get_tree().process_frame
-		if DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(shotsDir)):
-			var dir := DirAccess.open(shotsDir)
-			if dir != null:
-				dir.list_dir_begin()
-				var f := dir.get_next()
-				while f != "":
-					if f.ends_with(".png"):
-						started = true
-						break
-					f = dir.get_next()
-				dir.list_dir_end()
-		if started:
+
+	# Cari main node yang punya _shot_tour()
+	var main_node: Node = null
+	for node in get_tree().root.get_children():
+		if node.has_method("_shot_tour"):
+			main_node = node
 			break
-	if not started:
-		print("[ErrorTracker] --shot watchdog: tidak ada PNG setelah 10 detik")
+
+	if main_node == null:
+		print("[ErrorTracker] --shot watchdog: _shot_tour tidak ditemukan di root nodes")
+		# Fallback: tunggu sampai ada PNG atau timeout
+		var shotsDir := "user://shots"
+		var maxWaitFrames := 600
+		var started := false
+		for _i in range(maxWaitFrames):
+			await get_tree().process_frame
+			if DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(shotsDir)):
+				var dir := DirAccess.open(shotsDir)
+				if dir != null:
+					dir.list_dir_begin()
+					var f := dir.get_next()
+					while f != "":
+						if f.ends_with(".png"):
+							started = true
+							break
+						f = dir.get_next()
+					dir.list_dir_end()
+			if started:
+				break
+		if not started:
+			print("[ErrorTracker] --shot watchdog: tidak ada PNG setelah 10 detik")
 		return
-	# Shot tour sudah mulai — tunggu sampai selesai (maksimum 3 menit)
+
+	# Trigger shot tour via ErrorTracker (bukan call_deferred dari main._ready)
+	print("[ErrorTracker] --shot watchdog: memanggil _shot_tour di %s" % main_node.name)
+	main_node._shot_tour.call_deferred()
+
+	# Tunggu shot tour selesai (maksimum 5 menit)
+	var shotsDir := "user://shots"
 	var lastCount := 0
 	var noProgressFrames := 0
-	for _i in range(10800):  # 3 menit di 60fps
+	for _i in range(18000):  # 5 menit di 60fps
 		await get_tree().process_frame
 		var dir := DirAccess.open(shotsDir)
 		var count := 0
@@ -93,12 +114,11 @@ func _shot_quit_watchdog() -> void:
 			noProgressFrames = 0
 		else:
 			noProgressFrames += 1
-		# Jika tidak ada PNG baru selama 5 detik, anggap shot tour selesai
 		if noProgressFrames >= 300:
-			print("[ErrorTracker] --shot watchdog: shot tour selesai (%d PNG), memanggil quit()" % lastCount)
+			print("[ErrorTracker] --shot watchdog: shot tour selesai (%d PNG)" % lastCount)
 			get_tree().quit(0)
 			return
-	print("[ErrorTracker] --shot watchdog: timeout 3 menit")
+	print("[ErrorTracker] --shot watchdog: timeout 5 menit")
 	get_tree().quit(0)
 
 func _scenario_bootstrap() -> void:

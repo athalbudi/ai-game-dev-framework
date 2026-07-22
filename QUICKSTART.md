@@ -36,8 +36,9 @@ Tambahkan ke `main.gd` atau scene utama:
 ```gdscript
 func _ready() -> void:
     if "--shot" in OS.get_cmdline_user_args():
-        await get_tree().process_frame
-        _shot_tour()
+        # Jangan panggil _shot_tour di sini — ErrorTracker yang akan
+        # memanggilnya setelah hot-reload selesai (anti-hotreload pattern)
+        return
 
 func _shot_tour() -> void:
     _take_screenshot("01_main_menu")
@@ -48,6 +49,19 @@ func _take_screenshot(name: String) -> void:
     var img := get_viewport().get_texture().get_image()
     img.save_png("user://shots/%s.png" % name)
 ```
+
+> **Penting:** Jangan panggil `_shot_tour.call_deferred()` dari `_ready()`.
+> `ErrorTracker` sebagai Autoload yang mendeteksi `--shot` dan memanggil `_shot_tour`
+> di main node setelah menunggu hot-reload selesai. Ini menghilangkan dependency pada
+> Godot editor cache dan membuat harness berjalan dari fresh clone tanpa intervensi manual.
+
+> **Godot 4.7 — One-Time Setup Requirement:** Jika project baru pertama kali dijalankan
+> di mesin baru (belum ada `.godot/` cache sama sekali), jalankan Godot editor sekali:
+> ```powershell
+> & "C:\Godot\godot.exe" --path "<project-path>" --editor --quit
+> ```
+> Ini membangun `.godot/global_script_class_cache.cfg` yang dibutuhkan agar `class_name`
+> globals ter-register. Setelah ini, harness berjalan autonomous sepenuhnya.
 
 ### Langkah 3 — Install scenario templates
 
