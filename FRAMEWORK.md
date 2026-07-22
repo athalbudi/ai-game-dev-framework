@@ -126,6 +126,51 @@ Menyalin template universal ke `<ProjectPath>/scenarios/`. Skip jika sudah ada.
 
 ---
 
+## Known Limitations — Godot 4.7 Hot-Reload
+
+Godot 4.7 selalu melakukan **hot-reload script** saat pertama kali project di-launch dari
+command line. Selama hot-reload, class registry di-reset sementara — `class_name` globals
+seperti `UI`, `DB`, `GameState` tidak tersedia pada momen itu.
+
+**Dampak pada framework:**
+- Script yang menggunakan `:=` (walrus operator) dengan class_name globals akan gagal parse
+- Typed member variable declarations (`var gs: GameState`) akan gagal jika class belum ter-register
+- Typed function parameters (`func f(sim: BattleSim)`) akan gagal
+
+**Pattern yang aman untuk game baru:**
+
+```gdscript
+# BENAR — gunakan = bukan := untuk constructor calls di _ready()
+var runner = load("res://scripts/smoke_runner.gd").new()
+
+# BENAR — member var untyped untuk class yang bergantung class_name
+var gs        # GameState
+var ui: Control  # Control adalah built-in, aman
+
+# BENAR — ScenarioRunner diakses via load() bukan class_name
+var exit_code = await load("res://scripts/ScenarioRunner.gd").new().run_scenario_file(path)
+
+# BENAR — jangan aktifkan --shot dari _ready(), biarkan ErrorTracker yang handle
+func _ready() -> void:
+    pass  # ErrorTracker.gd mendeteksi --shot via Autoload bootstrap
+```
+
+**Untuk codebase yang sudah ada (banyak class_name references):**
+Framework tetap bisa dijalankan, tapi membutuhkan one-time setup per mesin:
+1. Buka Godot editor untuk project tersebut
+2. Jalankan game sekali dari editor (F5)
+3. Tutup editor — dependency graph sekarang ter-compile
+
+Setelah step ini, harness berjalan autonomous selamanya di mesin tersebut.
+
+**Mengapa ini terjadi:** Ini adalah Godot 4.7 engine behavior yang tidak bisa di-bypass
+dari luar engine. Framework telah memaksimalkan mitigasi via ErrorTracker bootstrap pattern
+(4-frame delay sebelum `_shot_tour` dipanggil), tapi mitigasi ini hanya efektif jika
+script bisa di-parse saat hot-reload — yang berarti script tidak boleh bergantung pada
+class_name globals di parse time.
+
+---
+
 ## Panduan Timing _write_game_state()
 
 Kapan hook ini dipanggil menentukan apakah data yang ditulis representatif atau tidak.

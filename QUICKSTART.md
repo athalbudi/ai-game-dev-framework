@@ -35,10 +35,10 @@ Tambahkan ke `main.gd` atau scene utama:
 
 ```gdscript
 func _ready() -> void:
-    if "--shot" in OS.get_cmdline_user_args():
-        # Jangan panggil _shot_tour di sini — ErrorTracker yang akan
-        # memanggilnya setelah hot-reload selesai (anti-hotreload pattern)
-        return
+    # --shot dihandle oleh ErrorTracker._shot_quit_watchdog (anti-hotreload pattern)
+    # Jangan panggil _shot_tour di sini — ErrorTracker yang memanggilnya
+    # setelah menunggu hot-reload selesai.
+    pass
 
 func _shot_tour() -> void:
     _take_screenshot("01_main_menu")
@@ -46,22 +46,50 @@ func _shot_tour() -> void:
     get_tree().quit()
 
 func _take_screenshot(name: String) -> void:
-    var img := get_viewport().get_texture().get_image()
+    var img = get_viewport().get_texture().get_image()
     img.save_png("user://shots/%s.png" % name)
 ```
 
-> **Penting:** Jangan panggil `_shot_tour.call_deferred()` dari `_ready()`.
+> **Penting — Godot 4.7 hot-reload pattern:**
+> Jangan panggil `_shot_tour()` atau `_shot_tour.call_deferred()` dari `_ready()`.
 > `ErrorTracker` sebagai Autoload yang mendeteksi `--shot` dan memanggil `_shot_tour`
-> di main node setelah menunggu hot-reload selesai. Ini menghilangkan dependency pada
-> Godot editor cache dan membuat harness berjalan dari fresh clone tanpa intervensi manual.
+> di main node setelah menunggu 4 frame agar hot-reload selesai.
+> Ini adalah **satu-satunya cara** agar harness bisa berjalan autonomous dari command line.
 
-> **Godot 4.7 — One-Time Setup Requirement:** Jika project baru pertama kali dijalankan
-> di mesin baru (belum ada `.godot/` cache sama sekali), jalankan Godot editor sekali:
-> ```powershell
-> & "C:\Godot\godot.exe" --path "<project-path>" --editor --quit
+> **Penting — Hindari `:=` dengan class_name globals:**
+> Godot 4.7 melakukan hot-reload saat pertama kali project di-launch dari command line.
+> Selama hot-reload, `class_name` globals tidak tersedia sementara. Script yang menggunakan
+> `:=` (walrus operator) dengan class_name globals akan gagal parse.
+>
+> **Pola yang aman:**
+> ```gdscript
+> # BENAR — tidak bergantung pada class_name saat parse time
+> var runner = load("res://scripts/smoke_runner.gd").new()
+>
+> # BENAR — method call dalam function body, class_name tidak dipakai di signature
+> func goto_battle() -> void:
+>     var sim = BattleSim.new()  # aman jika BattleSim sudah extends RefCounted/Node
+>
+> # BENAR — tidak ada type annotation pada member var yang bergantung class_name
+> var gs   # GameState — type akan resolved saat runtime
+>
+> # HATI-HATI — :=  dengan method return yang membutuhkan class registry
+> var runner := SmokeRunner.new()  # bisa gagal jika SmokeRunner belum ter-register
 > ```
-> Ini membangun `.godot/global_script_class_cache.cfg` yang dibutuhkan agar `class_name`
-> globals ter-register. Setelah ini, harness berjalan autonomous sepenuhnya.
+>
+> **Aturan sederhana:** gunakan `=` (bukan `:=`) untuk variabel yang nilainya dari
+> constructor atau static method `class_name`, terutama di `_ready()` dan member var
+> declarations di top of file.
+
+> **Godot 4.7 — One-Time Setup per Mesin:**
+> Untuk project yang sudah ada (codebase yang punya banyak `class_name` references),
+> jalankan Godot editor sekali untuk project tersebut agar dependency graph ter-compile:
+> 1. Buka Godot editor untuk project
+> 2. Jalankan game sekali dari editor (F5)
+> 3. Tutup editor
+>
+> Setelah ini, harness berjalan autonomous selamanya di mesin tersebut.
+> Project **baru** yang mengikuti pattern di atas tidak membutuhkan step ini.
 
 ### Langkah 3 — Install scenario templates
 
