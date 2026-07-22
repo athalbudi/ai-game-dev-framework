@@ -588,8 +588,8 @@ if ($NoRun) {
         $runtimeScriptFailed  = 0
         $hotReloadErrors      = 0
         if (Test-Path -LiteralPath $godotLog -ErrorAction SilentlyContinue) {
-            $logLines = Get-Content $godotLog -ErrorAction SilentlyContinue
-            if ($logLines) {
+            $logLines = @(Get-Content $godotLog -ErrorAction SilentlyContinue)
+            if ($logLines.Count -gt 0) {
                 # Parse errors dari GDScript::reload = hot-reload artifact (known Godot 4.7 limitation)
                 $hotReloadErrors = ($logLines | Select-String "GDScript::reload").Count
                 # Parse errors di luar reload context = genuine compile failure
