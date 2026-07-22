@@ -471,9 +471,10 @@ if ($NoRun) {
     }
 
     try {
+        $godotLog = "$env:TEMP\kilo_godot_stderr_$(Get-Date -Format 'yyyyMMddHHmmss').txt"
         $proc = Start-Process -FilePath $GodotExe `
             -ArgumentList "--path", "`"$ProjectPath`"", "--", "--shot" `
-            -PassThru -NoNewWindow
+            -PassThru -NoNewWindow -RedirectStandardError $godotLog
 
         # Pantau proses secara aktif dengan interval $hangCheckSec
         $checkIntervalMs = $hangCheckSec * 1000
@@ -577,6 +578,44 @@ if ($NoRun) {
 
         if ($proc.ExitCode -ne 0) {
             Write-Warn "Godot exit code $($proc.ExitCode) - harness mungkin tidak sempurna."
+        }
+
+        # -- Runtime error classification ----------------------------------------
+        # Baca stderr log Godot untuk mendeteksi parse errors dan classify execution
+        # status secara akurat. Tanpa ini, harness bisa melaporkan "sukses" padahal
+        # script game gagal di-compile dan hanya sebagian layar yang ter-render.
+        $runtimeParseErrors   = 0
+        $runtimeScriptFailed  = 0
+        $hotReloadErrors      = 0
+        if (Test-Path -LiteralPath $godotLog -ErrorAction SilentlyContinue) {
+            $logLines = Get-Content $godotLog -ErrorAction SilentlyContinue
+            if ($logLines) {
+                # Parse errors dari GDScript::reload = hot-reload artifact (known Godot 4.7 limitation)
+                $hotReloadErrors = ($logLines | Select-String "GDScript::reload").Count
+                # Parse errors di luar reload context = genuine compile failure
+                $genuineErrors   = $logLines | Where-Object { $_ -match "Parse Error|Compile Error|Failed to load script" -and $_ -notmatch "GDScript::reload" }
+                $runtimeParseErrors  = @($genuineErrors).Count
+                # Script failed to load entirely = execution is unverified
+                $runtimeScriptFailed = ($logLines | Select-String "Failed to load script").Count
+            }
+            Remove-Item -LiteralPath $godotLog -Force -ErrorAction SilentlyContinue
+        }
+
+        if ($runtimeScriptFailed -gt 0) {
+            Write-Host ""
+            Write-Host ("[shot] WARN Execution status: UNVERIFIED") -ForegroundColor Yellow
+            Write-Host ("       $runtimeScriptFailed script gagal di-load saat runtime.") -ForegroundColor Yellow
+            Write-Host "       PNG yang dihasilkan mungkin tidak merepresentasikan game state yang benar." -ForegroundColor Yellow
+            Write-Host "       Cek error di atas untuk detail script yang gagal." -ForegroundColor Yellow
+            $exitCondition = "unverified"
+        } elseif ($runtimeParseErrors -gt 0) {
+            Write-Host ""
+            Write-Host ("[shot] WARN Execution status: PARTIAL") -ForegroundColor Yellow
+            Write-Host ("       $runtimeParseErrors parse error terdeteksi di runtime (bukan hot-reload).") -ForegroundColor Yellow
+            Write-Host "       Beberapa layar mungkin tidak ter-render dengan benar." -ForegroundColor Yellow
+            $exitCondition = "partial"
+        } elseif ($hotReloadErrors -gt 0) {
+            Write-Warn ("Hot-reload: $hotReloadErrors script di-reload saat startup (Godot 4.7 known limitation — lihat FRAMEWORK.md)")
         }
     } catch {
         $exitCondition = "error"
