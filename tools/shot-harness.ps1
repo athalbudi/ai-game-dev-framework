@@ -470,7 +470,11 @@ if ($NoRun) {
 
         if (-not $finished) {
             # Timeout — kategorikan berdasarkan progress terakhir
-            $secSinceProgress = ([math]::Round(($ts_start - $lastProgressTime + (Get-Date - $ts_start)).TotalSeconds, 1))
+            # Sederhanakan kalkulasi: waktu sejak progress terakhir = now - lastProgressTime
+            $secSinceProgress = 0
+            try {
+                $secSinceProgress = [math]::Round((Get-Date - $lastProgressTime).TotalSeconds, 1)
+            } catch { $secSinceProgress = $Timeout }
             if ($pngCountBefore -eq 0 -and $noProgressSec -gt ($Timeout * 0.8)) {
                 # Tidak ada satu pun PNG yang dihasilkan dan CPU idle lama — likely hang
                 $exitCondition = "timeout_hang"
