@@ -263,6 +263,110 @@ if (-not $NoRun -and (Test-Path -LiteralPath $ProjectPath)) {
     Invoke-GodotClassCachePreflight -projectPath $ProjectPath
 }
 
+# -- 4b. Preflight: deteksi Godot hot-reload risk --------------------------------
+# Scan main scene untuk pola yang diketahui menyebabkan hot-reload parse failure:
+# 1. Typed member var menggunakan class_name (var gs: GameState)
+# 2. Walrus := dengan class_name constructor (var x := ClassName.new())
+# 3. Typed function parameter dengan class_name (func f(sim: BattleSim))
+#
+# Ini tidak memblokir harness — hanya melaporkan warning actionable jika ditemukan.
+function Invoke-HotReloadRiskCheck {
+    param([string]$projectPath)
+
+    $projectGodot = Join-Path $projectPath "project.godot"
+    if (-not (Test-Path -LiteralPath $projectGodot)) { return }
+
+    # Cari main scene dari project.godot
+    $mainScene = ""
+    $projContent = Get-Content -LiteralPath $projectGodot -Raw -ErrorAction SilentlyContinue
+    if ($projContent -match 'run/main_scene="([^"]+)"') {
+        $mainScene = $Matches[1] -replace '^res://', ''
+    }
+    if ($mainScene -eq "") { return }
+
+    # Cari script yang dipakai main scene
+    $mainScenePath = Join-Path $projectPath $mainScene
+    if (-not (Test-Path -LiteralPath $mainScenePath)) { return }
+
+    $sceneContent = Get-Content -LiteralPath $mainScenePath -Raw -ErrorAction SilentlyContinue
+    $scriptFile   = ""
+    if ($sceneContent -match 'script = ExtResource\("[^"]+"\)') {
+        # Cari external resource yang merupakan GDScript
+        if ($sceneContent -match '\[ext_resource[^\]]+path="([^"]+\.gd)"[^\]]*\]') {
+            $scriptFile = $Matches[1] -replace '^res://', ''
+        }
+    }
+    # Fallback: cari .gd dengan nama yang sama dengan scene
+    if ($scriptFile -eq "") {
+        $scriptFile = [System.IO.Path]::ChangeExtension($mainScene, ".gd")
+    }
+
+    $scriptPath = Join-Path $projectPath $scriptFile
+    if (-not (Test-Path -LiteralPath $scriptPath)) { return }
+
+    # Kumpulkan semua class_name dari project
+    $classNames = [System.Collections.Generic.HashSet[string]]::new()
+    $gdFiles = @(Get-ChildItem -LiteralPath $projectPath -Filter "*.gd" -Recurse -ErrorAction SilentlyContinue |
+                 Where-Object { $_.FullName -notmatch '\\.godot\\' })
+    foreach ($gd in $gdFiles) {
+        $firstLines = Get-Content -LiteralPath $gd.FullName -TotalCount 5 -ErrorAction SilentlyContinue
+        foreach ($line in $firstLines) {
+            if ($line -match '^class_name\s+(\w+)') {
+                $null = $classNames.Add($Matches[1])
+            }
+        }
+    }
+    if ($classNames.Count -eq 0) { return }
+
+    # Scan main script untuk pola berisiko
+    $risks = [System.Collections.Generic.List[string]]::new()
+    $scriptLines = Get-Content -LiteralPath $scriptPath -ErrorAction SilentlyContinue
+    $lineNum = 0
+    foreach ($line in $scriptLines) {
+        $lineNum++
+        $trimmed = $line.Trim()
+        foreach ($cn in $classNames) {
+            # Typed member var: var x: ClassName
+            if ($trimmed -match "^var\s+\w+\s*:\s*$cn\b") {
+                $risks.Add("L${lineNum}: typed member var 'var ... : $cn' — gunakan 'var x  # $cn' (untyped)")
+                break
+            }
+            # Walrus := dengan class_name constructor
+            if ($trimmed -match ":=\s*$cn\.") {
+                $risks.Add("L${lineNum}: walrus operator ':= $cn.' — ganti dengan '= $cn.' (untyped)")
+                break
+            }
+            # Typed function parameter
+            if ($trimmed -match "^func\s+\w+.*:\s*$cn\b") {
+                $risks.Add("L${lineNum}: typed param '$cn' di func signature — hapus type annotation")
+                break
+            }
+        }
+        if ($risks.Count -ge 5) {
+            $risks.Add("... (dan lebih banyak lagi — lihat FRAMEWORK.md bagian Known Limitations)")
+            break
+        }
+    }
+
+    if ($risks.Count -eq 0) { return }
+
+    Write-Host ""
+    Write-Host "[shot] WARN Hot-reload risk terdeteksi di $scriptFile" -ForegroundColor Yellow
+    Write-Host "[shot]      Godot 4.7 me-reload script saat launch dari command line." -ForegroundColor Yellow
+    Write-Host "[shot]      Pola berikut bisa menyebabkan parse error saat hot-reload:" -ForegroundColor Yellow
+    foreach ($r in $risks) {
+        Write-Host ("[shot]        " + $r) -ForegroundColor Yellow
+    }
+    Write-Host "[shot]      Solusi:" -ForegroundColor Yellow
+    Write-Host "[shot]        1. Jalankan Godot editor sekali + Play game (F5) untuk compile cache" -ForegroundColor Yellow
+    Write-Host "[shot]        2. Atau ubah pola di atas sesuai QUICKSTART.md Langkah 2" -ForegroundColor Yellow
+    Write-Host ""
+}
+
+if (-not $NoRun -and (Test-Path -LiteralPath $ProjectPath)) {
+    Invoke-HotReloadRiskCheck -projectPath $ProjectPath
+}
+
 # -- 4. Jalankan Godot --shot ---------------------------------------------------
 if ($NoRun) {
     Write-Step "-NoRun diset - skip menjalankan Godot, langsung ke post-process zoom"

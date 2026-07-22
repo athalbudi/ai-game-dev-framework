@@ -10,20 +10,28 @@
       3. visual-diff        -- 3 PNG identik (0 regresi diharapkan)
       4. feedback-bridge    -- global issues fps + audio harus terdeteksi
       5. shot-harness       -- AST parse clean
+      6. shot-harness Godot -- jika -GodotExe tersedia, jalankan golden project nyata
+         dan verifikasi minimal 1 PNG dihasilkan tanpa hot-reload fatal
 
     Exit code 0 = semua PASS, 1 = ada FAIL.
 
 .PARAMETER KeepFixtures
     Jika di-set, jangan hapus folder fixture setelah selesai.
 
+.PARAMETER GodotExe
+    Path ke Godot executable. Jika diset, test #6 (Godot golden project) dijalankan.
+    Contoh: -GodotExe "C:\Godot\godot.exe"
+
 .EXAMPLE
     & "$env:USERPROFILE\.config\kilo\tools\test-pipeline.ps1"
+    & "$env:USERPROFILE\.config\kilo\tools\test-pipeline.ps1" -GodotExe "C:\Godot\godot.exe"
     & "$env:USERPROFILE\.config\kilo\tools\test-pipeline.ps1" -KeepFixtures
 #>
 
 [CmdletBinding()]
 param(
-    [switch] $KeepFixtures
+    [switch] $KeepFixtures,
+    [string] $GodotExe = ""
 )
 
 Set-StrictMode -Version Latest
@@ -275,7 +283,139 @@ try {
 }
 Write-S
 
-# ── Cleanup ────────────────────────────────────────────────────────────────────
+# ── TEST 6: shot-harness dengan Godot golden project ─────────────────────────
+# Hanya dijalankan jika -GodotExe tersedia
+if ($GodotExe -ne "" -and (Test-Path -LiteralPath $GodotExe)) {
+    Write-T "TEST 6: shot-harness + Godot golden project (minimal, anti-hotreload)"
+
+    # Buat golden project minimal yang mengikuti pattern aman
+    $goldenDir = Join-Path $tmpBase "golden_project"
+    $null = New-Item -ItemType Directory -Path $goldenDir -Force
+    $goldenScripts = Join-Path $goldenDir "scripts"
+    $null = New-Item -ItemType Directory -Path $goldenScripts -Force
+
+    # project.godot
+    @"
+[configuration]
+config_version=5
+
+[application]
+config/name="GoldenTest"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.7")
+
+[autoload]
+GameStateWriter="*res://scripts/GameStateWriter.gd"
+ErrorTracker="*res://scripts/ErrorTracker.gd"
+"@ | Set-Content (Join-Path $goldenDir "project.godot") -Encoding UTF8
+
+    # main.tscn
+    @"
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1"]
+
+[node name="Main" type="Node"]
+script = ExtResource("1")
+"@ | Set-Content (Join-Path $goldenDir "main.tscn") -Encoding UTF8
+
+    # main.gd -- mengikuti pattern AMAN: tidak pakai := dengan class_name, tidak pakai typed member var class_name
+    @"
+extends Node
+
+var gs   # GameState -- untyped agar aman saat hot-reload
+
+func _ready() -> void:
+    # --shot dihandle oleh ErrorTracker._shot_quit_watchdog
+    # Jangan panggil _shot_tour dari sini
+    pass
+
+func _shot_tour() -> void:
+    _take_shot("01_main")
+    await get_tree().create_timer(0.1).timeout
+    get_tree().quit(0)
+
+func _take_shot(name: String) -> void:
+    var dir = DirAccess.open("user://")
+    if dir:
+        if not dir.dir_exists("shots"):
+            dir.make_dir("shots")
+    var img = get_viewport().get_texture().get_image()
+    img.save_png("user://shots/%s.png" % name)
+
+func _get_game_state() -> Dictionary:
+    return {"scene": "main", "frame": Engine.get_process_frames()}
+"@ | Set-Content (Join-Path $goldenScripts "main.gd") -Encoding UTF8
+
+    # Copy GameStateWriter dan ErrorTracker dari repo
+    $repoGodot = Join-Path $kiloTools "..\godot-templates"
+    $resolvedGodot = Resolve-Path $repoGodot -ErrorAction SilentlyContinue
+    $repoGodot = if ($resolvedGodot) { $resolvedGodot.Path } else { Join-Path $env:USERPROFILE ".config\kilo\godot-templates" }
+    foreach ($tmpl in @("GameStateWriter.gd", "ErrorTracker.gd")) {
+        $src = Join-Path $repoGodot $tmpl
+        $dst = Join-Path $goldenScripts $tmpl
+        if (Test-Path -LiteralPath $src) {
+            Copy-Item -LiteralPath $src -Destination $dst -Force
+        }
+    }
+
+    # Cek apakah template ter-copy
+    $hasTemplates = (Test-Path (Join-Path $goldenScripts "ErrorTracker.gd")) -and
+                    (Test-Path (Join-Path $goldenScripts "GameStateWriter.gd"))
+
+    if (-not $hasTemplates) {
+        Add-Result "shot-harness Godot golden project" $false "ErrorTracker.gd atau GameStateWriter.gd tidak ditemukan di $repoGodot"
+    } else {
+        try {
+            # Bersihkan shots lama
+            $goldenAppName = "GoldenTest"
+            $goldenShots   = "$env:APPDATA\Godot\app_userdata\$goldenAppName\shots"
+            if (Test-Path $goldenShots) {
+                Remove-Item -LiteralPath $goldenShots -Recurse -Force -ErrorAction SilentlyContinue
+            }
+
+            # Pre-import: bangun .godot/ cache agar hot-reload tidak crash main.gd
+            Write-T "  Pre-import golden project (build Godot cache)..."
+            $importProc = Start-Process -FilePath $GodotExe `
+                -ArgumentList "--path", "`"$goldenDir`"", "--headless", "--import", "--quit" `
+                -PassThru -NoNewWindow -Wait
+            Write-T ("  Import selesai (exit: " + $importProc.ExitCode + ")")
+
+            # Jalankan harness
+            $harnessOut = & $harnessPs1 -ProjectPath $goldenDir -GodotExe $GodotExe -Timeout 60 2>&1
+            $outStr     = $harnessOut -join "`n"
+
+            # Cek apakah ada PNG dihasilkan
+            $pngs = @(Get-ChildItem $goldenShots -Filter "*.png" -ErrorAction SilentlyContinue)
+            $hasCrash = $outStr -match "VariableIsUndefined|cannot be retrieved|PropertyNotFoundStrict"
+
+            if ($hasCrash) {
+                Add-Result "shot-harness Godot golden project" $false "StrictMode crash terdeteksi di harness"
+            } elseif ($pngs.Count -ge 1) {
+                Add-Result "shot-harness Godot golden project" $true "$($pngs.Count) PNG dihasilkan"
+            } else {
+                $hotReloadErr = $outStr -match "GDScript::reload.*Parse Error|Failed to load script"
+                if ($hotReloadErr) {
+                    Add-Result "shot-harness Godot golden project" $false "Hot-reload parse error -- golden project mungkin belum menggunakan pattern aman"
+                } else {
+                    Add-Result "shot-harness Godot golden project" $false "0 PNG dihasilkan (timeout atau game tidak quit)"
+                }
+            }
+        } catch {
+            Add-Result "shot-harness Godot golden project" $false ("Exception: " + $_)
+        }
+    }
+    Write-S
+} else {
+    if ($GodotExe -ne "") {
+        Write-T "TEST 6: SKIP -- GodotExe tidak ditemukan: $GodotExe"
+    } else {
+        Write-T "TEST 6: SKIP -- -GodotExe tidak diset (tambahkan -GodotExe untuk test Godot)"
+    }
+    Write-S
+}
+
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
