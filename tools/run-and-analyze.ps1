@@ -399,6 +399,10 @@ if ($scenarioResult -ne $null) {
 
     if ($scenarioResult.status -eq "pass") {
         Write-Ok "Semua step scenario berhasil"
+    } elseif ($scenarioResult.status -eq "error") {
+        $errMsg = if ($scenarioResult.PSObject.Properties["error"]) { $scenarioResult.error } else { "unknown error" }
+        Write-Warn "Scenario error (bukan step fail): $errMsg"
+        $analysis.critical_issues += "Scenario error: $errMsg"
     } else {
         Write-Warn "$srFailed step gagal"
     }
