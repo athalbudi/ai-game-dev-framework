@@ -591,12 +591,12 @@ if ($NoRun) {
             $logLines = @(Get-Content $godotLog -ErrorAction SilentlyContinue)
             if ($logLines.Count -gt 0) {
                 # Parse errors dari GDScript::reload = hot-reload artifact (known Godot 4.7 limitation)
-                $hotReloadErrors = ($logLines | Select-String "GDScript::reload").Count
+                $hotReloadErrors = @($logLines | Select-String "GDScript::reload").Count
                 # Parse errors di luar reload context = genuine compile failure
-                $genuineErrors   = $logLines | Where-Object { $_ -match "Parse Error|Compile Error|Failed to load script" -and $_ -notmatch "GDScript::reload" }
-                $runtimeParseErrors  = @($genuineErrors).Count
+                $genuineErrors   = @($logLines | Where-Object { $_ -match "Parse Error|Compile Error|Failed to load script" -and $_ -notmatch "GDScript::reload" })
+                $runtimeParseErrors  = $genuineErrors.Count
                 # Script failed to load entirely = execution is unverified
-                $runtimeScriptFailed = ($logLines | Select-String "Failed to load script").Count
+                $runtimeScriptFailed = @($logLines | Select-String "Failed to load script").Count
             }
             Remove-Item -LiteralPath $godotLog -Force -ErrorAction SilentlyContinue
         }
