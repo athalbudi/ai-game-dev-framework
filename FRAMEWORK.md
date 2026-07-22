@@ -137,12 +137,19 @@ yang bergantung pada class tersebut gagal parse.
 
 | Pendekatan | Hasil | Keterangan |
 |---|---|---|
-| `--import --quit-after 2` | Cache terisi, tapi tidak membantu | Cache hanya untuk editor autocomplete, tidak dibaca runtime |
+| `--import --quit-after 2` | Cache terisi 13 classes (UI, DB, GameState, dll.) — tapi main.gd tetap gagal parse | Cache terisi dengan benar, tapi tidak cukup untuk main scene entry point |
 | `--headless --editor --quit` | Cache kosong | Editor quit sebelum `update_scripts_classes` selesai |
 | Buka Godot editor + Play (F5) | Works permanen | Membangun dependency graph internal yang dibaca runtime |
 
-**`global_script_class_cache.cfg` tidak mengontrol hot-reload** — ini terkonfirmasi: mengisi
-file tersebut via `--import` atau secara programatik tidak mencegah parse error saat runtime.
+**Catatan penting tentang `global_script_class_cache.cfg`:**
+Cache ini diisi dengan benar oleh `--import` dan berisi semua class yang dibutuhkan (`UI`, `DB`,
+`GameState`, dll.). Namun untuk **main scene entry point** di Godot 4.7, mengisi cache via `--import`
+terbukti tidak cukup — `main.gd` tetap gagal parse dengan error yang sama. Ini berbeda dari
+penggunaan `--import` di CI/CD untuk autoload atau plugin script (seperti GUT) di mana `--import`
+memang efektif. Perbedaan spesifik antara main scene execution path vs autoload/plugin path
+di Godot 4.7 belum sepenuhnya terdokumentasi, tapi efeknya terukur: populate cache via `--import`
+tidak setara dengan one-time editor+F5 setup untuk kasus main scene dengan banyak class_name
+dependency.
 
 **Dampak pada framework:**
 Script yang menggunakan typed member variable declarations (`var gs: GameState`) atau
