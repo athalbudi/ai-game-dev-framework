@@ -51,7 +51,7 @@ Tidak terikat pada game tertentu, engine tertentu, atau struktur folder tertentu
 
 | File | Deskripsi |
 |---|---|
-| `ScenarioRunner.gd` | Scenario engine (33 step types) — di-load oleh ErrorTracker, bukan Autoload |
+| `ScenarioRunner.gd` | Scenario engine (16 step types) — di-load oleh ErrorTracker, bukan Autoload |
 | `GameStateWriter.gd` | Autoload: scene tracking via `report_scene()` + `_write_game_state()` hook |
 | `InputRecorder.gd` | Autoload untuk merekam input gameplay manual ke recording JSON |
 | `RecordingConverter.gd` | Konversi file rekaman ke scenario JSON untuk bug reproduction |

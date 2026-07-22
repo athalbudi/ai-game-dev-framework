@@ -83,23 +83,34 @@ $totalProfil = $profiles.Count
 Write-Bridge ("MinScore: " + $MinScore + " | MinProfil: " + $MinProfil + " | TopN: " + $TopN)
 
 # --- Resolve ShotsDir ---
+# Prioritas: 1) shots_dir dari screen-index, 2) manifest, 3) fallback nama project
 $shotsDir = ""
-$manifestPath = Join-Path $ProjectPath "shots-manifest.json"
-if (-not (Test-Path $manifestPath)) {
-    $projectName = (Split-Path $ProjectPath -Leaf).ToUpper()
-    $godotShots  = "$env:APPDATA\Godot\app_userdata\$projectName\shots"
-    if (Test-Path "$godotShots\shots-manifest.json") {
-        $manifestPath = "$godotShots\shots-manifest.json"
+if ($index.PSObject.Properties.Name -contains "shots_dir" -and $index.shots_dir -ne "") {
+    if (Test-Path $index.shots_dir) {
+        $shotsDir = $index.shots_dir
+        Write-Bridge ("ShotsDir: " + $shotsDir + " (dari screen-index)")
     }
 }
-if (Test-Path $manifestPath) {
-    try {
-        $manifest = Get-Content $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        $shotsDir = $manifest.shots_dir
-        Write-Bridge ("ShotsDir: " + $shotsDir + " (dari manifest)")
-    } catch {}
+if ($shotsDir -eq "") {
+    $manifestPath = Join-Path $ProjectPath "shots-manifest.json"
+    if (-not (Test-Path $manifestPath)) {
+        $projectName = (Split-Path $ProjectPath -Leaf).ToUpper()
+        $godotShots  = "$env:APPDATA\Godot\app_userdata\$projectName\shots"
+        if (Test-Path "$godotShots\shots-manifest.json") {
+            $manifestPath = "$godotShots\shots-manifest.json"
+        }
+    }
+    if (Test-Path $manifestPath) {
+        try {
+            $manifest = Get-Content $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($manifest.PSObject.Properties.Name -contains "shots_dir" -and (Test-Path $manifest.shots_dir)) {
+                $shotsDir = $manifest.shots_dir
+                Write-Bridge ("ShotsDir: " + $shotsDir + " (dari manifest)")
+            }
+        } catch {}
+    }
 }
-if ($shotsDir -eq "" -or -not (Test-Path $shotsDir)) {
+if ($shotsDir -eq "") {
     $projectName = (Split-Path $ProjectPath -Leaf).ToUpper()
     $fallback    = "$env:APPDATA\Godot\app_userdata\$projectName\shots"
     if (Test-Path $fallback) {
@@ -153,38 +164,71 @@ function Resolve-ShotPath {
     return $null
 }
 
-# Helper: baca resolution_status dari issue jika ada
+# Helper: baca resolution status dari resolutions array (skema baru) atau
+# resolution_status langsung di issue (skema lama)
 function Get-ResolutionStatus {
-    param($issue)
+    param($issue, $resolutions)
+    # Skema baru: cari di array $resolutions berdasarkan issue_id
+    if ($resolutions -and $issue.PSObject.Properties.Name -contains "issue_id") {
+        $match = $resolutions | Where-Object {
+            $_.PSObject.Properties.Name -contains "issue_id" -and $_.issue_id -eq $issue.issue_id
+        } | Select-Object -First 1
+        if ($match) { return $match.status }
+    }
+    # Skema lama: resolution_status langsung di objek issue
     if ($issue.PSObject.Properties.Name -contains "resolution_status") {
         return $issue.resolution_status
     }
     return $null
 }
 
-# --- Match global issues ---
-$globalMatches = @()
-if ($index.PSObject.Properties.Name -contains "feedback_keywords_global") {
-    foreach ($prop in $index.feedback_keywords_global.PSObject.Properties) {
-        $issue       = $prop.Value
-        $kwResult    = Get-KeywordScore -text $feedbackLower -keywords $issue.keywords
-        $prResult    = Get-ProfilCount  -profilList $profiles -keywords $issue.keywords
-        $resolution  = Get-ResolutionStatus $issue
+# Muat resolutions array dari index jika ada (skema baru)
+$indexResolutions = if ($index.PSObject.Properties.Name -contains "resolutions") { @($index.resolutions) } else { @() }
 
-        # Filter: harus memenuhi MinScore DAN MinProfil
-        if ($kwResult.score -ge $MinScore -and $prResult.count -ge $MinProfil) {
-            $pct = if ($totalProfil -gt 0) { [math]::Round($prResult.count * 100.0 / $totalProfil) } else { 0 }
-            $globalMatches += [PSCustomObject]@{
-                issue_id        = $prop.Name
-                score           = $kwResult.score
-                profil_count    = $prResult.count
-                profil_total    = $totalProfil
-                profil_pct      = $pct
-                matched_kw      = $kwResult.matched
-                screens         = $issue.screens
-                components      = $issue.components
-                resolution      = $resolution
-            }
+# --- Match global issues ---
+# Suport skema baru (global_issues array) dan skema lama (feedback_keywords_global object)
+$globalMatches = @()
+$globalIssueList = @()
+if ($index.PSObject.Properties.Name -contains "global_issues") {
+    # Skema baru: array of { issue_id, keywords, screens, components }
+    foreach ($issue in $index.global_issues) {
+        $globalIssueList += [PSCustomObject]@{
+            issue_id   = $issue.issue_id
+            keywords   = @($issue.keywords)
+            screens    = if ($issue.PSObject.Properties.Name -contains "screens")    { $issue.screens }    else { @() }
+            components = if ($issue.PSObject.Properties.Name -contains "components") { $issue.components } else { @() }
+        }
+    }
+} elseif ($index.PSObject.Properties.Name -contains "feedback_keywords_global") {
+    # Skema lama: object dengan property nama = issue_id
+    foreach ($prop in $index.feedback_keywords_global.PSObject.Properties) {
+        $issue = $prop.Value
+        $globalIssueList += [PSCustomObject]@{
+            issue_id   = $prop.Name
+            keywords   = @($issue.keywords)
+            screens    = if ($issue.PSObject.Properties.Name -contains "screens")    { $issue.screens }    else { @() }
+            components = if ($issue.PSObject.Properties.Name -contains "components") { $issue.components } else { @() }
+        }
+    }
+}
+
+foreach ($issue in $globalIssueList) {
+    $kwResult   = Get-KeywordScore -text $feedbackLower -keywords $issue.keywords
+    $prResult   = Get-ProfilCount  -profilList $profiles -keywords $issue.keywords
+    $resolution = Get-ResolutionStatus $issue $indexResolutions
+
+    if ($kwResult.score -ge $MinScore -and $prResult.count -ge $MinProfil) {
+        $pct = if ($totalProfil -gt 0) { [math]::Round($prResult.count * 100.0 / $totalProfil) } else { 0 }
+        $globalMatches += [PSCustomObject]@{
+            issue_id        = $issue.issue_id
+            score           = $kwResult.score
+            profil_count    = $prResult.count
+            profil_total    = $totalProfil
+            profil_pct      = $pct
+            matched_kw      = $kwResult.matched
+            screens         = $issue.screens
+            components      = $issue.components
+            resolution      = $resolution
         }
     }
 }
@@ -207,7 +251,9 @@ foreach ($screen in $index.screens) {
             $screenMatched += $kwResult.matched
             $isGap     = $comp.PSObject.Properties.Name -contains "gap" -and $comp.gap -eq $true
             $gapDesc   = if ($comp.PSObject.Properties.Name -contains "gap_description") { $comp.gap_description } else { "" }
-            $keyIssues = if ($comp.PSObject.Properties.Name -contains "key_feedback_issues") { $comp.key_feedback_issues } else { @() }
+            # Suport kedua nama field: key_issues (skema baru template) dan key_feedback_issues (skema lama)
+            $keyIssues = if ($comp.PSObject.Properties.Name -contains "key_issues")          { $comp.key_issues }          `
+                         elseif ($comp.PSObject.Properties.Name -contains "key_feedback_issues") { $comp.key_feedback_issues } else { @() }
             $componentHits += [PSCustomObject]@{
                 name        = $comp.name
                 description = $comp.description
@@ -256,10 +302,12 @@ foreach ($sm in $screenMatches) {
     foreach ($ch in $sm.comp_hits) { if ($ch.is_gap) { $gapCount++ } }
 }
 
-$summaryText = ("" + $globalMatches.Count + " masalah, " +
-                $screenMatches.Count + " screen relevan, " +
+# Bungkus dalam @() agar .Count selalu numerik di PS 5.1 —
+# PS 5.1 meng-unwrap array 1-elemen menjadi scalar sehingga .Count kosong tanpa pembungkus ini.
+$summaryText = ("" + @($globalMatches).Count + " masalah, " +
+                @($screenMatches).Count + " screen relevan, " +
                 $totalProfil + " profil, " +
-                $allShots.Count + " screenshot, " +
+                @($allShots).Count + " screenshot, " +
                 $gapCount + " gap")
 
 if ($OutputJson) {
@@ -289,7 +337,7 @@ Write-Host ("  Profil: " + $totalProfil + "  Mode: " + $(if ($totalProfil -gt 1)
 Write-Host "========================================================" -ForegroundColor DarkGray
 Write-Host ""
 
-if ($globalMatches.Count -gt 0) {
+if (@($globalMatches).Count -gt 0) {
     Write-Host "MASALAH YANG TERIDENTIFIKASI:" -ForegroundColor Yellow
     foreach ($gi in $globalMatches) {
         $label = "[" + $gi.profil_count + "/" + $gi.profil_total + " profil = " + $gi.profil_pct + "%]"
@@ -305,7 +353,7 @@ if ($globalMatches.Count -gt 0) {
     Write-Host ""
 }
 
-if ($screenMatches.Count -gt 0) {
+if (@($screenMatches).Count -gt 0) {
     Write-Host "LAYAR YANG RELEVAN:" -ForegroundColor Yellow
     foreach ($sm in $screenMatches) {
         $label = "[" + $sm.profil_count + "/" + $totalProfil + " = " + $sm.profil_pct + "%]"

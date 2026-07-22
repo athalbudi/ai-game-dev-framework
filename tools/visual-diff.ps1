@@ -71,12 +71,13 @@
 
 [CmdletBinding()]
 param(
-    [string] $ShotsDir     = "",
-    [string] $BaselineDir  = "",
-    [string] $Against      = "",
-    [double] $Threshold    = 1.0,
-    [string] $ImageMagick  = "",
-    [string] $IgnoreConfig = ""
+    [string] $ShotsDir            = "",
+    [string] $BaselineDir         = "",
+    [string] $Against             = "",
+    [double] $Threshold           = 1.0,
+    [string] $ImageMagick         = "",
+    [string] $IgnoreConfig        = "",
+    [string] $NormalizeResolution = ""
 )
 
 Set-StrictMode -Version Latest
@@ -138,7 +139,7 @@ if (Test-Path -LiteralPath $baselineManifestPath) {
 # -- 2c. Load ignore_regions --------------------------------------------------
 # Baca dari IgnoreConfig (parameter) atau auto-detect dari shots.zoom.json
 $ignoreRegions = @()   # array of { src, x, y, w, h, reason }
-$ignoreConfig  = $null   # full config object (untuk region_thresholds)
+$cfgObj        = $null   # full config object (untuk region_thresholds; berbeda nama dari param $IgnoreConfig)
 
 function Get-IgnoreRegionsForFile {
     param([string]$fileName, [array]$regions)
@@ -157,7 +158,7 @@ if ($IgnoreConfig -ne "") {
     if (Test-Path -LiteralPath $IgnoreConfig) {
         try {
             $ic = Get-Content -LiteralPath $IgnoreConfig -Raw | ConvertFrom-Json
-            $ignoreConfig = $ic   # simpan full object untuk region_thresholds
+            $cfgObj = $ic   # simpan full object untuk region_thresholds (nama berbeda dari param $IgnoreConfig)
             if ($ic.PSObject.Properties.Name -contains "ignore_regions") {
                 $ignoreRegions = @($ic.ignore_regions)
                 Write-Step "ignore_regions dimuat dari: $IgnoreConfig ($($ignoreRegions.Count) region)"
@@ -182,7 +183,7 @@ if ($IgnoreConfig -ne "") {
             try {
                 $ic = Get-Content -LiteralPath $candidate -Raw | ConvertFrom-Json
                 if ($ic.PSObject.Properties.Name -contains "ignore_regions") {
-                    $ignoreConfig  = $ic   # simpan full object
+                    $cfgObj  = $ic   # simpan full object
                     $ignoreRegions = @($ic.ignore_regions)
                     Write-Step "ignore_regions dimuat dari: $candidate ($($ignoreRegions.Count) region)"
                     break
@@ -195,8 +196,8 @@ if ($IgnoreConfig -ne "") {
 # Load region_thresholds dari config (threshold per area, berbeda dari global Threshold)
 $regionThresholds = @()   # array of { src, x, y, w, h, threshold }
 
-if ($ignoreConfig -ne $null -and $ignoreConfig.PSObject.Properties.Name -contains "region_thresholds") {
-    $regionThresholds = @($ignoreConfig.region_thresholds)
+if ($cfgObj -ne $null -and $cfgObj.PSObject.Properties.Name -contains "region_thresholds") {
+    $regionThresholds = @($cfgObj.region_thresholds)
     Write-Step "region_thresholds dimuat: $($regionThresholds.Count) region dengan threshold kustom"
 }
 
@@ -205,8 +206,8 @@ if ($ignoreConfig -ne $null -and $ignoreConfig.PSObject.Properties.Name -contain
 # File yang match akan downgrade REGRESI -> INTENTIONAL (tidak dihitung sebagai regresi)
 $intentionalChanges = @()   # array of { src, reason, version }
 
-if ($ignoreConfig -ne $null -and $ignoreConfig.PSObject.Properties.Name -contains "intentional_changes") {
-    $intentionalChanges = @($ignoreConfig.intentional_changes)
+if ($cfgObj -ne $null -and $cfgObj.PSObject.Properties.Name -contains "intentional_changes") {
+    $intentionalChanges = @($cfgObj.intentional_changes)
     Write-Step "intentional_changes dimuat: $($intentionalChanges.Count) file ditandai intentional"
 }
 
@@ -376,8 +377,8 @@ function Get-NormalizedPath {
 }
 
 # -- 5. Kumpulkan file ---------------------------------------------------------
-$currentPngs  = Get-ChildItem -LiteralPath $ShotsDir   -Filter "*.png" | Sort-Object Name
-$baselinePngs = Get-ChildItem -LiteralPath $BaselineDir -Filter "*.png" | Sort-Object Name
+        $currentPngs  = @(Get-ChildItem -LiteralPath $ShotsDir   -Filter "*.png" | Sort-Object Name)
+        $baselinePngs = @(Get-ChildItem -LiteralPath $BaselineDir -Filter "*.png" | Sort-Object Name)
 
 $baselineMap = @{}
 foreach ($b in $baselinePngs) {
@@ -427,7 +428,7 @@ foreach ($cur in $currentPngs) {
         $curPathForDiff  = $cur.FullName
         $basePathForDiff = $baseFile
         $maskedDir       = Join-Path $diffDir "masked"
-        if ($fileIgnoreRegions.Count -gt 0) {
+        if (@($fileIgnoreRegions).Count -gt 0) {
             if (-not (Test-Path -LiteralPath $maskedDir)) {
                 New-Item -ItemType Directory -Path $maskedDir | Out-Null
             }
@@ -439,7 +440,7 @@ foreach ($cur in $currentPngs) {
                            -regions $fileIgnoreRegions -imageMagickExe $ImageMagick -isV7 $isV7
             $curPathForDiff  = $maskedCur
             $basePathForDiff = $maskedBase
-            $entry["ignored_regions"] = $fileIgnoreRegions.Count
+            $entry["ignored_regions"] = @($fileIgnoreRegions).Count
         }
         # ----------------------------------------------------------------
 
@@ -461,13 +462,41 @@ foreach ($cur in $currentPngs) {
             $errText = $proc.StandardError.ReadToEnd()
             $proc.WaitForExit()
 
-            $pixelsDiff = 0
-            if ($errText -match "(\d+)") {
-                $pixelsDiff = [int]$Matches[1]
+            $pixelsDiff = 0.0
+            # Regex menangkap angka desimal dan notasi ilmiah (mis. 6.6214e+09 dari ImageMagick Q16-HDRI)
+            if ($errText -match "([\d.]+(?:[eE][+\-]?\d+)?)") {
+                $pixelsDiff = [double]$Matches[1]
             }
 
-            $totalPixels = 720 * 1600
-            $changePct = [math]::Round(($pixelsDiff / $totalPixels) * 100, 3)
+            # Hitung total pixel dari dimensi aktual file PNG, bukan nilai hardcoded.
+            # Gunakan ImageMagick identify untuk membaca lebar x tinggi.
+            $totalPixels = 0
+            try {
+                $identArgs = if ($isV7) { "identify -format `"%w %h`" `"$($cur.FullName)`"" } `
+                                        else { "`"$($cur.FullName)`" -format `"%w %h`" info:" }
+                $psiId = New-Object System.Diagnostics.ProcessStartInfo
+                $psiId.FileName              = $ImageMagick
+                $psiId.Arguments             = $identArgs
+                $psiId.RedirectStandardOutput = $true
+                $psiId.UseShellExecute       = $false
+                $psiId.WindowStyle           = [System.Diagnostics.ProcessWindowStyle]::Hidden
+                $procId = [System.Diagnostics.Process]::Start($psiId)
+                $dimOut = $procId.StandardOutput.ReadToEnd().Trim()
+                $procId.WaitForExit()
+                if ($dimOut -match "^(\d+)\s+(\d+)$") {
+                    $totalPixels = [int]$Matches[1] * [int]$Matches[2]
+                }
+            } catch { }
+            # Fallback: ukuran default jika identify gagal (mis. resolusi Godot default 720×1600)
+            if ($totalPixels -le 0) { $totalPixels = 720 * 1600 }
+
+            # Normalisasi AE ke persentase 0–100.
+            # Pada build ImageMagick Q16-HDRI, AE bukan cacah pixel biasa melainkan
+            # nilai quantum-scaled yang bisa jauh > totalPixels. Clamp ke 100 agar
+            # threshold (default 1%) dan region_thresholds tetap bermakna di semua build.
+            # Pada build non-HDRI (Q8/Q16), AE = cacah pixel → rasio tetap benar.
+            $rawChangePct  = ($pixelsDiff / $totalPixels) * 100
+            $changePct     = [math]::Round([math]::Min(100.0, $rawChangePct), 3)
 
             $entry.change_pct = $changePct
             $entry.diff_image = "diff\diff_" + $cur.Name
@@ -493,14 +522,14 @@ foreach ($cur in $currentPngs) {
                     $entry.status = "REGRESI"
                     $entry["effective_threshold"] = $effectiveThreshold
                     $countReg++
-                    $ignoreNote = if ($fileIgnoreRegions.Count -gt 0) { " [$($fileIgnoreRegions.Count) region diabaikan]" } else { "" }
+                    $ignoreNote = if (@($fileIgnoreRegions).Count -gt 0) { " [$(@($fileIgnoreRegions).Count) region diabaikan]" } else { "" }
                     Write-Reg ("$($cur.Name) - " + $changePct + "% pixel berubah (threshold: " + $effectiveThreshold + "%)$ignoreNote$thresholdNote")
                 }
             } else {
                 $entry.status = "OK"
                 $entry["effective_threshold"] = $effectiveThreshold
                 $countOk++
-                $ignoreNote = if ($fileIgnoreRegions.Count -gt 0) { " [$($fileIgnoreRegions.Count) region diabaikan]" } else { "" }
+                $ignoreNote = if (@($fileIgnoreRegions).Count -gt 0) { " [$(@($fileIgnoreRegions).Count) region diabaikan]" } else { "" }
                 Write-Ok ("OK      $($cur.Name) - " + $changePct + "% pixel berubah$ignoreNote$thresholdNote")
             }
         } catch {

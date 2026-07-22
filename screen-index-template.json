@@ -1,0 +1,129 @@
+{
+  "_comment": "screen-index.json — Input wajib untuk feedback-bridge.ps1 (komponen #3 framework).",
+  "_comment2": "Lihat GAME_STATE_SPEC.md bagian 'screen-index.json' untuk penjelasan lengkap setiap field.",
+  "project": "NamaGame",
+  "build": "0.1.0",
+  "shots_dir": "C:\\dev\\mygame\\shots",
+  "screens": [
+    {
+      "screen_id": "main_menu",
+      "description": "Layar utama — tampil saat game pertama dibuka. Berisi tombol Play, Settings, Quit.",
+      "shot_files": ["01_main_menu.png"],
+      "render_files": ["scripts/ui/MainMenu.gd", "scenes/MainMenu.tscn"],
+      "keywords": ["menu", "utama", "main", "start", "play", "mulai", "quit", "keluar"],
+      "components": [
+        {
+          "name": "ButtonPlay",
+          "file": "scripts/ui/MainMenu.gd",
+          "key_issues": ["tombol tidak responsif", "teks terpotong"],
+          "keywords": ["play", "mulai", "start", "tombol", "button"]
+        },
+        {
+          "name": "ButtonSettings",
+          "file": "scripts/ui/MainMenu.gd",
+          "key_issues": ["pengaturan tidak tersimpan"],
+          "keywords": ["settings", "pengaturan", "options"]
+        }
+      ]
+    },
+    {
+      "screen_id": "gameplay",
+      "description": "Layar gameplay utama — HUD dengan HP, skor, dan area aksi.",
+      "shot_files": ["02_gameplay.png"],
+      "render_files": ["scripts/GameManager.gd", "scripts/ui/HUD.gd"],
+      "keywords": ["gameplay", "main", "hud", "hp", "health", "skor", "score", "level"],
+      "components": [
+        {
+          "name": "HUDHealth",
+          "file": "scripts/ui/HUD.gd",
+          "key_issues": ["bar HP tidak terupdate", "angka nyawa salah"],
+          "keywords": ["hp", "health", "nyawa", "darah", "hidup"]
+        },
+        {
+          "name": "HUDScore",
+          "file": "scripts/ui/HUD.gd",
+          "key_issues": ["skor tidak bertambah", "tampilan skor terpotong"],
+          "keywords": ["skor", "score", "poin", "point"]
+        },
+        {
+          "name": "PlayerController",
+          "file": "scripts/PlayerController.gd",
+          "key_issues": ["gerakan tidak responsif", "lompatan tidak berfungsi"],
+          "keywords": ["player", "karakter", "gerak", "kontrol", "lompat", "jump"]
+        }
+      ]
+    },
+    {
+      "screen_id": "pause_menu",
+      "description": "Menu pause — tampil saat game di-pause. Opsi Resume, Settings, Quit to Menu.",
+      "shot_files": ["03_pause.png"],
+      "render_files": ["scripts/ui/PauseMenu.gd"],
+      "keywords": ["pause", "jeda", "resume", "lanjut", "keluar"],
+      "components": [
+        {
+          "name": "PauseOverlay",
+          "file": "scripts/ui/PauseMenu.gd",
+          "key_issues": ["overlay tidak muncul", "background tidak gelap"],
+          "keywords": ["pause", "jeda", "overlay", "gelap"]
+        }
+      ]
+    },
+    {
+      "screen_id": "settings",
+      "description": "Layar pengaturan — volume audio, resolusi, keymapping.",
+      "shot_files": ["04_settings.png"],
+      "render_files": ["scripts/ui/SettingsMenu.gd"],
+      "keywords": ["settings", "pengaturan", "volume", "audio", "resolusi", "kontrol"],
+      "components": [
+        {
+          "name": "VolumeSlider",
+          "file": "scripts/ui/SettingsMenu.gd",
+          "key_issues": ["slider tidak tersimpan", "volume tidak berubah"],
+          "keywords": ["volume", "audio", "suara", "musik", "sfx", "slider"]
+        }
+      ]
+    },
+    {
+      "screen_id": "game_over",
+      "description": "Layar game over — tampil saat player mati. Tombol Retry dan Main Menu.",
+      "shot_files": ["05_game_over.png"],
+      "render_files": ["scripts/ui/GameOver.gd"],
+      "keywords": ["game over", "mati", "kalah", "retry", "coba lagi", "ulang"],
+      "components": [
+        {
+          "name": "GameOverPanel",
+          "file": "scripts/ui/GameOver.gd",
+          "key_issues": ["panel tidak muncul", "skor akhir salah"],
+          "keywords": ["game over", "panel", "mati", "kalah", "skor akhir"]
+        }
+      ]
+    }
+  ],
+  "global_issues": [
+    {
+      "issue_id": "performance_fps",
+      "keywords": ["fps", "lag", "lambat", "berat", "stuttering", "patah-patah", "frame drop"],
+      "screens": ["gameplay"],
+      "components": ["GameManager", "Renderer"]
+    },
+    {
+      "issue_id": "audio_missing",
+      "keywords": ["suara", "audio", "musik", "sfx", "bisu", "tidak ada suara", "mute"],
+      "screens": ["main_menu", "gameplay"],
+      "components": ["AudioManager"]
+    },
+    {
+      "issue_id": "save_load",
+      "keywords": ["save", "load", "simpan", "muat", "progress", "hilang", "reset"],
+      "screens": ["gameplay", "main_menu"],
+      "components": ["SaveManager"]
+    }
+  ],
+  "resolutions": [
+    {
+      "issue_id": "performance_fps",
+      "status": "in_progress",
+      "note": "Profiling sedang dilakukan — belum ada fix"
+    }
+  ]
+}

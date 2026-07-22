@@ -247,3 +247,66 @@ screenshot (visual)  +  shots-manifest.json (metadata)  +  game_state.json (inte
 
 Kombinasi ketiganya memungkinkan analisis yang tidak mungkin dilakukan
 hanya dari screenshot atau hanya dari kode.
+
+---
+
+## screen-index.json — Input untuk feedback-bridge.ps1
+
+`screen-index.json` adalah file yang wajib ada di project root agar `feedback-bridge.ps1` bisa
+menghubungkan teks feedback playtester ke screenshot, komponen UI, dan lokasi kode.
+
+Gunakan `screen-index-template.json` di root repo ini sebagai titik awal, lalu sesuaikan dengan
+struktur layar dan komponen game Anda.
+
+### Schema
+
+```json
+{
+  "project": "string — nama game",
+  "build":   "string — versi build (contoh: 0.1.0)",
+  "shots_dir": "string — path absolut ke folder screenshot",
+
+  "screens": [
+    {
+      "screen_id":    "string — ID unik layar (contoh: main_menu)",
+      "description":  "string — deskripsi singkat layar",
+      "shot_files":   ["array string — nama PNG screenshot (contoh: 01_main_menu.png)"],
+      "render_files": ["array string — path file kode yang merender layar ini"],
+      "keywords":     ["array string — kata kunci yang muncul di feedback terkait layar ini"],
+      "components": [
+        {
+          "name":       "string — nama komponen UI",
+          "file":       "string — path file kode komponen",
+          "key_issues": ["array string — isu umum pada komponen ini"],
+          "keywords":   ["array string — kata kunci feedback terkait komponen ini"]
+        }
+      ]
+    }
+  ],
+
+  "global_issues": [
+    {
+      "issue_id":   "string — ID isu global (contoh: performance_fps)",
+      "keywords":   ["array string — kata kunci yang menandai isu ini"],
+      "screens":    ["array string — screen_id yang terkait"],
+      "components": ["array string — nama komponen yang terkait"]
+    }
+  ],
+
+  "resolutions": [
+    {
+      "issue_id": "string — issue_id yang sudah atau sedang ditangani",
+      "status":   "string — resolved | in_progress | persistent",
+      "note":     "string — catatan singkat tentang penanganan"
+    }
+  ]
+}
+```
+
+### Catatan penggunaan
+
+- `keywords` di level `screen` dan `component` dicocokkan terhadap teks feedback (case-insensitive).
+- `global_issues` dicocokkan ke seluruh teks feedback, tidak terikat ke satu layar.
+- `resolutions` menandai isu yang sudah ditangani — bridge menampilkan status ini di output.
+- Jika `shot_files` tidak ditemukan di `shots_dir`, bridge tetap berjalan tapi menandai screenshot sebagai hilang.
+- Lihat `screen-index-template.json` di root repo untuk contoh lengkap yang siap dimodifikasi.

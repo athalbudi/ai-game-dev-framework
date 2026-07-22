@@ -149,12 +149,15 @@ if (-not $SkipHarness) {
         Write-Fail "shot-harness.ps1 tidak ditemukan: $harnessPs1"
     }
 
-    $harnessArgs = @("-ProjectPath", "`"$ProjectPath`"")
-    if ($GodotExe -ne "") { $harnessArgs += @("-GodotExe", "`"$GodotExe`"") }
-    $harnessArgs += @("-Timeout", $Timeout)
+    # Panggil langsung tanpa array-splat agar argumen terikat by-name, bukan posisional
+    $harnessCallArgs = @{
+        ProjectPath = $ProjectPath
+        Timeout     = $Timeout
+    }
+    if ($GodotExe -ne "") { $harnessCallArgs["GodotExe"] = $GodotExe }
 
     try {
-        & $harnessPs1 @harnessArgs
+        & $harnessPs1 @harnessCallArgs
         $phase1Status = "ok"
         Write-Ok "Harness selesai"
     } catch {
@@ -303,9 +306,14 @@ if ($phase3Status -ne "skip_no_godot" -and (Test-Path -LiteralPath $projectGodot
 if (Test-Path -LiteralPath $scenarioResultPath) {
     try {
         $scenarioResult = Get-Content -LiteralPath $scenarioResultPath -Raw | ConvertFrom-Json
-        $passed  = $scenarioResult.passed
-        $failed  = $scenarioResult.failed
-        $skipped = $scenarioResult.skipped
+        # Suport kedua kontrak field: steps_pass/steps_fail/steps_skip (ScenarioRunner v1)
+        # dan passed/failed/skipped (format lama)
+        $passed  = if ($scenarioResult.PSObject.Properties["steps_pass"])  { $scenarioResult.steps_pass }  `
+                   elseif ($scenarioResult.PSObject.Properties["passed"])  { $scenarioResult.passed }  else { 0 }
+        $failed  = if ($scenarioResult.PSObject.Properties["steps_fail"])  { $scenarioResult.steps_fail }  `
+                   elseif ($scenarioResult.PSObject.Properties["failed"])  { $scenarioResult.failed }  else { 0 }
+        $skipped = if ($scenarioResult.PSObject.Properties["steps_skip"])  { $scenarioResult.steps_skip }  `
+                   elseif ($scenarioResult.PSObject.Properties["skipped"]) { $scenarioResult.skipped } else { 0 }
         $status  = $scenarioResult.status
         Write-Ok "Hasil: $status ($passed pass / $failed fail / $skipped skip)"
     } catch {
@@ -362,27 +370,37 @@ if (Test-Path -LiteralPath $diffReportPath) {
 
 # 4b: Analyze scenario results
 if ($scenarioResult -ne $null) {
-    if ($scenarioResult.failed -gt 0) {
-        $failedSteps = @($scenarioResult.steps | Where-Object { $_.status -eq "fail" })
+    # Suport kedua nama field: steps_fail/steps_pass/steps_skip/step_results (ScenarioRunner baru)
+    # dan failed/passed/skipped/steps (format lama)
+    $srFailed  = if ($scenarioResult.PSObject.Properties["steps_fail"])  { $scenarioResult.steps_fail }  `
+                 elseif ($scenarioResult.PSObject.Properties["failed"])  { $scenarioResult.failed }  else { 0 }
+    $srSkipped = if ($scenarioResult.PSObject.Properties["steps_skip"])  { $scenarioResult.steps_skip }  `
+                 elseif ($scenarioResult.PSObject.Properties["skipped"]) { $scenarioResult.skipped } else { 0 }
+    $srStepsField = if ($scenarioResult.PSObject.Properties["step_results"]) { "step_results" } else { "steps" }
+
+    if ($srFailed -gt 0) {
+        $failedSteps = @($scenarioResult.$srStepsField | Where-Object { $_.status -eq "fail" })
         foreach ($s in $failedSteps) {
+            $sId   = if ($s.PSObject.Properties["step"])   { $s.step }   elseif ($s.PSObject.Properties["id"])   { $s.id }   else { "?" }
+            $sType = if ($s.PSObject.Properties["type"])   { $s.type }   else { "" }
+            $sNote = if ($s.PSObject.Properties["reason"]) { $s.reason } elseif ($s.PSObject.Properties["note"]) { $s.note } else { "" }
             $analysis.scenario_findings += @{
-                step_id = $s.id
-                type    = $s.type
-                note    = $s.note
+                step_id = $sId
+                type    = $sType
+                note    = $sNote
             }
-            $analysis.critical_issues += "Step fail: [$($s.type)] $($s.note)"
+            $analysis.critical_issues += "Step fail: [$sType] $sNote"
         }
     }
 
-    $skipCount = $scenarioResult.skipped
-    if ($skipCount -gt 0) {
-        $analysis.recommendations += "$skipCount step di-skip — kemungkinan action belum didaftarkan di InputMap atau game_state belum diimplementasikan"
+    if ($srSkipped -gt 0) {
+        $analysis.recommendations += "$srSkipped step di-skip — kemungkinan action belum didaftarkan di InputMap atau game_state belum diimplementasikan"
     }
 
     if ($scenarioResult.status -eq "pass") {
         Write-Ok "Semua step scenario berhasil"
     } else {
-        Write-Warn "$($scenarioResult.failed) step gagal"
+        Write-Warn "$srFailed step gagal"
     }
 }
 
@@ -428,11 +446,14 @@ $report = [ordered]@{
         generated_at    = $manifest.generated_at
     } } else { $null }
     scenario_summary = if ($scenarioResult) { [ordered]@{
-        status  = $scenarioResult.status
-        passed  = $scenarioResult.passed
-        failed  = $scenarioResult.failed
-        skipped = $scenarioResult.skipped
-        duration_sec = $scenarioResult.duration_sec
+        status       = $scenarioResult.status
+        passed       = if ($scenarioResult.PSObject.Properties["steps_pass"])  { $scenarioResult.steps_pass }  `
+                       elseif ($scenarioResult.PSObject.Properties["passed"])  { $scenarioResult.passed }  else { 0 }
+        failed       = if ($scenarioResult.PSObject.Properties["steps_fail"])  { $scenarioResult.steps_fail }  `
+                       elseif ($scenarioResult.PSObject.Properties["failed"])  { $scenarioResult.failed }  else { 0 }
+        skipped      = if ($scenarioResult.PSObject.Properties["steps_skip"])  { $scenarioResult.steps_skip }  `
+                       elseif ($scenarioResult.PSObject.Properties["skipped"]) { $scenarioResult.skipped } else { 0 }
+        duration_sec = if ($scenarioResult.PSObject.Properties["duration_sec"]) { $scenarioResult.duration_sec } else { $null }
     } } else { $null }
 }
 

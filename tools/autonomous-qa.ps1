@@ -62,6 +62,24 @@ $kiloConfig = Join-Path $env:USERPROFILE ".config\kilo"
 $harnessPs1 = Join-Path $kiloConfig "tools\shot-harness.ps1"
 $ts_session = (Get-Date).ToString("yyyyMMdd_HHmmss")
 
+# ── Auto-migrate manifest jika schema lama ─────────────────────────────────────
+function Invoke-SchemaMigrationIfNeeded {
+    param([string]$manifestPath)
+    if (-not (Test-Path -LiteralPath $manifestPath)) { return }
+    try {
+        $m  = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $sv = if ($m.PSObject.Properties["schema_version"]) { $m.schema_version } else { "1.0" }
+        if ($sv -ne "1.1") {
+            $migScript = Join-Path $kiloConfig "tools\schema-migration.ps1"
+            if (Test-Path -LiteralPath $migScript) {
+                Write-Warn "Manifest schema $sv terdeteksi — migrasi ke 1.1..."
+                & $migScript -ManifestPath $manifestPath -Backup:$true
+                Write-Ok "Manifest dimigrasikan ke schema 1.1"
+            }
+        }
+    } catch { }
+}
+
 # ── Output helpers ─────────────────────────────────────────────────────────────
 function Write-Loop  { param($iter, $phase, $msg)
     Write-Host "[aq][$iter/$MaxIterations] $phase  $msg" -ForegroundColor Cyan }
@@ -260,7 +278,7 @@ function Detect-Anomalies {
         }
 
         # Coverage shots_taken vs png_count
-        if ($gs.shots_taken -ne $null) {
+        if ($gs.PSObject.Properties["shots_taken"] -and $gs.shots_taken -ne $null) {
             $taken = [int]$gs.shots_taken
             $count = [int]$manifest.png_count
             if ([math]::Abs($taken - $count) -gt 2 -and -not $investigatedIds.Contains("state_shots_mismatch")) {
@@ -278,17 +296,25 @@ function Detect-Anomalies {
 
     # --- Deteksi 5: Scenario failures ---
     if ($scenarioResult) {
-        foreach ($step in @($scenarioResult.steps)) {
+        # Suport kedua nama field: step_results (ScenarioRunner baru) dan steps (lama)
+        $stepsField = if ($scenarioResult.PSObject.Properties["step_results"]) { "step_results" } else { "steps" }
+        foreach ($step in @($scenarioResult.$stepsField)) {
             if (-not $step -or $step.status -ne "fail") { continue }
-            $id = "scenario_fail_$($step.id -replace '[^a-zA-Z0-9]','_')"
+            # step_results pakai field "step" (index) + "reason"; format lama pakai "id" + "note"
+            $stepId   = if ($step.PSObject.Properties["step"])   { $step.step }   `
+                        elseif ($step.PSObject.Properties["id"]) { $step.id }     else { "?" }
+            $stepNote = if ($step.PSObject.Properties["reason"]) { $step.reason } `
+                        elseif ($step.PSObject.Properties["note"]) { $step.note } else { "" }
+            $stepType = if ($step.PSObject.Properties["type"])   { $step.type }   else { "" }
+            $id = "scenario_fail_$($stepId -replace '[^a-zA-Z0-9]','_')"
             if (-not $investigatedIds.Contains($id)) {
                 $anomalies.Add(@{
                     id = $id
                     type = "scenario"; severity = "critical"
-                    description = "Scenario step fail: [$($step.type)] $($step.note)"
+                    description = "Scenario step fail: [$stepType] $stepNote"
                     suggested_action = "Investigasi kondisi yang menyebabkan step ini gagal"
-                    step_hint = $step.type; target_file = ""
-                    evidence = @{ step_id = $step.id; step_type = $step.type; note = $step.note }
+                    step_hint = $stepType; target_file = ""
+                    evidence = @{ step_id = $stepId; step_type = $stepType; note = $stepNote }
                 })
             }
         }
@@ -485,11 +511,14 @@ if (-not $SkipInitialHarness) {
     Write-Sep
     Write-Loop 0 "OBSERVE" "Menjalankan shot harness..."
     if (Test-Path -LiteralPath $harnessPs1) {
-        $harnessArgs = @("-ProjectPath", "`"$ProjectPath`"")
-        if ($GodotExe -ne "") { $harnessArgs += @("-GodotExe", "`"$GodotExe`"") }
-        $harnessArgs += @("-Timeout", $Timeout)
+        # Hashtable-splat agar argumen terikat by-name, bukan posisional
+        $harnessCallArgs = @{
+            ProjectPath = $ProjectPath
+            Timeout     = $Timeout
+        }
+        if ($GodotExe -ne "") { $harnessCallArgs["GodotExe"] = $GodotExe }
         try {
-            & $harnessPs1 @harnessArgs
+            & $harnessPs1 @harnessCallArgs
             Write-Ok "Harness selesai"
         } catch {
             Write-Warn "Harness error: $_ — lanjut dengan manifest yang ada"
@@ -563,9 +592,13 @@ for ($iter = 1; $iter -le $MaxIterations; $iter++) {
     $loopReport.iterations += $iterRecord
 
     if ($lastScenarioResult) {
-        $passed  = $lastScenarioResult.passed
-        $failed  = $lastScenarioResult.failed
-        $skipped = $lastScenarioResult.skipped
+        # Suport kedua nama field: steps_pass/steps_fail/steps_skip (ScenarioRunner baru) dan passed/failed/skipped (lama)
+        $passed  = if ($lastScenarioResult.PSObject.Properties["steps_pass"])  { $lastScenarioResult.steps_pass }  `
+                   elseif ($lastScenarioResult.PSObject.Properties["passed"])  { $lastScenarioResult.passed }  else { 0 }
+        $failed  = if ($lastScenarioResult.PSObject.Properties["steps_fail"])  { $lastScenarioResult.steps_fail }  `
+                   elseif ($lastScenarioResult.PSObject.Properties["failed"])  { $lastScenarioResult.failed }  else { 0 }
+        $skipped = if ($lastScenarioResult.PSObject.Properties["steps_skip"])  { $lastScenarioResult.steps_skip }  `
+                   elseif ($lastScenarioResult.PSObject.Properties["skipped"]) { $lastScenarioResult.skipped } else { 0 }
         Write-Ok "Hasil scenario: $($lastScenarioResult.status) ($passed pass / $failed fail / $skipped skip)"
     }
 }

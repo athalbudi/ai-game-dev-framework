@@ -140,27 +140,27 @@ function Migrate-1_0-to-1_1 {
     }
 
     # Tambahkan field baru yang belum ada di 1.0
-    if (-not $result.ContainsKey("elapsed_sec")) {
+    if (-not $result.Contains("elapsed_sec")) {
         $result["elapsed_sec"] = $null
         $changes.Add("+ elapsed_sec = null (tidak tersedia di format lama)")
     }
 
-    if (-not $result.ContainsKey("project_path")) {
+    if (-not $result.Contains("project_path")) {
         # Coba infer dari shots_dir
-        $shotsDir = if ($result.ContainsKey("shots_dir")) { $result["shots_dir"] } else { "" }
+        $shotsDir = if ($result.Contains("shots_dir")) { $result["shots_dir"] } else { "" }
         $inferredPath = if ($shotsDir -ne "") { Split-Path $shotsDir -Parent } else { $null }
         $result["project_path"] = $inferredPath
         $changes.Add("+ project_path = '$inferredPath' (inferred dari shots_dir)")
     }
 
-    if (-not $result.ContainsKey("coverage")) {
+    if (-not $result.Contains("coverage")) {
         # Buat coverage minimal dari screenshot yang ada
-        $screenshots = if ($result.ContainsKey("screenshots")) { @($result["screenshots"]) } else { @() }
-        $screenNames = $screenshots | ForEach-Object {
+        $screenshots = if ($result.Contains("screenshots")) { @($result["screenshots"]) } else { @() }
+        $screenNames = @($screenshots | ForEach-Object {
             if ($_ -and $_.PSObject.Properties["file"]) {
                 $_.file -replace "^\d+_", "" -replace "\.png$", "" -replace "_", " "
             }
-        } | Where-Object { $_ }
+        } | Where-Object { $_ })
 
         $result["coverage"] = [ordered]@{
             known_screens  = $screenNames.Count
@@ -172,21 +172,26 @@ function Migrate-1_0-to-1_1 {
         $changes.Add("+ coverage (inferred dari $($screenNames.Count) screenshots)")
     }
 
-    if (-not $result.ContainsKey("baseline_age_days")) {
+    if (-not $result.Contains("baseline_age_days")) {
         $result["baseline_age_days"] = $null
         $changes.Add("+ baseline_age_days = null (tidak tersedia di format lama)")
     }
 
     # Update screenshots: tambahkan size_kb jika belum ada
-    if ($result.ContainsKey("screenshots") -and $result["screenshots"]) {
-        $shotsDir = if ($result.ContainsKey("shots_dir")) { $result["shots_dir"] } else { "" }
+    if ($result.Contains("screenshots") -and $result["screenshots"]) {
+        $shotsDir = if ($result.Contains("shots_dir")) { $result["shots_dir"] } else { "" }
         $updatedScreenshots = @($result["screenshots"]) | ForEach-Object {
             if (-not $_ -or -not $_.PSObject.Properties["file"]) { return $_ }
             $ss = [ordered]@{}
             foreach ($p in $_.PSObject.Properties) { $ss[$p.Name] = $p.Value }
-            if (-not $ss.ContainsKey("size_kb")) {
-                $filePath = if ($shotsDir -ne "") { Join-Path $shotsDir $ss["file"] } else { "" }
-                $sizeKb = if ($filePath -ne "" -and (Test-Path -LiteralPath $filePath)) {
+            if (-not $ss.Contains("size_kb")) {
+                # Guard: shots_dir di manifest lama mungkin menunjuk drive yang tidak ada.
+                # Bungkus Join-Path dalam try agar DriveNotFoundException tidak crash migrasi.
+                $filePath = ""
+                if ($shotsDir -ne "") {
+                    try { $filePath = Join-Path $shotsDir $ss["file"] } catch { $filePath = "" }
+                }
+                $sizeKb = if ($filePath -ne "" -and (Test-Path -LiteralPath $filePath -ErrorAction SilentlyContinue)) {
                     [math]::Round((Get-Item -LiteralPath $filePath).Length / 1024, 1)
                 } else { $null }
                 $ss["size_kb"] = $sizeKb

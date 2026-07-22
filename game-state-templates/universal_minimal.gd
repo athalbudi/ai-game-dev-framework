@@ -27,7 +27,7 @@ func _write_game_state() -> void:
 func _get_game_state() -> Dictionary:
     return {
         # --- Metadata wajib (jangan hapus) ---
-        "schema_version": 1,
+        "schema_version": "1.0",
         "timestamp": Time.get_datetime_string_from_system(),
         "scene": get_tree().current_scene.name if get_tree().current_scene else "unknown",
 

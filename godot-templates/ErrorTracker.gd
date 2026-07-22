@@ -107,7 +107,15 @@ func _scenario_bootstrap() -> void:
 	var scenario_name := ""
 	if si >= 0 and si + 1 < args.size():
 		scenario_name = args[si + 1]
-	var scenario_path := "res://scenarios/%s.json" % scenario_name if scenario_name != "" else "res://scenarios/smoke.json"
+	# Jika argumen sudah berupa path lengkap (res://, user://, atau berakhiran .json),
+	# gunakan apa adanya. Jika bukan, bungkus sebagai res://scenarios/<name>.json.
+	var scenario_path: String
+	if scenario_name == "":
+		scenario_path = "res://scenarios/smoke.json"
+	elif scenario_name.begins_with("res://") or scenario_name.begins_with("user://") or scenario_name.ends_with(".json"):
+		scenario_path = scenario_name
+	else:
+		scenario_path = "res://scenarios/%s.json" % scenario_name
 	print("[ErrorTracker] --scenario bootstrap langsung: %s" % scenario_path)
 	# Tunggu lebih lama agar hot-reload Godot selesai sepenuhnya
 	# Hot-reload biasanya selesai dalam 3-5 detik setelah launch

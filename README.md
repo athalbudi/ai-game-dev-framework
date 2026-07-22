@@ -42,7 +42,7 @@ Dirancang untuk membantu developer yang membuat game baru dari nol, tanpa bergan
 
 | File | Fungsi | Autoload? |
 |---|---|---|
-| `godot-templates/ScenarioRunner.gd` | Automated gameplay testing (33 step types) | **Tidak** |
+| `godot-templates/ScenarioRunner.gd` | Automated gameplay testing (16 step types) | **Tidak** |
 | `godot-templates/GameStateWriter.gd` | Scene tracking + write game_state.json | Ya |
 | `godot-templates/ErrorTracker.gd` | Error tracking + bootstrap `--scenario` | Ya |
 | `godot-templates/InputRecorder.gd` | Rekam input untuk bug replay | Ya |

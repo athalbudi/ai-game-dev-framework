@@ -1,7 +1,8 @@
 # ScenarioRunner.gd
 # Universal scenario runner untuk AI-assisted game development framework.
-# Daftarkan sebagai Autoload di project.godot:
-#   ScenarioRunner="*res://scripts/ScenarioRunner.gd"
+# JANGAN daftarkan sebagai Autoload di project.godot — ini akan menyebabkan
+# hot-reload race condition. Muat sebagai script instance dari ErrorTracker._scenario_bootstrap().
+# Lihat README.md dan FRAMEWORK.md untuk cara penggunaan yang benar.
 #
 # Interface dengan game:
 #   - Game implementasikan _write_game_state() di node manapun
@@ -107,7 +108,7 @@ func _dispatch(step_type: String, step: Dictionary) -> void:
 	elif step_type == "mouse_click":
 		await _exec_mouse_click(step)
 	elif step_type == "screenshot":
-		_exec_screenshot(step)
+		await _exec_screenshot(step)
 	elif step_type == "write_state":
 		await _exec_write_state(step)
 	elif step_type == "assert_state":

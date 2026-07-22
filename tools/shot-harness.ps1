@@ -226,6 +226,7 @@ if ($NoRun) {
         $elapsedMs       = 0
         $timeoutMs       = $Timeout * 1000
         $finished        = $false
+        $cpuWarned       = $false  # dipindah ke sini agar tidak di-reset tiap iterasi loop
 
         while ($elapsedMs -lt $timeoutMs) {
             $waitMs   = [math]::Min($checkIntervalMs, $timeoutMs - $elapsedMs)
@@ -255,7 +256,6 @@ if ($NoRun) {
             }
 
             # CPU activity check — hanya jika System.Diagnostics tersedia
-            $cpuWarned = $false
             if (-not $cpuWarned -and $noProgressSec -gt ($hangCheckSec * 2)) {
                 try {
                     $proc.Refresh()
@@ -341,7 +341,7 @@ if ($NoRun) {
 if (-not (Test-Path -LiteralPath $ShotsDir)) {
     Write-Fail "Folder shots tidak ditemukan: $ShotsDir`nPastikan kode game menyimpan PNG ke user://shots/"
 }
-$pngFiles = Get-ChildItem -LiteralPath $ShotsDir -Filter "*.png" | Sort-Object Name
+        $pngFiles = @(Get-ChildItem -LiteralPath $ShotsDir -Filter "*.png" | Sort-Object Name)
 if ($pngFiles.Count -eq 0) {
     Write-Fail "Tidak ada PNG di $ShotsDir - harness berjalan tapi tidak menghasilkan screenshot."
 }
@@ -426,7 +426,7 @@ if (Test-Path -LiteralPath $ZoomConfig) {
 }
 
 # -- 8. Ringkasan akhir ---------------------------------------------------------
-$allPng   = Get-ChildItem -LiteralPath $ShotsDir -Filter "*.png" | Sort-Object Name
+        $allPng   = @(Get-ChildItem -LiteralPath $ShotsDir -Filter "*.png" | Sort-Object Name)
 
 # Deteksi shot stale - file yang jauh lebih lama dari sisanya
 if ($allPng.Count -gt 1) {
@@ -819,20 +819,29 @@ if (Test-Path -LiteralPath $scenarioResultPath) {
     try {
         $scenarioResult = Get-Content -LiteralPath $scenarioResultPath -Raw | ConvertFrom-Json
         $scStatus = if ($scenarioResult.PSObject.Properties.Name -contains "status")      { $scenarioResult.status }      else { "unknown" }
-        $scPassed = if ($scenarioResult.PSObject.Properties.Name -contains "passed")      { $scenarioResult.passed }      else { 0 }
-        $scFailed = if ($scenarioResult.PSObject.Properties.Name -contains "failed")      { $scenarioResult.failed }      else { 0 }
-        $scTotal  = if ($scenarioResult.PSObject.Properties.Name -contains "total_steps") { $scenarioResult.total_steps } else { 0 }
+        $scPassed = if ($scenarioResult.PSObject.Properties.Name -contains "steps_pass") { $scenarioResult.steps_pass }  `
+                    elseif ($scenarioResult.PSObject.Properties.Name -contains "passed") { $scenarioResult.passed }      else { 0 }
+        $scFailed = if ($scenarioResult.PSObject.Properties.Name -contains "steps_fail") { $scenarioResult.steps_fail }  `
+                    elseif ($scenarioResult.PSObject.Properties.Name -contains "failed") { $scenarioResult.failed }      else { 0 }
+        $scTotal  = if ($scenarioResult.PSObject.Properties.Name -contains "steps_total") { $scenarioResult.steps_total } `
+                    elseif ($scenarioResult.PSObject.Properties.Name -contains "total_steps") { $scenarioResult.total_steps } else { 0 }
         $scId     = if ($scenarioResult.PSObject.Properties.Name -contains "scenario_id") { $scenarioResult.scenario_id } else { "unknown" }
 
         Write-Host ""
         $scColor = if ($scStatus -eq "pass") { "Green" } elseif ($scStatus -eq "fail") { "Red" } else { "Yellow" }
         Write-Host "[shot] Scenario '$scId': $($scStatus.ToUpper()) ($scPassed/$scTotal pass)" -ForegroundColor $scColor
 
-        if ($scFailed -gt 0 -and $scenarioResult.PSObject.Properties.Name -contains "steps") {
-            $failedSteps = @($scenarioResult.steps | Where-Object { $_.status -eq "fail" })
+        # Suport kedua nama field: step_results (ScenarioRunner baru) dan steps (lama)
+        $stepsField = if ($scenarioResult.PSObject.Properties.Name -contains "step_results") { "step_results" } else { "steps" }
+        if ($scFailed -gt 0 -and $scenarioResult.PSObject.Properties.Name -contains $stepsField) {
+            $failedSteps = @($scenarioResult.$stepsField | Where-Object { $_.status -eq "fail" })
             foreach ($fs in $failedSteps) {
-                $fsNote = if ($fs.PSObject.Properties.Name -contains "note") { $fs.note } else { "" }
-                Write-Host "  FAIL  [$($fs.id)] $fsNote" -ForegroundColor Red
+                # step_results pakai field "reason"; format lama pakai "note"
+                $fsNote = if ($fs.PSObject.Properties.Name -contains "reason") { $fs.reason } `
+                          elseif ($fs.PSObject.Properties.Name -contains "note") { $fs.note } else { "" }
+                $fsId   = if ($fs.PSObject.Properties.Name -contains "step") { $fs.step } `
+                          elseif ($fs.PSObject.Properties.Name -contains "id") { $fs.id } else { "?" }
+                Write-Host "  FAIL  [step $fsId] $fsNote" -ForegroundColor Red
             }
         }
 
