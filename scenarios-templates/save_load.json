@@ -111,14 +111,14 @@
       "type": "assert_state",
       "key": "player.level",
       "op": "gt",
-      "value": 0,
-      "comment": "SESUAIKAN: sesuaikan key dan value dengan struktur game_state game kamu"
+      "expected": 0,
+      "comment": "SESUAIKAN: sesuaikan key dan expected dengan struktur game_state game kamu"
     },
     {
       "type": "assert_state",
       "key": "_test_marker",
-      "op": "ne",
-      "value": "pre_load_dirty",
+      "op": "neq",
+      "expected": "pre_load_dirty",
       "comment": "Marker dirty tidak boleh ada setelah load — membuktikan load berhasil menimpa state"
     },
 

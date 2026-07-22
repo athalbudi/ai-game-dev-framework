@@ -1,0 +1,60 @@
+name: Godot Screenshot CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+
+env:
+  GAME_NAME: "MyGame"           # SESUAIKAN: nama game dari project.godot
+  GODOT_VERSION: "4.3"          # SESUAIKAN: versi Godot yang digunakan
+  PROJECT_PATH: "."             # SESUAIKAN: path ke folder project.godot (relatif dari repo root)
+
+jobs:
+  screenshot:
+    name: Screenshot Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Godot ${{ env.GODOT_VERSION }}
+        run: |
+          wget -q "https://github.com/godotengine/godot-builds/releases/download/${{ env.GODOT_VERSION }}-stable/Godot_v${{ env.GODOT_VERSION }}-stable_linux.x86_64.zip" -O godot.zip
+          unzip -q godot.zip
+          mv Godot_v${{ env.GODOT_VERSION }}-stable_linux.x86_64 /usr/local/bin/godot
+          chmod +x /usr/local/bin/godot
+
+      - name: Import project
+        run: |
+          godot --path "${{ env.PROJECT_PATH }}" --headless --import --quit || true
+
+      - name: Run screenshot harness
+        run: |
+          godot --path "${{ env.PROJECT_PATH }}" --headless -- --shot
+        timeout-minutes: 5
+
+      - name: Check screenshots were generated
+        run: |
+          SHOTS_DIR="$HOME/.local/share/godot/app_userdata/${{ env.GAME_NAME }}/shots"
+          if [ ! -d "$SHOTS_DIR" ]; then
+            echo "ERROR: shots directory tidak ditemukan: $SHOTS_DIR"
+            exit 1
+          fi
+          PNG_COUNT=$(find "$SHOTS_DIR" -name "*.png" | wc -l)
+          echo "PNG dihasilkan: $PNG_COUNT"
+          if [ "$PNG_COUNT" -eq 0 ]; then
+            echo "ERROR: Tidak ada screenshot yang dihasilkan"
+            exit 1
+          fi
+
+      - name: Upload screenshots as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ github.sha }}
+          path: ~/.local/share/godot/app_userdata/${{ env.GAME_NAME }}/shots/*.png
+          retention-days: 30
+          if-no-files-found: warn

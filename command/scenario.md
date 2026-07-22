@@ -33,14 +33,14 @@ Langkah:
    ```powershell
    Copy-Item -LiteralPath "<scenario_path>" -Destination "<ShotsDir>\test_scenario.json"
    ```
-5. Jalankan harness dengan flag --scenario:
+5. Jalankan harness dengan flag `--Scenario`:
    ```powershell
    $harness = Join-Path $env:USERPROFILE ".config\kilo\tools\shot-harness.ps1"
-   & $harness -ProjectPath "<ProjectPath>"
+   & $harness -ProjectPath "<ProjectPath>" -Scenario "<ShotsDir>\test_scenario.json"
    ```
-   Catatan: game akan membaca scenario dari path yang diberikan dan menulis
-   `user://shots/scenario_result.json` secara otomatis. ErrorTracker.gd (sebagai Autoload)
-   yang menjalankan ScenarioRunner — **bukan** ScenarioRunner.gd sebagai Autoload langsung.
+   Catatan: ErrorTracker.gd (sebagai Autoload) yang menjalankan ScenarioRunner —
+   **bukan** ScenarioRunner.gd sebagai Autoload langsung. Flag `-Scenario` meneruskan
+   path scenario ke game via `-- --scenario <path>` yang dibaca oleh ErrorTracker.
 6. Baca `<ShotsDir>\scenario_result.json` setelah harness selesai
 7. Laporkan hasil: scenario_id, status, passed/failed/skipped, durasi
 8. Untuk setiap step yang fail: tampilkan id, type, dan note

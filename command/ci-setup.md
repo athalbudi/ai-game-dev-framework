@@ -29,8 +29,8 @@ Langkah:
    - `godot-autonomous-qa.yml`
 7. Update `GAME_NAME` dan `GODOT_VERSION` di setiap file sesuai project.godot
 8. Cek prasyarat:
-   - Ada `--shot` handler di kode? (cari `"--shot"` di scripts)
-   - Ada `ScenarioRunner` Autoload? (cek project.godot)
+   - Ada `_shot_tour()` method di kode? (cari `_shot_tour` di scripts)
+   - Ada `ErrorTracker` di Autoload project.godot?
    - Ada `scenarios/smoke.json`? (cek folder scenarios/)
 9. Tampilkan laporan setup:
    - File yang berhasil disalin
@@ -87,20 +87,22 @@ Langkah:
 
 ## Prasyarat yang Dicek
 
-### 1. --shot handler
+### 1. _shot_tour handler
 Cari di kode game:
 ```gdscript
-if "--shot" in OS.get_cmdline_user_args():
+func _shot_tour() -> void:
 ```
-Jika tidak ada: tampilkan template minimal yang perlu ditambahkan.
+Jika tidak ada: tampilkan template minimal dari QUICKSTART.md Langkah 2.
 
-### 2. ScenarioRunner Autoload
-Cek di `project.godot`:
+### 2. ErrorTracker + ScenarioRunner setup
+Cek di `project.godot` bahwa ErrorTracker dan GameStateWriter terdaftar sebagai Autoload:
 ```ini
 [autoload]
-ScenarioRunner="*res://scripts/ScenarioRunner.gd"
+GameStateWriter="*res://scripts/GameStateWriter.gd"
+ErrorTracker="*res://scripts/ErrorTracker.gd"
 ```
-Jika tidak ada: berikan instruksi setup.
+**Catatan:** ScenarioRunner **tidak** boleh didaftarkan sebagai Autoload — ErrorTracker yang menjalankannya.
+Jika ErrorTracker belum ada: salin dari `<KILO_CONFIG>/godot-templates/ErrorTracker.gd` ke project.
 
 ### 3. scenarios/smoke.json
 Cek apakah file ada di `<ProjectPath>/scenarios/smoke.json`.
