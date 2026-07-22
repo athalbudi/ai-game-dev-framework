@@ -128,46 +128,55 @@ Menyalin template universal ke `<ProjectPath>/scenarios/`. Skip jika sudah ada.
 
 ## Known Limitations — Godot 4.7 Hot-Reload
 
-Godot 4.7 selalu melakukan **hot-reload script** saat pertama kali project di-launch dari
-command line. Selama hot-reload, class registry di-reset sementara — `class_name` globals
-seperti `UI`, `DB`, `GameState` tidak tersedia pada momen itu.
+Godot 4.7 me-compile script di **background thread** bersamaan dengan shader cache loading,
+sebelum `_ready()` Autoload atau GDScript apapun bisa berjalan. Saat compile pertama ini,
+`class_name` globals dari script lain belum tersedia di GDScript runtime, sehingga script
+yang bergantung pada class tersebut gagal parse.
+
+**Yang sudah dikonfirmasi melalui tes terkontrol:**
+
+| Pendekatan | Hasil | Keterangan |
+|---|---|---|
+| `--import --quit-after 2` | Cache terisi, tapi tidak membantu | Cache hanya untuk editor autocomplete, tidak dibaca runtime |
+| `--headless --editor --quit` | Cache kosong | Editor quit sebelum `update_scripts_classes` selesai |
+| Buka Godot editor + Play (F5) | Works permanen | Membangun dependency graph internal yang dibaca runtime |
+
+**`global_script_class_cache.cfg` tidak mengontrol hot-reload** — ini terkonfirmasi: mengisi
+file tersebut via `--import` atau secara programatik tidak mencegah parse error saat runtime.
 
 **Dampak pada framework:**
-- Script yang menggunakan `:=` (walrus operator) dengan class_name globals akan gagal parse
-- Typed member variable declarations (`var gs: GameState`) akan gagal jika class belum ter-register
-- Typed function parameters (`func f(sim: BattleSim)`) akan gagal
+Script yang menggunakan typed member variable declarations (`var gs: GameState`) atau
+walrus operator dengan class_name constructor (`var x := ClassName.new()`) di level
+top-of-file akan gagal parse saat pertama kali di-load dari command line.
 
-**Pattern yang aman untuk game baru:**
+**Pattern yang aman untuk game baru (tidak butuh editor setup):**
 
 ```gdscript
-# BENAR — gunakan = bukan := untuk constructor calls di _ready()
-var runner = load("res://scripts/smoke_runner.gd").new()
+# BENAR — member var untyped
+var gs  # GameState
 
-# BENAR — member var untyped untuk class yang bergantung class_name
-var gs        # GameState
-var ui: Control  # Control adalah built-in, aman
+# BENAR — walrus hanya untuk built-in types atau literal
+var count := 0
+var name := ""
 
-# BENAR — ScenarioRunner diakses via load() bukan class_name
+# BENAR — ScenarioRunner via load() bukan class_name
 var exit_code = await load("res://scripts/ScenarioRunner.gd").new().run_scenario_file(path)
 
-# BENAR — jangan aktifkan --shot dari _ready(), biarkan ErrorTracker yang handle
+# BENAR — jangan trigger --shot dari _ready()
 func _ready() -> void:
-    pass  # ErrorTracker.gd mendeteksi --shot via Autoload bootstrap
+    pass  # ErrorTracker mendeteksi --shot via Autoload bootstrap
 ```
 
-**Untuk codebase yang sudah ada (banyak class_name references):**
-Framework tetap bisa dijalankan, tapi membutuhkan one-time setup per mesin:
-1. Buka Godot editor untuk project tersebut
-2. Jalankan game sekali dari editor (F5)
-3. Tutup editor — dependency graph sekarang ter-compile
+**Untuk codebase yang sudah ada dengan banyak class_name references:**
+Membutuhkan one-time setup per mesin — buka Godot editor untuk project tersebut,
+jalankan game sekali dari editor (F5), tutup editor. Setelah itu harness berjalan
+autonomous selamanya di mesin tersebut karena dependency graph internal ter-compile
+dalam format yang dibaca oleh GDScript runtime (berbeda dari `global_script_class_cache.cfg`).
 
-Setelah step ini, harness berjalan autonomous selamanya di mesin tersebut.
-
-**Mengapa ini terjadi:** Ini adalah Godot 4.7 engine behavior yang tidak bisa di-bypass
-dari luar engine. Framework telah memaksimalkan mitigasi via ErrorTracker bootstrap pattern
-(4-frame delay sebelum `_shot_tour` dipanggil), tapi mitigasi ini hanya efektif jika
-script bisa di-parse saat hot-reload — yang berarti script tidak boleh bergantung pada
-class_name globals di parse time.
+Ini bukan "buka editor manual sebagai workaround" — ini adalah Godot engine requirement
+untuk membangun dependency graph yang hanya bisa dibangun saat game runtime dengan display.
+Tidak ada CLI flag yang menghasilkan efek yang sama karena proses ini membutuhkan renderer
+aktif untuk menjalankan scene tree dan men-trigger full script compilation chain.
 
 ---
 
