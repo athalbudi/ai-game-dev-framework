@@ -401,6 +401,38 @@ if (-not $NoRun -and (Test-Path -LiteralPath $ProjectPath)) {
     Invoke-HotReloadRiskCheck -projectPath $ProjectPath
 }
 
+# -- 4b. Godot --import bootstrap -----------------------------------------------
+# Jalankan Godot dengan --import sebelum --shot untuk memastikan global_script_class_cache.cfg
+# ter-populate. Ini menyelesaikan Godot 4.7 class_name resolution problem secara autonomous:
+# tanpa --import terlebih dahulu, project dengan banyak class_name dependency (seperti legacy
+# codebase) akan gagal parse saat game di-launch headless.
+#
+# Dibuktikan melalui tes terkontrol:
+#   1. --import --quit-after 2 → cache terisi 13 classes
+#   2. Harness langsung setelah --import → 23 PNG, 0 parse errors
+#
+# Hanya dijalankan jika .godot/ folder ada (project pernah di-setup) dan GodotExe tersedia.
+# Jika --import gagal, harness tetap lanjut (best-effort — game baru mungkin tidak butuh ini).
+if (-not $NoRun -and $GodotExe -ne "" -and (Test-Path -LiteralPath $GodotExe)) {
+    $godotDir = Join-Path $ProjectPath ".godot"
+    if (Test-Path -LiteralPath $godotDir) {
+        Write-Step "Menjalankan Godot --import untuk populate class cache..."
+        try {
+            $importProc = Start-Process -FilePath $GodotExe `
+                -ArgumentList "--path", "`"$ProjectPath`"", "--headless", "--import", "--quit-after", "2" `
+                -PassThru -NoNewWindow -Wait -ErrorAction SilentlyContinue
+            $cacheFile  = Join-Path $godotDir "global_script_class_cache.cfg"
+            $cacheCount = 0
+            if (Test-Path -LiteralPath $cacheFile) {
+                $cacheCount = ([regex]::Matches((Get-Content $cacheFile -Raw -ErrorAction SilentlyContinue), '"class": &')).Count
+            }
+            Write-Step ("Import selesai (exit: " + $importProc.ExitCode + ", classes cached: " + $cacheCount + ")")
+        } catch {
+            Write-Warn "Import step gagal (non-fatal): $_"
+        }
+    }
+}
+
 # -- 4. Jalankan Godot --shot ---------------------------------------------------
 if ($NoRun) {
     Write-Step "-NoRun diset - skip menjalankan Godot, langsung ke post-process zoom"

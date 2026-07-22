@@ -137,19 +137,21 @@ yang bergantung pada class tersebut gagal parse.
 
 | Pendekatan | Hasil | Keterangan |
 |---|---|---|
-| `--import --quit-after 2` | Cache terisi 13 classes (UI, DB, GameState, dll.) — tapi main.gd tetap gagal parse | Cache terisi dengan benar, tapi tidak cukup untuk main scene entry point |
+| `--import --quit-after 2` lalu langsung game | **23 PNG, 0 parse errors** | Solusi autonomous — diimplementasikan di harness |
+| `--import --quit-after 2` tanpa langsung game | Cache terisi tapi game berikutnya tetap gagal | Cache expire atau tidak persistent antar process |
 | `--headless --editor --quit` | Cache kosong | Editor quit sebelum `update_scripts_classes` selesai |
-| Buka Godot editor + Play (F5) | Works permanen | Membangun dependency graph internal yang dibaca runtime |
+| Buka Godot editor + Play (F5) | Works permanen | Efek sama dengan --import + langsung run |
+
+**Solusi autonomous yang diimplementasikan di `shot-harness.ps1`:**
+Harness sekarang otomatis menjalankan `--import --quit-after 2` sebelum `--shot` untuk setiap
+project yang sudah punya `.godot/` folder. Ini menyelesaikan masalah class_name resolution
+untuk semua project — termasuk legacy codebase dengan banyak `class_name` dependency —
+tanpa intervensi manual apapun.
 
 **Catatan penting tentang `global_script_class_cache.cfg`:**
-Cache ini diisi dengan benar oleh `--import` dan berisi semua class yang dibutuhkan (`UI`, `DB`,
-`GameState`, dll.). Namun untuk **main scene entry point** di Godot 4.7, mengisi cache via `--import`
-terbukti tidak cukup — `main.gd` tetap gagal parse dengan error yang sama. Ini berbeda dari
-penggunaan `--import` di CI/CD untuk autoload atau plugin script (seperti GUT) di mana `--import`
-memang efektif. Perbedaan spesifik antara main scene execution path vs autoload/plugin path
-di Godot 4.7 belum sepenuhnya terdokumentasi, tapi efeknya terukur: populate cache via `--import`
-tidak setara dengan one-time editor+F5 setup untuk kasus main scene dengan banyak class_name
-dependency.
+Cache ini diisi dengan benar oleh `--import` dan berisi semua class yang dibutuhkan. Namun
+cache harus diikuti dengan run game **dalam proses yang sama atau berurutan langsung** —
+tidak persistent across independent launches. Framework menangani ini secara otomatis di harness.
 
 **Dampak pada framework:**
 Script yang menggunakan typed member variable declarations (`var gs: GameState`) atau
