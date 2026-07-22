@@ -200,41 +200,78 @@ function Invoke-GodotClassCachePreflight {
         New-Item -ItemType Directory -Path $cacheDir | Out-Null
     }
 
-    # Scan semua .gd files di project untuk class_name dan extends
+    # Strategi 1: Generate dari filesystem_cache10 (lebih akurat dari scan manual)
+    # filesystem_cache10 dihasilkan oleh Godot editor dan berisi class_name + base class
+    # yang sudah di-validate oleh Godot parser — format: filename::GDScript::...::::ClassName<>BaseClass<>...
+    $fsCachePath = Join-Path $cacheDir "editor\filesystem_cache10"
+    if (Test-Path -LiteralPath $fsCachePath) {
+        $lines   = Get-Content -LiteralPath $fsCachePath -Encoding UTF8 -ErrorAction SilentlyContinue
+        $entries = [System.Collections.Generic.List[string]]::new()
+
+        foreach ($line in $lines) {
+            if ($line -notmatch '::GDScript::') { continue }
+            $parts = $line -split '::'
+            if ($parts.Count -lt 8) { continue }
+
+            $filename   = $parts[0]
+            $classField = $parts[7]
+            if ($classField -eq "" -or -not ($classField -match '^[A-Za-z_]')) { continue }
+
+            $classInfo = $classField -split '<>'
+            $className = $classInfo[0].Trim()
+            $baseClass = if ($classInfo.Count -gt 1 -and $classInfo[1] -ne "") { $classInfo[1].Trim() } else { "RefCounted" }
+            if ($className -eq "") { continue }
+
+            # Tentukan res:// path berdasarkan lokasi di filesystem_cache10
+            $dirPrefix = ""
+            foreach ($l in $lines) {
+                if ($l -match '^::res://(.*?)::') { $dirPrefix = $Matches[1] }
+                if ($l -match "^${filename}::") { break }
+            }
+            $resPath = "res://${dirPrefix}${filename}"
+
+            $isTool   = if ((Get-Content (Join-Path $projectPath ($resPath -replace '^res://', '')) -TotalCount 5 -ErrorAction SilentlyContinue) -match '@tool') { "true" } else { "false" }
+
+            $entries.Add(('{' + "`n" +
+                '"base": &"' + $baseClass + '",' + "`n" +
+                '"class": &"' + $className + '",' + "`n" +
+                '"icon": "",' + "`n" +
+                '"is_abstract": false,' + "`n" +
+                '"is_tool": ' + $isTool + ',' + "`n" +
+                '"language": &"GDScript",' + "`n" +
+                '"path": "' + $resPath + '"' + "`n" +
+                '}'))
+        }
+
+        if ($entries.Count -gt 0) {
+            $content = "list=[" + ($entries -join ", ") + "]"
+            Set-Content -LiteralPath $cacheFile -Value $content -Encoding UTF8 -NoNewline
+            Write-Step ("Preflight: $($entries.Count) class_name di-cache dari filesystem_cache10")
+            return
+        }
+    }
+
+    # Strategi 2: Fallback — scan manual semua .gd files
     $gdFiles = @(Get-ChildItem -LiteralPath $projectPath -Filter "*.gd" -Recurse -ErrorAction SilentlyContinue |
                  Where-Object { $_.FullName -notmatch '\\.godot\\' })
-
     $entries = [System.Collections.Generic.List[string]]::new()
 
     foreach ($gd in $gdFiles) {
         $lines    = Get-Content -LiteralPath $gd.FullName -ErrorAction SilentlyContinue
         if (-not $lines) { continue }
 
-        $className  = ""
-        $baseClass  = "RefCounted"   # default Godot base
-        $isTool     = $false
-
+        $className = ""; $baseClass = "RefCounted"; $isTool = $false
         foreach ($line in $lines) {
             $trimmed = $line.Trim()
-            if ($trimmed -match '^class_name\s+(\w+)') {
-                $className = $Matches[1]
-            }
-            if ($trimmed -match '^extends\s+(\w+)') {
-                $baseClass = $Matches[1]
-            }
-            if ($trimmed -eq '@tool' -or $trimmed -eq 'tool') {
-                $isTool = $true
-            }
-            # Stop setelah menemukan semua yang dibutuhkan atau lewat baris deklarasi awal
+            if ($trimmed -match '^class_name\s+(\w+)')   { $className = $Matches[1] }
+            if ($trimmed -match '^extends\s+(\w+)')       { $baseClass = $Matches[1] }
+            if ($trimmed -eq '@tool' -or $trimmed -eq 'tool') { $isTool = $true }
             if ($className -ne "" -and ($trimmed -match '^(func|var|const|signal|enum)\s+')) { break }
         }
-
         if ($className -eq "") { continue }
 
-        # Konversi path absolut ke res:// path
         $relPath = $gd.FullName.Substring($projectPath.Length).Replace("\", "/").TrimStart("/")
         $resPath = "res://" + $relPath
-
         $toolStr = if ($isTool) { "true" } else { "false" }
         $entries.Add(('{' + "`n" +
             '"base": &"' + $baseClass + '",' + "`n" +
@@ -249,13 +286,10 @@ function Invoke-GodotClassCachePreflight {
 
     if ($entries.Count -eq 0) { return }
 
-    # Sort by class name untuk konsistensi
     $sortedEntries = $entries | Sort-Object { ($_ -split '"class": &"')[1].Split('"')[0] }
-
     $content = "list=[" + ($sortedEntries -join ", ") + "]"
     Set-Content -LiteralPath $cacheFile -Value $content -Encoding UTF8 -NoNewline
-
-    Write-Step ("Preflight: $($entries.Count) class_name ter-cache di .godot/global_script_class_cache.cfg")
+    Write-Step ("Preflight: $($entries.Count) class_name di-cache via scan manual")
 }
 
 # Jalankan preflight jika ada .gd files di project
