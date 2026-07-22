@@ -278,15 +278,17 @@ function Detect-Anomalies {
         }
 
         # Coverage shots_taken vs png_count
+        # Toleransi 10: png_count termasuk zoom crops, scenario screenshots, dan
+        # duplicate dari hot-reload Godot 4.7 — bukan semua PNG dari _shot_tour
         if ($gs.PSObject.Properties["shots_taken"] -and $gs.shots_taken -ne $null) {
             $taken = [int]$gs.shots_taken
             $count = [int]$manifest.png_count
-            if ([math]::Abs($taken - $count) -gt 2 -and -not $investigatedIds.Contains("state_shots_mismatch")) {
+            if ([math]::Abs($taken - $count) -gt 10 -and -not $investigatedIds.Contains("state_shots_mismatch")) {
                 $anomalies.Add(@{
                     id = "state_shots_mismatch"
                     type = "state"; severity = "warning"
-                    description = "Mismatch: shots_taken=$taken vs png_count=$count"
-                    suggested_action = "Cek counter shots_taken di --shot handler"
+                    description = "Mismatch besar: shots_taken=$taken vs png_count=$count (selisih > 10)"
+                    suggested_action = "Cek counter shots_taken di --shot handler; selisih kecil (<10) normal karena zoom crops dan scenario screenshots"
                     step_hint = "write_state"; target_file = ""
                     evidence = @{ shots_taken = $taken; png_count = $count }
                 })
