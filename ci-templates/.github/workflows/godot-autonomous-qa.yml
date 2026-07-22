@@ -1,3 +1,7 @@
+# CATATAN: Template ini belum diuji di environment CI nyata (GitHub Actions).
+# Dibuat berdasarkan dokumentasi Godot headless CI standar.
+# Sebelum digunakan, verifikasi: path app_userdata, versi Godot, dan nama game.
+#
 name: Godot Autonomous QA
 
 on:
