@@ -377,7 +377,7 @@ function Get-NormalizedPath {
 }
 
 # -- 5. Kumpulkan file ---------------------------------------------------------
-        $currentPngs  = @(Get-ChildItem -LiteralPath $ShotsDir   -Filter "*.png" | Sort-Object Name)
+        $currentPngs  = @(Get-ChildItem -LiteralPath $ShotsDir   -Filter "*.png" | Where-Object { $_.Name -notmatch "^scenario_" } | Sort-Object Name)
         $baselinePngs = @(Get-ChildItem -LiteralPath $BaselineDir -Filter "*.png" | Sort-Object Name)
 
 $baselineMap = @{}
