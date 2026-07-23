@@ -327,14 +327,14 @@ GameStateWriter="*res://scripts/GameStateWriter.gd"
 ErrorTracker="*res://scripts/ErrorTracker.gd"
 "@ | Set-Content (Join-Path $goldenDir "project.godot") -Encoding UTF8
 
-    # main.tscn
+    # main.tscn — format Godot 4 yang valid (tanpa uid agar portable di semua versi 4.x)
     @"
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://golden_main"]
 
-[ext_resource type="Script" path="res://scripts/main.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 
 [node name="Main" type="Node"]
-script = ExtResource("1")
+script = ExtResource("1_main")
 "@ | Set-Content (Join-Path $goldenDir "main.tscn") -Encoding UTF8
 
     # main.gd -- mengikuti pattern AMAN: tidak pakai := dengan class_name, tidak pakai typed member var class_name

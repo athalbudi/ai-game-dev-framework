@@ -490,9 +490,14 @@ function Run-Scenario {
         return $null
     }
 
-    # Baca hasil
+    # Baca hasil — hanya jika file lebih baru dari ts_run (bukan stale dari run sebelumnya)
     $resultPath = Join-Path $shotsDir "scenario_result.json"
     if (Test-Path -LiteralPath $resultPath) {
+        $resultFile = Get-Item -LiteralPath $resultPath
+        if ($resultFile.LastWriteTime -lt $ts_run) {
+            Write-Warn "scenario_result.json lebih lama dari run ini (stale) — mengabaikan"
+            return $null
+        }
         try {
             $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
             # Archive result
