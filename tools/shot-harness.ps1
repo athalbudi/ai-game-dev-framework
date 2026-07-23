@@ -136,12 +136,27 @@ if ($ShotsDir -eq "") {
         $projectName = (Get-Item $ProjectPath).Name
         Write-Warn "Nama project tidak ditemukan di project.godot, pakai nama folder: $projectName"
     }
-    # Sanitasi karakter yang tidak valid di path Windows
-    $safeName = $projectName -replace '[\\/:*?"<>|]', '_'
-    if ($safeName -ne $projectName) {
-        Write-Warn "Nama project disanitasi: '$projectName' -> '$safeName'"
+    # Cek apakah project menggunakan custom user dir (config/use_custom_user_dir=true)
+    # Jika ya, gunakan config/custom_user_dir_name sebagai nama folder di AppData\Roaming\
+    # Jika tidak, gunakan path standar Godot: AppData\Roaming\Godot\app_userdata\<nama_project>\
+    $useCustomDir  = $rawContent -match 'config/use_custom_user_dir=true'
+    $customDirName = ""
+    if ($useCustomDir -and $rawContent -match 'config/custom_user_dir_name="([^"]+)"') {
+        $customDirName = $Matches[1]
     }
-    $ShotsDir = "$env:APPDATA\Godot\app_userdata\$safeName\shots"
+    if ($useCustomDir -and $customDirName -ne "") {
+        # Custom user dir: %APPDATA%\<custom_dir_name>\shots
+        $safeName = $customDirName -replace '[\\/:*?"<>|]', '_'
+        $ShotsDir = "$env:APPDATA\$safeName\shots"
+        Write-Step "Custom user dir terdeteksi: $customDirName"
+    } else {
+        # Standar Godot: %APPDATA%\Godot\app_userdata\<nama_project>\shots
+        $safeName = $projectName -replace '[\\/:*?"<>|]', '_'
+        if ($safeName -ne $projectName) {
+            Write-Warn "Nama project disanitasi: '$projectName' -> '$safeName'"
+        }
+        $ShotsDir = "$env:APPDATA\Godot\app_userdata\$safeName\shots"
+    }
 }
 Write-Step "Output shots: $ShotsDir"
 
