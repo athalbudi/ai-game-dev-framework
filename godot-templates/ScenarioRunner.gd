@@ -105,10 +105,6 @@ func _dispatch(step_type: String, step: Dictionary) -> void:
 		await _exec_wait_condition(step)
 	elif step_type == "action":
 		await _exec_action(step)
-	elif step_type == "touch_tap":
-		await _exec_touch_tap(step)
-	elif step_type == "controller_press":
-		await _exec_controller_press(step)
 	elif step_type == "mouse_click":
 		await _exec_mouse_click(step)
 	elif step_type == "screenshot":
@@ -234,52 +230,6 @@ func _exec_action(step: Dictionary) -> void:
 	if wait_after > 0:
 		await _wait_frames(wait_after)
 	_step_pass({"action": action_name})
-
-
-func _exec_touch_tap(step: Dictionary) -> void:
-	# Simulasi touch tap — berguna untuk mobile game atau game yang pakai TouchScreenButton
-	var x: float = float(step.get("x", 0))
-	var y: float = float(step.get("y", 0))
-	var wait_after: int = int(step.get("wait_frames", 0))
-	var pos := Vector2(x, y)
-	var press := InputEventScreenTouch.new()
-	press.position = pos
-	press.pressed = true
-	press.index = 0
-	Input.parse_input_event(press)
-	await _wait_frames(2)
-	var rel := InputEventScreenTouch.new()
-	rel.position = pos
-	rel.pressed = false
-	rel.index = 0
-	Input.parse_input_event(rel)
-	if wait_after > 0:
-		await _wait_frames(wait_after)
-	_step_pass({"x": x, "y": y})
-
-
-func _exec_controller_press(step: Dictionary) -> void:
-	# Simulasi gamepad/controller button press via InputEventJoypadButton
-	var button: int = int(step.get("button", JOY_BUTTON_A))
-	var duration_frames: int = int(step.get("duration_frames", 2))
-	var wait_after: int = int(step.get("wait_frames", 0))
-	var device: int = int(step.get("device", 0))
-	var press := InputEventJoypadButton.new()
-	press.button_index = button
-	press.pressed = true
-	press.device = device
-	press.pressure = 1.0
-	Input.parse_input_event(press)
-	await _wait_frames(duration_frames)
-	var rel := InputEventJoypadButton.new()
-	rel.button_index = button
-	rel.pressed = false
-	rel.device = device
-	rel.pressure = 0.0
-	Input.parse_input_event(rel)
-	if wait_after > 0:
-		await _wait_frames(wait_after)
-	_step_pass({"button": button, "device": device})
 
 
 func _exec_mouse_click(step: Dictionary) -> void:
@@ -565,21 +515,17 @@ func _resolve_dot_key(data: Dictionary, key: String):
 
 func _evaluate_op(actual, op: String, expected) -> bool:
 	match op:
-		"eq":           return actual == expected
-		"ne", "neq":    return actual != expected  # "ne" alias untuk "neq"
-		"gt":           return float(str(actual)) > float(str(expected))
-		"gte":          return float(str(actual)) >= float(str(expected))
-		"lt":           return float(str(actual)) < float(str(expected))
-		"lte":          return float(str(actual)) <= float(str(expected))
-		"is_true":      return actual == true or actual == 1 or str(actual) == "true"
-		"is_false":     return actual == false or actual == 0 or str(actual) == "false"
-		"not_null":     return actual != null
-		"is_null":      return actual == null
-		"contains":     return str(actual).contains(str(expected))
-		"not_contains": return not str(actual).contains(str(expected))
-		"starts_with":  return str(actual).begins_with(str(expected))
-		"ends_with":    return str(actual).ends_with(str(expected))
-		_:              return actual == expected
+		"eq":       return actual == expected
+		"neq":      return actual != expected
+		"gt":       return float(str(actual)) > float(str(expected))
+		"gte":      return float(str(actual)) >= float(str(expected))
+		"lt":       return float(str(actual)) < float(str(expected))
+		"lte":      return float(str(actual)) <= float(str(expected))
+		"is_true":  return actual == true or actual == 1 or str(actual) == "true"
+		"is_false": return actual == false or actual == 0 or str(actual) == "false"
+		"not_null": return actual != null
+		"is_null":  return actual == null
+		_:          return actual == expected
 
 
 func _find_nodes_with_method(node: Node, method_name: String) -> Array[Node]:
