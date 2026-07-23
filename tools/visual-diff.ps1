@@ -214,9 +214,19 @@ if ($cfgObj -ne $null -and $cfgObj.PSObject.Properties.Name -contains "intention
 function Get-IntentionalChange {
     param([string]$fileName, [array]$changes)
     foreach ($c in $changes) {
-        $pattern = $c.src
-        if ($pattern -eq "*" -or $fileName -like $pattern) {
-            return $c
+        # Suport dua format:
+        # 1. String sederhana: "04_battle.png" (dari config baru)
+        # 2. Object: { src: "04_battle.png", reason: "..." } (format lama)
+        if ($c -is [string]) {
+            $pattern = $c
+            if ($pattern -eq "*" -or $fileName -like $pattern) {
+                return [PSCustomObject]@{ src = $pattern; reason = "intentional (no reason specified)" }
+            }
+        } else {
+            $pattern = if ($c.PSObject.Properties["src"]) { $c.src } else { $null }
+            if ($pattern -and ($pattern -eq "*" -or $fileName -like $pattern)) {
+                return $c
+            }
         }
     }
     return $null
