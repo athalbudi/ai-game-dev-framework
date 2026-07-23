@@ -366,8 +366,28 @@ Lihat `ci-templates/README.md` untuk panduan lengkap termasuk baseline managemen
 Bump `schema_version` di `shot-harness.ps1` setiap kali format manifest berubah secara breaking.
 ## intentional_changes — Tandai Perubahan Visual yang Disengaja
 
-Tambahkan ke `shots.zoom.json` di root project:
+Buat file `visual-diff-ignore.json` di root project, lalu pass ke harness atau visual-diff
+dengan flag `-IgnoreConfig`:
 
+```powershell
+& "$env:USERPROFILE\.config\kilo\tools\visual-diff.ps1" `
+    -ShotsDir $shotsDir -BaselineDir $baselineDir `
+    -IgnoreConfig "C:\path\to\visual-diff-ignore.json"
+```
+
+Format config mendukung **dua gaya** untuk `intentional_changes`:
+
+**Gaya 1 — String sederhana (direkomendasikan untuk menandai layar battle/animasi):**
+```json
+{
+  "intentional_changes": [
+    "04_battle.png",
+    "battle_*.png"
+  ]
+}
+```
+
+**Gaya 2 — Object dengan reason dan version (untuk audit trail):**
 ```json
 {
   "intentional_changes": [
@@ -379,13 +399,18 @@ Tambahkan ke `shots.zoom.json` di root project:
 
 File yang match akan mendapat status `INTENTIONAL` di diff-report.json alih-alih `REGRESI`.
 Tidak masuk ke counter `regressions` — tidak memblokir CI.
-Field `src` mendukung wildcard. Field `version` opsional.
+Field `src` mendukung wildcard. Field `version` opsional (hanya untuk gaya object).
+
+**Kapan menggunakan intentional_changes:**
+- Layar dengan animasi sprite idle yang non-deterministik antar-render (Godot Vulkan renderer)
+- Layar yang sengaja diubah di build ini — tandai agar tidak terdeteksi sebagai regresi tak terduga
+- Layar dengan partikel, shadow, atau anti-aliasing yang berbeda tiap run
 
 ---
 
 ## ignore_regions — Kurangi False Positive Regression
 
-Tambahkan ke `shots.zoom.json` di root project:
+Tambahkan ke `visual-diff-ignore.json` di root project:
 
 ```json
 {
@@ -398,6 +423,34 @@ Tambahkan ke `shots.zoom.json` di root project:
 
 Field `src` mendukung wildcard `"*"` untuk semua screenshot.
 Butuh ImageMagick untuk fitur ini — fallback ke MD5 hash jika tidak tersedia.
+
+## region_thresholds — Threshold Berbeda per File
+
+Untuk file tertentu yang secara alami punya variasi pixel lebih besar (misalnya layar dengan
+animasi aktif), gunakan threshold berbeda dari default global (1%):
+
+```json
+{
+  "region_thresholds": [
+    { "src": "18_disabled_reason.png", "threshold": 3.0 },
+    { "src": "battle_*.png", "threshold": 5.0 }
+  ]
+}
+```
+
+Semua field bisa digabung dalam satu file `visual-diff-ignore.json`:
+
+```json
+{
+  "intentional_changes": ["04_battle.png", "04_seal_tip.png"],
+  "region_thresholds": [
+    { "src": "18_disabled_reason.png", "threshold": 3.0 }
+  ],
+  "ignore_regions": [
+    { "src": "*", "x": 0, "y": 0, "w": 50, "h": 20, "reason": "fps counter" }
+  ]
+}
+```
 
 ---
 

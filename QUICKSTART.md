@@ -170,6 +170,7 @@ Atau salin manual dari `<KILO_CONFIG>/scenarios-templates/`.
 | `/analisis-shot` | Analisis visual menyeluruh |
 | `/baseline set` | Set baseline untuk regression |
 | `/baseline diff` | Bandingkan vs baseline |
+| `/baseline diff --ignore visual-diff-ignore.json` | Diff dengan config intentional/threshold |
 | `/scenario run <nama>` | Jalankan scenario automated test |
 | `/scenario generate` | AI buat scenario dari observasi |
 | `/scenario run-and-analyze` | Loop: generate → run → analyze |
