@@ -60,6 +60,7 @@ $ErrorActionPreference = "Stop"
 
 $kiloConfig = Join-Path $env:USERPROFILE ".config\kilo"
 $harnessPs1 = Join-Path $kiloConfig "tools\shot-harness.ps1"
+$diffPs1    = Join-Path $kiloConfig "tools\visual-diff.ps1"
 $ts_session = (Get-Date).ToString("yyyyMMdd_HHmmss")
 
 # ── Auto-migrate manifest jika schema lama ─────────────────────────────────────
@@ -532,6 +533,29 @@ if (-not $SkipInitialHarness) {
         }
     } else {
         Write-Warn "shot-harness.ps1 tidak ditemukan, skip OBSERVE"
+    }
+}
+
+# Fase OBSERVE: jalankan visual-diff setelah harness agar diff-report.json fresh
+# Ini memastikan Deteksi 3 (visual regression) di DETECT loop membaca data terkini
+if (-not $SkipInitialHarness -and (Test-Path -LiteralPath $diffPs1) -and $shotsDir -ne "") {
+    $baselineDir = Join-Path $shotsDir "baseline"
+    if (Test-Path -LiteralPath $baselineDir) {
+        Write-Loop 0 "OBSERVE" "Menjalankan visual-diff terhadap baseline..."
+        try {
+            & $diffPs1 -ShotsDir $shotsDir -BaselineDir $baselineDir 2>&1 | Out-Null
+            $diffReport = Join-Path $shotsDir "diff\diff-report.json"
+            if (Test-Path -LiteralPath $diffReport) {
+                $dr = Get-Content -LiteralPath $diffReport -Raw | ConvertFrom-Json
+                $regCount = @($dr.files | Where-Object { $_.status -eq "REGRESI" }).Count
+                $okCount  = @($dr.files | Where-Object { $_.status -eq "OK" }).Count
+                Write-Ok "Visual diff: $okCount OK, $regCount regresi"
+            }
+        } catch {
+            Write-Warn "Visual diff error (non-fatal): $_"
+        }
+    } else {
+        Write-Info "Baseline belum ada — skip visual diff (jalankan /baseline set setelah build stabil)"
     }
 }
 
