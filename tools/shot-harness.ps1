@@ -725,15 +725,26 @@ if (Test-Path -LiteralPath $ZoomConfig) {
 # -- 8. Ringkasan akhir ---------------------------------------------------------
         $allPng   = @(Get-ChildItem -LiteralPath $ShotsDir -Filter "*.png" | Sort-Object Name)
 
-# Deteksi shot stale - file yang jauh lebih lama dari sisanya
-if ($allPng.Count -gt 1) {
-    $timestamps = $allPng | ForEach-Object { $_.LastWriteTime }
-    $newest = ($timestamps | Sort-Object -Descending)[0]
+# Deteksi shot stale - file yang tidak di-update di run ini
+# Bandingkan dengan $ts_start agar deteksi presisi (bukan threshold jam yang longgar)
+$staleShots = @()
+if ($allPng.Count -gt 0) {
     foreach ($f in $allPng) {
-        $ageDiff = ($newest - $f.LastWriteTime).TotalHours
-        if ($ageDiff -gt 1) {
-            Write-Warn "Shot stale: $($f.Name) ($([math]::Round($ageDiff,1)) jam lebih lama dari run terbaru)"
+        # Bandingkan dengan waktu harness mulai ($ts_start dari baris atas)
+        # File scenario screenshot dikecualikan karena punya pola nama berbeda
+        if ($f.Name -notmatch "^scenario_" -and $f.LastWriteTime -lt $ts_start) {
+            $staleShots += $f.Name
         }
+    }
+    if ($staleShots.Count -gt 0) {
+        Write-Host ""
+        Write-Host ("[shot] WARN $($staleShots.Count) screenshot tidak di-update di run ini (stale dari run sebelumnya):") -ForegroundColor Yellow
+        foreach ($s in $staleShots) {
+            $age = [math]::Round(((Get-Date) - ($allPng | Where-Object { $_.Name -eq $s }).LastWriteTime).TotalHours, 1)
+            Write-Host ("[shot]   - $s ($age jam lalu)") -ForegroundColor Yellow
+        }
+        Write-Host "[shot]      Layar ini mungkin tidak tercapai dalam shot tour — cek coverage." -ForegroundColor Yellow
+        Write-Host ""
     }
 }
 

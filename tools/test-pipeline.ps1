@@ -37,6 +37,24 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Auto-detect Godot executable jika tidak diset secara eksplisit
+if ($GodotExe -eq "") {
+    $candidates = @(
+        "C:\Godot\godot.exe",
+        "C:\Program Files\Godot\godot.exe",
+        "C:\Program Files (x86)\Godot\godot.exe",
+        "$env:LOCALAPPDATA\Programs\Godot\godot.exe"
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path -LiteralPath $c) { $GodotExe = $c; break }
+    }
+    # Fallback: cek PATH
+    if ($GodotExe -eq "") {
+        $found = Get-Command "godot.exe" -ErrorAction SilentlyContinue
+        if ($found) { $GodotExe = $found.Source }
+    }
+}
+
 $kiloTools = Join-Path $env:USERPROFILE ".config\kilo\tools"
 $tmpBase   = Join-Path $env:TEMP "kilo-selftest-$(Get-Date -Format 'yyyyMMdd_HHmmss')"
 $passed    = 0
