@@ -835,12 +835,16 @@ $baselineDate     = $null
 if (Test-Path -LiteralPath $baselineManifest) {
     try {
         $bm = Get-Content -LiteralPath $baselineManifest -Raw | ConvertFrom-Json
-        if ($bm.generated_at) {
+        # Suport field: generated_at (format lama) dan baseline_set_at (format /baseline set)
+        $bmTimestamp = if ($bm.PSObject.Properties["generated_at"]) { $bm.generated_at } `
+                       elseif ($bm.PSObject.Properties["baseline_set_at"]) { $bm.baseline_set_at } `
+                       else { $null }
+        if ($bmTimestamp) {
             # Support kedua format: "yyyy-MM-dd HH:mm:ss" (manifest lama) dan ISO 8601 "yyyy-MM-ddTHH:mm:ss"
             $formats = @("yyyy-MM-dd HH:mm:ss", "yyyy-MM-ddTHH:mm:ss", "yyyy-MM-ddTHH:mm:ssZ")
             $parsed  = $null
             foreach ($fmt in $formats) {
-                try { $parsed = [datetime]::ParseExact($bm.generated_at, $fmt, $null); break } catch { }
+                try { $parsed = [datetime]::ParseExact($bmTimestamp, $fmt, $null); break } catch { }
             }
             if ($parsed) {
                 $baselineDate = $parsed
