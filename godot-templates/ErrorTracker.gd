@@ -58,10 +58,10 @@ func _shot_quit_watchdog() -> void:
 	for _i in range(4):
 		await get_tree().process_frame
 
-	# Cari main node yang punya _shot_tour() — retry sampai 600 frame (10 detik di 60fps)
+	# Cari main node yang punya _shot_tour() — retry sampai 3600 frame (60 detik di 60fps)
 	# Beberapa game punya loading screen panjang sebelum main node siap (resources, Steam check, dll)
 	var main_node: Node = null
-	var maxSearchFrames := 600
+	var maxSearchFrames := 3600
 	for _i in range(maxSearchFrames):
 		for node in get_tree().root.get_children():
 			if node.has_method("_shot_tour"):
