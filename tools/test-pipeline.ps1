@@ -517,11 +517,15 @@ warnings/return_value_discarded=0
         @"
 {
   "scenario_id": "strict_smoke",
-  "description": "Strict mode smoke test",
+  "description": "Strict mode smoke test -- exercises log, repeat, wait_frames",
   "seed": 1,
   "steps": [
     {"type": "wait_frames", "frames": 2},
-    {"type": "log", "message": "strict mode scenario OK"}
+    {"type": "log", "message": "strict mode scenario OK"},
+    {"type": "repeat", "count": 2, "steps": [
+      {"type": "wait_frames", "frames": 1},
+      {"type": "log", "message": "repeat step OK"}
+    ]}
   ]
 }
 "@ | Set-Content (Join-Path $scenarioDir "strict_smoke.json") -Encoding UTF8
@@ -538,16 +542,22 @@ warnings/return_value_discarded=0
         if (-not $proc2.HasExited) { $proc2.Kill() }
 
         $scenarioLines = @(Get-Content $scenarioLog -ErrorAction SilentlyContinue)
+        # Filter: cek Parse Error di mana pun dalam log -- tidak mensyaratkan satu baris
+        # dengan nama file (Godot memisahkan "Parse Error" dan nama script ke dua baris berbeda).
         $scenarioParseErrors = @($scenarioLines | Where-Object {
-            $_ -match "Parse Error" -and $_ -match "ScenarioRunner" -and $_ -notmatch "GDScript::reload"
+            $_ -match "Parse Error" -and $_ -notmatch "GDScript::reload"
         })
+        $scenarioLoadErrors = @($scenarioLines | Where-Object {
+            $_ -match "Failed to load script" -and $_ -notmatch "GDScript::reload"
+        })
+        $allScenarioErrors = $scenarioParseErrors.Count + $scenarioLoadErrors.Count
         $scenarioPassed = $scenarioLines | Select-String "strict mode scenario OK"
 
-        if ($scenarioParseErrors.Count -eq 0) {
+        if ($allScenarioErrors -eq 0) {
             $detail = if ($scenarioPassed) { "ScenarioRunner parse bersih, scenario log OK" } else { "ScenarioRunner parse bersih (scenario mungkin timeout)" }
             Add-Result "strict mode scenario (unsafe_method_access=2)" $true $detail
         } else {
-            $errDetail = ($scenarioParseErrors | Select-Object -First 2) -join "; "
+            $errDetail = (($scenarioParseErrors + $scenarioLoadErrors) | Select-Object -First 2) -join "; "
             Add-Result "strict mode scenario (unsafe_method_access=2)" $false $errDetail
         }
         Remove-Item -LiteralPath $scenarioLog -Force -ErrorAction SilentlyContinue

@@ -425,7 +425,7 @@ func _exec_seed_override(step: Dictionary) -> void:
 
 func _exec_repeat(step: Dictionary) -> void:
 	var count: int = int(step.get("count", 1))
-	var sub_steps: Array = step.get("steps", [])
+	var sub_steps: Array[Dictionary] = step.get("steps", [])
 	if sub_steps.is_empty():
 		_step_skip("repeat tidak punya field 'steps'")
 		return
