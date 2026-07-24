@@ -58,10 +58,10 @@ func _shot_quit_watchdog() -> void:
 	for _i in range(4):
 		await get_tree().process_frame
 
-	# Cari main node yang punya _shot_tour() -- retry sampai 3600 frame (60 detik di 60fps)
+	# Cari main node yang punya _shot_tour() -- retry sampai 600 frame (10 detik di 60fps)
 	# Beberapa game punya loading screen panjang sebelum main node siap (resources, Steam check, dll)
 	var main_node: Node = null
-	var maxSearchFrames := 3600
+	var maxSearchFrames := 600
 	for _i in range(maxSearchFrames):
 		for node in get_tree().root.get_children():
 			if node.has_method("_shot_tour"):
@@ -127,6 +127,25 @@ func _shot_quit_watchdog() -> void:
 	print("[ErrorTracker] --shot watchdog: timeout 5 menit")
 	get_tree().quit(0)
 
+## Dipanggil dari _shot_tour() saat game perlu ganti scene sebelum screenshot berikutnya.
+## ErrorTracker tetap hidup sebagai Autoload saat scene change, sehingga coroutine ini
+## tidak ter-cancel. Ini adalah solusi untuk masalah: coroutine di Main node ter-cancel
+## saat change_scene_to_file() karena Main node di-free.
+func _continue_shot_tour_after_scene_change(scene_path: String, shot_name: String) -> void:
+	get_tree().change_scene_to_file(scene_path)
+	# Tunggu beberapa frame agar scene baru selesai di-instantiate
+	for _i in range(10):
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	# Ambil screenshot dari ErrorTracker (tidak bergantung pada node game)
+	var img: Image = get_viewport().get_texture().get_image()
+	var shots_dir := ProjectSettings.globalize_path("user://shots")
+	if not DirAccess.dir_exists_absolute(shots_dir):
+		DirAccess.make_dir_absolute(shots_dir)
+	img.save_png(shots_dir + "/%s.png" % shot_name)
+	print("[ErrorTracker] _continue_shot_tour: saved %s.png" % shot_name)
+	get_tree().quit(0)
+
 func _scenario_bootstrap() -> void:
 	var args := OS.get_cmdline_user_args()
 	var si := args.find("--scenario")
@@ -149,7 +168,7 @@ func _scenario_bootstrap() -> void:
 		await get_tree().process_frame
 	# Load ScenarioRunner sebagai script instance langsung dari ErrorTracker
 	# Tidak bergantung pada Main node yang akan hancur karena hot-reload
-	var runner_script: GDScript = load("res://scripts/ScenarioRunner.gd")
+	var runner_script = load("res://scripts/ScenarioRunner.gd")
 	if runner_script == null:
 		print("[ErrorTracker] ERROR: Gagal load ScenarioRunner.gd")
 		get_tree().quit(1)
@@ -254,7 +273,7 @@ func has_errors() -> bool:
 
 ## Apakah ada error dengan category tertentu?
 func has_error_category(category: String) -> bool:
-	return _errors.any(func(e: Dictionary) -> bool: return e.get("category") == category)
+	return _errors.any(func(e): return e.get("category") == category)
 
 
 # -- Helper ---------------------------------------------------------------------
