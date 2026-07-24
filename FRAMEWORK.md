@@ -51,7 +51,7 @@ Tidak terikat pada game tertentu, engine tertentu, atau struktur folder tertentu
 
 | File | Deskripsi |
 |---|---|
-| `ScenarioRunner.gd` | Scenario engine (17 step types) -- di-load oleh ErrorTracker, bukan Autoload |
+| `ScenarioRunner.gd` | Scenario engine (18 step types) -- di-load oleh ErrorTracker, bukan Autoload |
 | `GameStateWriter.gd` | Autoload: scene tracking via `report_scene()` + `_write_game_state()` hook |
 | `InputRecorder.gd` | Autoload untuk merekam input gameplay manual ke recording JSON |
 | `RecordingConverter.gd` | Konversi file rekaman ke scenario JSON untuk bug reproduction |
@@ -155,9 +155,10 @@ dua framework autoload inti akan gagal di-load:
 - `GameStateWriter.gd:66` -- memanggil `et.get_errors()` langsung di atas `Node` return value
 - `ErrorTracker.gd` -- memanggil `main_node._shot_tour.call_deferred()` di atas `Node` return value
 
-**Status:** Fix sudah diterapkan di versi terkini -- keduanya kini menggunakan `.call("method_name")`
-dan `call_deferred("method_name")` sesuai idiom yang sudah dipakai konsisten di `ScenarioRunner.gd`.
-Jika masih menggunakan template lama, salin ulang dari `godot-templates/`.
+**Status:** Fix sudah diterapkan di versi terkini -- semua direct method call pada `Node` return value
+kini menggunakan `.call("method_name")` dan `call_deferred("method_name")`, termasuk di
+`_scenario_bootstrap()` dan `has_error_category()`. Lambda di `has_error_category` kini punya
+typed parameter `func(e: Dictionary) -> bool`.
 
 **Cara cek:** Jalankan game dengan `--headless --quit` dan cek apakah ada error
 `Parse Error: The method "..." is not present on the inferred type "Node"`.

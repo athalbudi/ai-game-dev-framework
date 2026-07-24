@@ -170,16 +170,20 @@ func _scenario_bootstrap() -> void:
 		await get_tree().process_frame
 	# Load ScenarioRunner sebagai script instance langsung dari ErrorTracker
 	# Tidak bergantung pada Main node yang akan hancur karena hot-reload
-	var runner_script = load("res://scripts/ScenarioRunner.gd")
+	# Gunakan GDScript type agar kompatibel dengan unsafe_method_access strict mode
+	var runner_script: GDScript = load("res://scripts/ScenarioRunner.gd")
 	if runner_script == null:
 		print("[ErrorTracker] ERROR: Gagal load ScenarioRunner.gd")
 		get_tree().quit(1)
 		return
-	var runner := runner_script.new() as Node
+	# Buat instance tanpa cast 'as Node' -- cast ke type konkret gagal di strict mode
+	# karena load() mengembalikan GDScript resource, bukan class yang diketahui compiler.
+	# Gunakan .call() untuk semua method custom agar strict mode tidak complain.
+	var runner: Node = runner_script.new()
 	get_tree().root.add_child(runner)
 	await get_tree().process_frame
 	print("[ErrorTracker] ScenarioRunner dibuat, menjalankan scenario...")
-	var exit_code: int = await runner.run_scenario_file(scenario_path)
+	var exit_code: int = await runner.call("run_scenario_file", scenario_path)
 	get_tree().quit(exit_code)
 
 
@@ -275,7 +279,7 @@ func has_errors() -> bool:
 
 ## Apakah ada error dengan category tertentu?
 func has_error_category(category: String) -> bool:
-	return _errors.any(func(e): return e.get("category") == category)
+	return _errors.any(func(e: Dictionary) -> bool: return e.get("category") == category)
 
 
 # -- Helper ---------------------------------------------------------------------
