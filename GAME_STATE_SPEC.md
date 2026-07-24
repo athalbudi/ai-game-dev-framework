@@ -310,3 +310,64 @@ struktur layar dan komponen game Anda.
 - `resolutions` menandai isu yang sudah ditangani — bridge menampilkan status ini di output.
 - Jika `shot_files` tidak ditemukan di `shots_dir`, bridge tetap berjalan tapi menandai screenshot sebagai hilang.
 - Lihat `screen-index-template.json` di root repo untuk contoh lengkap yang siap dimodifikasi.
+
+---
+
+## fix-request.json — Kontrak untuk AI-driven fix loop
+
+`fix-request.json` adalah output `AnomalyDetector.build_fix_requests()` — menjembatani anomali yang
+terdeteksi (dari `shots-manifest.json`, `game_state.json`, `scenario_result.json`) ke bentuk yang bisa
+langsung dieksekusi oleh agent penulis kode, tanpa agent itu sendiri yang menentukan apakah anomalinya
+layak ditindaklanjuti.
+
+### Prinsip desain
+
+1. **`reproducing_scenario` harus menunjuk ke scenario yang sudah ada**, bukan yang di-generate agent
+   dalam iterasi yang sama dengan fix-nya. Agent yang menulis scenario verifikasi untuk fix-nya sendiri
+   adalah pola yang sama dengan kegagalan yang berulang di `test-pipeline.ps1` TEST 7 — validator dan
+   yang divalidasi berbagi asumsi (dan blind spot) yang sama.
+2. **Fix-request tanpa scenario yang cocok tetap dihasilkan, tapi berstatus `blocked_no_scenario`** —
+   bukan dibuang diam-diam. Ini agar manusia tahu ada anomali yang butuh scenario baru ditulis (oleh
+   manusia atau lewat proses review terpisah) sebelum anomali itu bisa masuk fix loop otomatis.
+3. Field mengikuti struktur anomaly yang sudah ada di `autonomous-qa.ps1` (`Detect-Anomalies`) dan
+   `AnomalyDetector.gd` (`detect_all()`) — `fix-request.json` tidak menambah taksonomi baru, hanya
+   memperkaya anomaly yang sudah terdeteksi dengan pointer eksekusi (`reproducing_scenario`, `status`).
+
+### Schema
+
+```json
+{
+  "schema_version": "string — versi kontrak ini, saat ini \"1.0\"",
+  "generated_at":   "string — ISO 8601 timestamp saat fix-request dibuat",
+
+  "fix_requests": [
+    {
+      "fix_request_id": "string — id unik, biasanya <anomaly.id>_<timestamp>",
+      "source":         "string — anomaly | feedback",
+      "type":           "string — visual | state | scenario | performance | coverage | scenario_drift",
+      "severity":       "string — critical | warning | info",
+      "description":    "string — deskripsi teknis anomali",
+      "evidence":       "object — data konkret pendukung (nilai aktual vs ekspektasi)",
+      "target_file":    "string — screenshot atau file kode yang terkait, boleh kosong",
+      "suggested_action": "string — langkah investigasi yang disarankan",
+      "step_hint":      "string — step type ScenarioRunner yang relevan",
+      "reproducing_scenario": "string atau null — path scenario JSON yang SUDAH ADA di scenarios/ dan mereproduksi anomali ini secara deterministik. null jika belum ada scenario yang cocok.",
+      "status":         "string — actionable (reproducing_scenario terisi) | blocked_no_scenario (masih null)"
+    }
+  ]
+}
+```
+
+### Catatan penggunaan
+
+- Hanya fix-request dengan `status: "actionable"` yang boleh masuk ke tahap eksekusi otomatis (agent
+  menulis patch). `blocked_no_scenario` adalah sinyal untuk manusia, bukan untuk agent — jangan biarkan
+  agent membuat scenario baru sendiri hanya untuk mengubah status ini menjadi `actionable`.
+- Korelasi `target_file` → `reproducing_scenario` dilakukan dengan mencocokkan step di setiap file
+  `scenarios/*.json` terhadap `target_file` (mis. step `screenshot`/`assert_screenshot_exists` dengan
+  `name` yang cocok, atau `assert_state` dengan `key` yang menyentuh field terkait). Kalau tidak ada
+  yang cocok, `reproducing_scenario` tetap `null` — tidak ada fallback ke pencarian samar.
+- Lihat `fix-request-template.json` di root repo untuk contoh lengkap.
+- Gate verifikasi (lihat `run-and-analyze.ps1` — `Test-ProtectedFileViolation`) memperlakukan file yang
+  dirujuk `reproducing_scenario` sebagai protected — patch yang mengubah file itu sendiri gagal
+  verifikasi tanpa terkecuali, terlepas dari hasil scenario/visual-diff lainnya.

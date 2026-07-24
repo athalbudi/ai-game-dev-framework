@@ -91,6 +91,52 @@ func detect_from_manifest(manifest_path: String) -> Array[Dictionary]:
 	return detect_all(manifest_path, "")
 
 
+## Bangun fix-request.json dari anomali yang terdeteksi -- lihat GAME_STATE_SPEC.md
+## bagian "fix-request.json" untuk kontrak lengkap.
+##
+## reproducing_scenario HANYA diisi dari scenario yang SUDAH ADA di scenarios_dir --
+## method ini tidak pernah men-generate scenario baru. Anomali tanpa scenario yang
+## cocok tetap dihasilkan dengan status "blocked_no_scenario", bukan dibuang --
+## itu sinyal untuk manusia menulis scenario baru, bukan untuk agent membuatnya
+## sendiri dalam iterasi yang sama dengan fix-nya.
+##
+## Method ini murni (tidak menulis file), sama seperti detect_all(). Untuk menulis:
+##   var fr := AnomalyDetector.new().build_fix_requests(manifest_path, scenarios_dir)
+##   var f := FileAccess.open("user://shots/fix-requests.json", FileAccess.WRITE)
+##   if f: f.store_string(JSON.stringify(fr, "\t"))
+func build_fix_requests(manifest_path: String, scenarios_dir: String, scenario_result_path: String = "") -> Dictionary:
+	var anomalies := detect_all(manifest_path, scenario_result_path)
+	var requests: Array[Dictionary] = []
+	var ts := Time.get_datetime_string_from_system()
+	var ts_compact := str(int(Time.get_unix_time_from_system()))
+
+	for i in range(anomalies.size()):
+		var a: Dictionary = anomalies[i]
+		var target_file: String = a.get("target_file", "")
+		var evidence: Dictionary = a.get("evidence", {})
+		var scenario_path := _find_reproducing_scenario(target_file, evidence, scenarios_dir)
+		var status := "actionable" if scenario_path != "" else "blocked_no_scenario"
+		requests.append({
+			"fix_request_id": "%s_%d_%s" % [a.get("type", "anomaly"), i, ts_compact],
+			"source": "anomaly",
+			"type": a.get("type", ""),
+			"severity": a.get("severity", ""),
+			"description": a.get("description", ""),
+			"evidence": evidence,
+			"target_file": target_file,
+			"suggested_action": a.get("suggested_action", ""),
+			"step_hint": a.get("step_hint", ""),
+			"reproducing_scenario": scenario_path if scenario_path != "" else null,
+			"status": status,
+		})
+
+	return {
+		"schema_version": "1.0",
+		"generated_at": ts,
+		"fix_requests": requests,
+	}
+
+
 # -- Detectors ------------------------------------------------------------------
 func _detect_telemetry_phase(manifest: Dictionary) -> Array[Dictionary]:
 	var results: Array[Dictionary] = []
@@ -135,7 +181,10 @@ func _detect_stale_screenshots(manifest: Dictionary) -> Array[Dictionary]:
 			continue
 
 		# Parse last_write ke unix time
-		var dt = Time.get_unix_time_from_datetime_string(last_write)
+		# Tipe eksplisit (bukan bare "="): tanpa ini, "age_hours := (run_time - dt)"
+		# di bawah gagal compile pada Godot 4.7 vanilla (inference_on_variant error
+		# by default) -- dt yang untyped meracuni inferensi ekspresi yang memakainya.
+		var dt: float = Time.get_unix_time_from_datetime_string(last_write)
 		if dt <= 0:
 			continue
 
@@ -261,7 +310,9 @@ func _detect_state_anomalies(game_state: Dictionary, manifest: Dictionary) -> Ar
 	var shots_taken = game_state.get("shots_taken", null)
 	var png_count: int = manifest.get("png_count", 0)
 	if shots_taken != null and int(str(shots_taken)) != png_count:
-		var diff := abs(int(str(shots_taken)) - png_count)
+		# Tipe eksplisit: abs() bertanda-tangan Variant di GDScript static analyzer,
+		# jadi "diff := abs(...)" gagal compile di Godot 4.7 vanilla tanpa ini.
+		var diff: int = abs(int(str(shots_taken)) - png_count)
 		if diff > 2:  # toleransi 2 (zoom crops, dll)
 			results.append(_make_anomaly(
 				"state", WARNING,
@@ -414,6 +465,69 @@ func _load_json(path: String) -> Dictionary:
 	file.close()
 	var data = json.get_data()
 	return data if data is Dictionary else {}
+
+
+## Normalisasi nama file screenshot untuk perbandingan: "03_battle.png" -> "battle".
+## Konvensi yang sama dengan coverage tracker di shot-harness.ps1 (strip prefix
+## angka + suffix ekstensi, lowercase) -- supaya "03_battle.png" (dari manifest)
+## dan "battle" (dari nama step scenario) dianggap identik.
+func _normalize_screen_name(file_name: String) -> String:
+	if file_name == "":
+		return ""
+	var stem := file_name.get_file()
+	var dot := stem.rfind(".")
+	if dot > 0:
+		stem = stem.substr(0, dot)
+	var us := stem.find("_")
+	if us > 0 and stem.substr(0, us).is_valid_int():
+		stem = stem.substr(us + 1)
+	return stem.to_lower()
+
+
+## Cari scenario yang SUDAH ADA di scenarios_dir yang mereproduksi anomali ini.
+## Pencocokan EKSAK saja -- nama screenshot ternormalisasi harus sama persis, atau
+## key assert_state harus sama persis dengan salah satu key di evidence. Sengaja
+## tidak fuzzy: korelasi yang salah (menunjuk ke scenario yang sebenarnya tidak
+## mereproduksi anomali ini) lebih berbahaya daripada tidak ada korelasi sama
+## sekali -- yang terakhir cuma menghasilkan status "blocked_no_scenario", jalur
+## yang aman.
+func _find_reproducing_scenario(target_file: String, evidence: Dictionary, scenarios_dir: String) -> String:
+	if not DirAccess.dir_exists_absolute(scenarios_dir):
+		return ""
+	var target_norm := _normalize_screen_name(target_file)
+	var dir := DirAccess.open(scenarios_dir)
+	if dir == null:
+		return ""
+	dir.list_dir_begin()
+	var fname := dir.get_next()
+	while fname != "":
+		if fname.ends_with(".json"):
+			var scenario_path := scenarios_dir.path_join(fname)
+			var scenario := _load_json(scenario_path)
+			if _scenario_matches(scenario, target_norm, evidence):
+				dir.list_dir_end()
+				return scenario_path
+		fname = dir.get_next()
+	dir.list_dir_end()
+	return ""
+
+
+func _scenario_matches(scenario: Dictionary, target_norm: String, evidence: Dictionary) -> bool:
+	if not scenario.has("steps") or not (scenario["steps"] is Array):
+		return false
+	for step in scenario["steps"]:
+		if not (step is Dictionary):
+			continue
+		var step_type: String = step.get("type", "")
+		if target_norm != "" and (step_type == "screenshot" or step_type == "assert_screenshot_exists"):
+			var step_name: String = step.get("name", "")
+			if step_name != "" and _normalize_screen_name(step_name) == target_norm:
+				return true
+		if step_type == "assert_state":
+			var key: String = step.get("key", step.get("field", ""))
+			if key != "" and evidence.has(key):
+				return true
+	return false
 
 
 func _resolve_dot_key(data: Dictionary, key: String):

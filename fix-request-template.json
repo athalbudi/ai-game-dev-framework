@@ -1,0 +1,34 @@
+{
+  "_comment": "fix-request-template.json — contoh output AnomalyDetector.build_fix_requests().",
+  "_comment2": "Lihat GAME_STATE_SPEC.md bagian 'fix-request.json' untuk penjelasan lengkap setiap field.",
+  "schema_version": "1.0",
+  "generated_at": "2026-07-24T10:00:00",
+  "fix_requests": [
+    {
+      "fix_request_id": "state_hp_alive_mismatch_20260724100000",
+      "source": "anomaly",
+      "type": "state",
+      "severity": "critical",
+      "description": "State mismatch: hp=0 tapi is_alive=true",
+      "evidence": { "player.hp": 0, "player.is_alive": true },
+      "target_file": "",
+      "suggested_action": "Cek UI binding health bar -- kemungkinan terputus dari nilai aktual",
+      "step_hint": "assert_state",
+      "reproducing_scenario": "scenarios/battle_health_regression.json",
+      "status": "actionable"
+    },
+    {
+      "fix_request_id": "regression_02_gameplay_png_20260724100000",
+      "source": "anomaly",
+      "type": "visual",
+      "severity": "critical",
+      "description": "Visual regression: 02_gameplay.png berubah 4.20%",
+      "evidence": { "file": "02_gameplay.png", "change_pct": 4.2 },
+      "target_file": "02_gameplay.png",
+      "suggested_action": "Buka diff image dan bandingkan dengan baseline untuk identifikasi perubahan",
+      "step_hint": "screenshot",
+      "reproducing_scenario": null,
+      "status": "blocked_no_scenario"
+    }
+  ]
+}
