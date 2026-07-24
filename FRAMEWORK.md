@@ -126,6 +126,26 @@ Menyalin template universal ke `<ProjectPath>/scenarios/`. Skip jika sudah ada.
 
 ---
 
+## Known Limitations — Multiplayer Game
+
+Framework di-desain untuk single-player atau single-client game. Untuk game multiplayer
+(client-server architecture seperti godot-tiny-mmo), harness hanya bisa mencapai layar
+yang tersedia tanpa koneksi server aktif:
+
+- Login screen, title screen, pre-connection screen -- BISA di-screenshot
+- In-game world, gameplay, chat -- TIDAK bisa tanpa server aktif
+
+**Workaround yang direkomendasikan:**
+1. Tambahkan offline/demo mode ke game untuk testing headless
+2. Buat mock server sederhana yang bisa di-spawn bersama game untuk CI
+3. Screenshot hanya layar pre-connection dan gunakan scenario untuk validasi offline state
+
+**Contoh implementasi:**
+`_shot_tour()` hanya mengambil layar pre-connection karena game tidak bisa
+connect ke server saat `--shot` headless.
+
+---
+
 ## Known Limitations — Godot 4.7 Hot-Reload
 
 Godot 4.7 me-compile script di **background thread** bersamaan dengan shader cache loading,
