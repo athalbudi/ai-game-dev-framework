@@ -192,6 +192,7 @@ Write-Phase "INIT" "Project: $projectName ($ProjectPath)"
 
 # ── 2. Resolve ShotsDir dari konfigurasi harness ──────────────────────────────
 # Baca project.godot untuk mapping user:// -> AppData path
+# Mendukung config/use_custom_user_dir=true + config/custom_user_dir_name seperti shot-harness.ps1
 $shotsDir = ""
 $projectGodot = Join-Path $ProjectPath "project.godot"
 if (Test-Path -LiteralPath $projectGodot) {
@@ -199,16 +200,30 @@ if (Test-Path -LiteralPath $projectGodot) {
         $content = Get-Content -LiteralPath $projectGodot -Raw
         if ($content -match 'config/name="([^"]+)"') {
             $appName = $Matches[1]
-            $candidates = @(
-                "$env:APPDATA\Godot\app_userdata\$appName\shots",
-                "$env:APPDATA\godot\app_userdata\$appName\shots"
-            )
+            # Cek apakah project menggunakan custom user dir
+            $useCustomDir  = $content -match 'config/use_custom_user_dir=true'
+            $customDirName = ""
+            if ($useCustomDir -and $content -match 'config/custom_user_dir_name="([^"]+)"') {
+                $customDirName = $Matches[1]
+            }
+            if ($useCustomDir -and $customDirName -ne "") {
+                # Custom user dir: %APPDATA%\<custom_dir_name>\shots
+                $safeName = $customDirName -replace '[\\/:*?"<>|]', '_'
+                $candidates = @("$env:APPDATA\$safeName\shots")
+            } else {
+                # Standar Godot: %APPDATA%\Godot\app_userdata\<nama_project>\shots
+                $safeName = $appName -replace '[\\/:*?"<>|]', '_'
+                $candidates = @(
+                    "$env:APPDATA\Godot\app_userdata\$safeName\shots",
+                    "$env:APPDATA\godot\app_userdata\$safeName\shots"
+                )
+            }
             foreach ($c in $candidates) {
                 if (Test-Path -LiteralPath $c) { $shotsDir = $c; break }
             }
-            # Jika belum ada, buat folder
+            # Jika belum ada, gunakan kandidat pertama
             if ($shotsDir -eq "") {
-                $shotsDir = "$env:APPDATA\Godot\app_userdata\$appName\shots"
+                $shotsDir = $candidates[0]
             }
         }
     } catch { }
