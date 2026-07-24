@@ -56,6 +56,7 @@ Tidak terikat pada game tertentu, engine tertentu, atau struktur folder tertentu
 | `InputRecorder.gd` | Autoload untuk merekam input gameplay manual ke recording JSON |
 | `RecordingConverter.gd` | Konversi file rekaman ke scenario JSON untuk bug reproduction |
 | `ErrorTracker.gd` | Autoload: error tracking + bootstrap `--scenario` flag (hot-reload safe) |
+| `AnomalyDetector.gd` | **[In-development, belum disambungkan]** Deteksi anomali in-engine dari manifest/game_state/scenario_result. API: `AnomalyDetector.new().detect_all(manifest_path, scenario_result_path)`. Fungsionalitas serupa dengan `autonomous-qa.ps1` tapi dari sisi GDScript -- ditujukan untuk integrasi langsung ke game engine di masa depan. Belum perlu di-add ke Autoload. |
 
 ---
 
