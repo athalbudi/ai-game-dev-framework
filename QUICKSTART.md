@@ -121,7 +121,8 @@ Menyalin 4 template universal ke `scenarios/` project: smoke, screenshot_tour, c
    ```gdscript
    func goto_main_menu() -> void:
        if has_node("/root/GameStateWriter"):
-           get_node("/root/GameStateWriter").report_scene("main_menu")
+           # Gunakan .call() agar kompatibel dengan GDScript strict mode (unsafe_method_access)
+           get_node("/root/GameStateWriter").call("report_scene", "main_menu")
        # ... sisa kode
    ```
 
@@ -131,7 +132,8 @@ Menyalin 4 template universal ke `scenarios/` project: smoke, screenshot_tour, c
        return {
            "schema_version": "1.0",
            "build": MY_VERSION,
-           "current_scene": GameStateWriter.get_current_scene(),
+           # Gunakan .call() agar kompatibel dengan GDScript strict mode (unsafe_method_access)
+           "current_scene": get_node("/root/GameStateWriter").call("get_current_scene") if has_node("/root/GameStateWriter") else "",
            "frame_count": Engine.get_process_frames(),
            "timestamp": Time.get_datetime_string_from_system(),
            # field game-specific di sini

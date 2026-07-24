@@ -433,6 +433,89 @@ func _get_game_state() -> Dictionary:
     Write-S
 }
 
+# ── TEST 7: GDScript strict mode -- template harus load bersih di unsafe_method_access=2 ──
+# Ini adalah test regresi untuk masalah yang ditemukan auditor:
+# GameStateWriter/ErrorTracker gagal parse di bawah strict mode karena direct method call
+# di atas Node return value. Test ini memastikan tidak terulang.
+Write-T "TEST 7: GDScript strict mode -- template .gd load bersih tanpa unsafe method calls"
+if ($GodotExe -ne "" -and (Test-Path -LiteralPath $GodotExe)) {
+    try {
+        # Buat project minimal dengan strict mode aktif
+        $strictDir = Join-Path $tmpBase "strict_test"
+        $null = New-Item -ItemType Directory -Path $strictDir -Force
+        $strictScripts = Join-Path $strictDir "scripts"
+        $null = New-Item -ItemType Directory -Path $strictScripts -Force
+
+        # project.godot dengan unsafe_method_access=2 (strict)
+        @"
+[configuration]
+config_version=5
+
+[application]
+config/name="StrictTest"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.7")
+
+[autoload]
+GameStateWriter="*res://scripts/GameStateWriter.gd"
+ErrorTracker="*res://scripts/ErrorTracker.gd"
+
+[gdscript]
+warnings/unsafe_method_access=2
+warnings/unsafe_property_access=2
+warnings/return_value_discarded=0
+"@ | Set-Content (Join-Path $strictDir "project.godot") -Encoding UTF8
+
+        # main.tscn minimal
+        @"
+[gd_scene format=3 uid="uid://strict_main"]
+
+[node name="Main" type="Node"]
+"@ | Set-Content (Join-Path $strictDir "main.tscn") -Encoding UTF8
+
+        # Copy template tanpa BOM
+        $kiloTemplates = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        foreach ($tmpl in @("GameStateWriter.gd", "ErrorTracker.gd")) {
+            $src = Join-Path $kiloTemplates $tmpl
+            $dst = Join-Path $strictScripts $tmpl
+            if (Test-Path -LiteralPath $src) {
+                $bytes = [System.IO.File]::ReadAllBytes($src)
+                $start = if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { 3 } else { 0 }
+                $text = [System.Text.Encoding]::UTF8.GetString($bytes, $start, $bytes.Length - $start)
+                $enc = New-Object System.Text.UTF8Encoding($false)
+                [System.IO.File]::WriteAllText($dst, $text, $enc)
+            }
+        }
+
+        # Jalankan Godot headless --quit dan cek apakah ada Parse Error dari template
+        $logPath = Join-Path $env:TEMP "kilo_strict_test.txt"
+        $proc = Start-Process -FilePath $GodotExe `
+            -ArgumentList "--path", "`"$strictDir`"", "--headless", "--quit" `
+            -PassThru -NoNewWindow -RedirectStandardError $logPath -Wait
+
+        $logLines = @(Get-Content $logPath -ErrorAction SilentlyContinue)
+        # Cari Parse Error yang berasal dari template framework (bukan dari hot-reload main scene)
+        $templateErrors = @($logLines | Where-Object {
+            $_ -match "Parse Error" -and
+            ($_ -match "GameStateWriter|ErrorTracker") -and
+            $_ -notmatch "GDScript::reload"
+        })
+
+        if ($templateErrors.Count -eq 0) {
+            Add-Result "strict mode (unsafe_method_access=2)" $true "0 parse error di GameStateWriter/ErrorTracker"
+        } else {
+            $errDetail = ($templateErrors | Select-Object -First 2) -join "; "
+            Add-Result "strict mode (unsafe_method_access=2)" $false $errDetail
+        }
+        Remove-Item -LiteralPath $logPath -Force -ErrorAction SilentlyContinue
+    } catch {
+        Add-Result "strict mode (unsafe_method_access=2)" $false ("Exception: " + $_)
+    }
+} else {
+    Write-T "TEST 7: SKIP -- -GodotExe tidak diset"
+}
+Write-S
+
 
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }

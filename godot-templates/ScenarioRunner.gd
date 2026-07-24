@@ -151,14 +151,15 @@ func _exec_wait_scene(step: Dictionary) -> void:
 	if has_node("/root/GameStateWriter"):
 		var gsw := get_node("/root/GameStateWriter")
 		# Cek apakah sudah di scene yang dimaksud
-		if gsw.get_current_scene() == target:
+		# Gunakan .call() agar kompatibel dengan GDScript strict mode (unsafe_method_access=2)
+		if gsw.call("get_current_scene") == target:
 			_step_pass({"scene": target, "via": "GameStateWriter"})
 			return
 		# Tunggu signal dengan timeout
 		var elapsed: float = 0.0
 		var interval: float = 0.1
 		while elapsed < timeout:
-			if gsw.get_current_scene() == target:
+			if gsw.call("get_current_scene") == target:
 				_step_pass({"scene": target, "elapsed": elapsed, "via": "GameStateWriter"})
 				return
 			await _wait_frames(int(interval * 60))
