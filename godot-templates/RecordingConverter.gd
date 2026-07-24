@@ -9,20 +9,20 @@
 ## Atau via command /record convert di Kilo.
 ##
 ## Prinsip konversi:
-##   - Event action  → step "action"
-##   - Mouse button  → step "mouse_click"
-##   - Touch press   → step "touch"
-##   - Frame gaps    → step "wait_frames"
-##   - Checkpoint    → step "screenshot"
+##   - Event action  -> step "action"
+##   - Mouse button  -> step "mouse_click"
+##   - Touch press   -> step "touch"
+##   - Frame gaps    -> step "wait_frames"
+##   - Checkpoint    -> step "screenshot"
 ##   - Seed dari rekaman dipreservasi untuk reproduksi deterministik
 
 extends Node
 
-# ── Konstanta ──────────────────────────────────────────────────────────────────
+# -- Konstanta ------------------------------------------------------------------
 const MIN_WAIT_FRAMES := 2   # gap minimum sebelum insert wait_frames
 const MAX_WAIT_FRAMES := 300 # gap > ini dikonversi ke wait_frames dengan cap
 
-# ── API Publik ─────────────────────────────────────────────────────────────────
+# -- API Publik -----------------------------------------------------------------
 ## Konversi file rekaman ke scenario JSON.
 ## Kembalikan path scenario yang dihasilkan, atau "" jika gagal.
 static func convert(recording_path: String, scenario_name: String = "") -> String:
@@ -64,7 +64,7 @@ static func convert(recording_path: String, scenario_name: String = "") -> Strin
 		"tags": ["replay", "auto-generated", "bug-reproduction"],
 		"notes": [
 			"Scenario ini di-generate otomatis dari rekaman input gameplay.",
-			"Seed: %d — jalankan ulang untuk hasil deterministik." % recording.get("seed", 0),
+			"Seed: %d -- jalankan ulang untuk hasil deterministik." % recording.get("seed", 0),
 			"Durasi rekaman asli: %.1f detik." % recording.get("duration_sec", 0),
 			"Source: %s" % recording_path
 		],
@@ -112,7 +112,7 @@ static func convert_to_scenarios_dir(recording_path: String,
 	return dest
 
 
-# ── Internal ───────────────────────────────────────────────────────────────────
+# -- Internal -------------------------------------------------------------------
 static func _convert_events(events: Array) -> Array:
 	var steps := []
 	var last_frame: int = 0
@@ -199,7 +199,7 @@ static func _convert_events(events: Array) -> Array:
 				})
 
 			"mouse_motion", "drag", "key":
-				# Skip — tidak dikonversi ke step (tidak deterministik atau tidak relevan)
+				# Skip -- tidak dikonversi ke step (tidak deterministik atau tidak relevan)
 				pass
 
 	steps.append({

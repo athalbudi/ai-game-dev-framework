@@ -11,25 +11,25 @@
 ##   var detector := AnomalyDetector.new()
 ##   var anomalies := detector.detect_all(manifest_path, scenario_result_path)
 ##   for a in anomalies:
-##       print(a.severity, " — ", a.description, " → ", a.suggested_action)
+##       print(a.severity, " -- ", a.description, " -> ", a.suggested_action)
 ##
 ## Output anomaly: Dictionary dengan field:
-##   type        — kategori anomali (visual, state, performance, scenario, coverage)
-##   severity    — "critical" | "warning" | "info"
-##   description — deskripsi teknis anomali
-##   evidence    — data konkret yang mendukung (nilai aktual vs ekspektasi)
-##   suggested_action — langkah investigasi yang disarankan
-##   step_hint   — step type ScenarioRunner yang relevan untuk investigasi
-##   target_file — screenshot atau layar yang terkait (jika ada)
+##   type        -- kategori anomali (visual, state, performance, scenario, coverage)
+##   severity    -- "critical" | "warning" | "info"
+##   description -- deskripsi teknis anomali
+##   evidence    -- data konkret yang mendukung (nilai aktual vs ekspektasi)
+##   suggested_action -- langkah investigasi yang disarankan
+##   step_hint   -- step type ScenarioRunner yang relevan untuk investigasi
+##   target_file -- screenshot atau layar yang terkait (jika ada)
 
 extends RefCounted
 
-# ── Konstanta severity ─────────────────────────────────────────────────────────
+# -- Konstanta severity ---------------------------------------------------------
 const CRITICAL := "critical"
 const WARNING  := "warning"
 const INFO     := "info"
 
-# ── Entry point utama ──────────────────────────────────────────────────────────
+# -- Entry point utama ----------------------------------------------------------
 ## Deteksi semua anomali dari semua sumber data yang tersedia.
 ## Kembalikan Array[Dictionary] anomali, diurutkan dari severity tertinggi.
 func detect_all(manifest_path: String, scenario_result_path: String = "") -> Array[Dictionary]:
@@ -91,7 +91,7 @@ func detect_from_manifest(manifest_path: String) -> Array[Dictionary]:
 	return detect_all(manifest_path, "")
 
 
-# ── Detectors ──────────────────────────────────────────────────────────────────
+# -- Detectors ------------------------------------------------------------------
 func _detect_telemetry_phase(manifest: Dictionary) -> Array[Dictionary]:
 	var results: Array[Dictionary] = []
 	var phase: String = manifest.get("telemetry_phase", "unknown")
@@ -99,7 +99,7 @@ func _detect_telemetry_phase(manifest: Dictionary) -> Array[Dictionary]:
 	if phase == "prototype":
 		results.append(_make_anomaly(
 			"coverage", WARNING,
-			"Fase telemetry: prototype — belum ada screenshot",
+			"Fase telemetry: prototype -- belum ada screenshot",
 			{"telemetry_phase": phase},
 			"Implementasikan --shot handler di kode game untuk mulai mengambil screenshot",
 			"screenshot"
@@ -107,7 +107,7 @@ func _detect_telemetry_phase(manifest: Dictionary) -> Array[Dictionary]:
 	elif phase == "developing":
 		results.append(_make_anomaly(
 			"coverage", INFO,
-			"Fase telemetry: developing — screenshot ada tapi game_state belum tersedia",
+			"Fase telemetry: developing -- screenshot ada tapi game_state belum tersedia",
 			{"telemetry_phase": phase, "png_count": manifest.get("png_count", 0)},
 			"Implementasikan _write_game_state() untuk analisis lebih dalam",
 			"write_state"
@@ -245,7 +245,7 @@ func _detect_state_anomalies(game_state: Dictionary, manifest: Dictionary) -> Ar
 					"state", CRITICAL,
 					"Health bar mismatch: hp=0 tapi is_alive=true",
 					{"player.hp": hp, "player.hp_max": hp_max, "player.is_alive": is_alive},
-					"Cek UI binding health bar — kemungkinan terputus dari nilai aktual",
+					"Cek UI binding health bar -- kemungkinan terputus dari nilai aktual",
 					"assert_state"
 				))
 			elif hp_pct < 0.0 or float(str(hp)) > float(str(hp_max)):
@@ -265,7 +265,7 @@ func _detect_state_anomalies(game_state: Dictionary, manifest: Dictionary) -> Ar
 		if diff > 2:  # toleransi 2 (zoom crops, dll)
 			results.append(_make_anomaly(
 				"state", WARNING,
-				"Mismatch shots_taken(%d) vs png_count(%d) — selisih %d" % [
+				"Mismatch shots_taken(%d) vs png_count(%d) -- selisih %d" % [
 					int(str(shots_taken)), png_count, diff
 				],
 				{"game_state.shots_taken": shots_taken, "manifest.png_count": png_count},
@@ -319,7 +319,7 @@ func _detect_scenario_failures(scenario_result: Dictionary) -> Array[Dictionary]
 		var skip_types := skipped_steps.map(func(s): return s.get("type", "?"))
 		results.append(_make_anomaly(
 			"scenario", WARNING,
-			"%d step di-skip — mungkin butuh setup tambahan" % skipped_steps.size(),
+			"%d step di-skip -- mungkin butuh setup tambahan" % skipped_steps.size(),
 			{"skipped_types": skip_types},
 			"Cek apakah InputMap, game_state hook, atau ScenarioRunner sudah di-setup",
 			"log"
@@ -331,7 +331,7 @@ func _detect_scenario_failures(scenario_result: Dictionary) -> Array[Dictionary]
 func _detect_performance_signals(manifest: Dictionary, scenario_result: Dictionary) -> Array[Dictionary]:
 	var results: Array[Dictionary] = []
 
-	# Cek elapsed time harness — sangat lambat bisa indikasi masalah
+	# Cek elapsed time harness -- sangat lambat bisa indikasi masalah
 	var elapsed: float = float(manifest.get("elapsed_sec", 0))
 	if elapsed > 60:
 		results.append(_make_anomaly(
@@ -376,7 +376,7 @@ func _detect_missing_seed(manifest: Dictionary, game_state: Dictionary) -> Array
 	if not has_seed:
 		results.append(_make_anomaly(
 			"coverage", INFO,
-			"Seed tidak ditemukan di game_state — reproduksi deterministik terbatas",
+			"Seed tidak ditemukan di game_state -- reproduksi deterministik terbatas",
 			{"telemetry_phase": phase},
 			"Tambahkan field seed (game_state.seed, world.seed, atau session.seed)",
 			"seed_override"
@@ -385,7 +385,7 @@ func _detect_missing_seed(manifest: Dictionary, game_state: Dictionary) -> Array
 	return results
 
 
-# ── Utilitas ────────────────────────────────────────────────────────────────────
+# -- Utilitas --------------------------------------------------------------------
 func _make_anomaly(type: String, severity: String, description: String,
                    evidence: Dictionary, suggested_action: String,
                    step_hint: String, target_file: String = "") -> Dictionary:

@@ -6,9 +6,9 @@
 ##   InputRecorder="*res://scripts/InputRecorder.gd"
 ##
 ## Cara pakai:
-##   InputRecorder.start()          — mulai rekam (biasanya di _ready() atau tombol debug)
-##   InputRecorder.stop()           — berhenti rekam, tulis recording ke disk
-##   InputRecorder.is_recording()   — cek apakah sedang merekam
+##   InputRecorder.start()          -- mulai rekam (biasanya di _ready() atau tombol debug)
+##   InputRecorder.stop()           -- berhenti rekam, tulis recording ke disk
+##   InputRecorder.is_recording()   -- cek apakah sedang merekam
 ##
 ## Output: user://shots/recording_<timestamp>.json
 ## Konversi ke scenario: gunakan RecordingConverter.gd atau /record convert command
@@ -21,12 +21,12 @@
 
 extends Node
 
-# ── Konstanta ──────────────────────────────────────────────────────────────────
+# -- Konstanta ------------------------------------------------------------------
 const SCHEMA_VERSION   := "1.0"
 const MAX_EVENTS       := 10000   # batas rekaman untuk mencegah file terlalu besar
 const AUTO_SCREENSHOT_INTERVAL := 300  # ambil screenshot setiap N frame (0 = off)
 
-# ── State ──────────────────────────────────────────────────────────────────────
+# -- State ----------------------------------------------------------------------
 var _recording: bool = false
 var _events: Array[Dictionary] = []
 var _start_frame: int = 0
@@ -37,12 +37,12 @@ var _screenshot_counter: int = 0
 var _frame_counter: int = 0
 var _output_path: String = ""
 
-# ── Signals ────────────────────────────────────────────────────────────────────
+# -- Signals --------------------------------------------------------------------
 signal recording_started(session_id: String)
 signal recording_stopped(output_path: String, event_count: int)
 signal recording_screenshot(filename: String, frame: int)
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+# -- Entry point ----------------------------------------------------------------
 func _ready() -> void:
 	set_process_input(false)
 	set_process(false)
@@ -52,7 +52,7 @@ func _input(event: InputEvent) -> void:
 	if not _recording:
 		return
 	if _events.size() >= MAX_EVENTS:
-		push_warning("[InputRecorder] MAX_EVENTS tercapai — rekaman dihentikan otomatis")
+		push_warning("[InputRecorder] MAX_EVENTS tercapai -- rekaman dihentikan otomatis")
 		stop()
 		return
 
@@ -70,11 +70,11 @@ func _process(_delta: float) -> void:
 		_take_checkpoint_screenshot()
 
 
-# ── Public API ─────────────────────────────────────────────────────────────────
+# -- Public API -----------------------------------------------------------------
 ## Mulai merekam. Seed opsional untuk reproduksi deterministik.
 func start(seed_override: int = -1) -> void:
 	if _recording:
-		push_warning("[InputRecorder] Sudah merekam — stop dulu sebelum start baru")
+		push_warning("[InputRecorder] Sudah merekam -- stop dulu sebelum start baru")
 		return
 
 	_recording      = true
@@ -113,7 +113,7 @@ func stop() -> void:
 
 	var duration := Time.get_unix_time_from_system() - _start_time
 	_write_recording(duration)
-	print("[InputRecorder] Rekaman selesai: %d events dalam %.1fs → %s" % [
+	print("[InputRecorder] Rekaman selesai: %d events dalam %.1fs -> %s" % [
 		_events.size(), duration, _output_path
 	])
 	recording_stopped.emit(_output_path, _events.size())
@@ -150,7 +150,7 @@ static func list_recordings() -> Array[String]:
 	return result
 
 
-# ── Internal ───────────────────────────────────────────────────────────────────
+# -- Internal -------------------------------------------------------------------
 func _record_event(event: InputEvent, frame_offset: int) -> Dictionary:
 	## Konversi InputEvent ke Dictionary yang bisa di-serialize ke JSON.
 	## Hanya event yang relevan untuk reproduksi yang direkam.

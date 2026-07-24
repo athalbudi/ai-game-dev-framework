@@ -1,6 +1,6 @@
 # ScenarioRunner.gd
 # Universal scenario runner untuk AI-assisted game development framework.
-# JANGAN daftarkan sebagai Autoload di project.godot — ini akan menyebabkan
+# JANGAN daftarkan sebagai Autoload di project.godot -- ini akan menyebabkan
 # hot-reload race condition. Muat sebagai script instance dari ErrorTracker._scenario_bootstrap().
 # Lihat README.md dan FRAMEWORK.md untuk cara penggunaan yang benar.
 #
@@ -30,7 +30,7 @@ var _active: bool = false
 
 func _ready() -> void:
 	# Hanya aktif jika dipanggil langsung via _run_scenario dari main, bukan --scenario flag
-	# main.gd yang mengontrol inisialisasi — ScenarioRunner hanya sebagai library
+	# main.gd yang mengontrol inisialisasi -- ScenarioRunner hanya sebagai library
 	pass
 
 
@@ -83,7 +83,7 @@ func _run_steps() -> int:
 		var step_type: String = step.get("type", "")
 		print("[scenario] step %d/%d: %s" % [i + 1, _steps.size(), step_type])
 		await _dispatch(step_type, step)
-		# Cek fail — gunakan type eksplisit agar tidak gagal saat hot-reload
+		# Cek fail -- gunakan type eksplisit agar tidak gagal saat hot-reload
 		if _step_results.size() > 0:
 			var last: Dictionary = _step_results[-1]
 			if last.get("status") == "fail":
@@ -385,7 +385,7 @@ func _exec_repeat(step: Dictionary) -> void:
 		for sub in sub_steps:
 			var sub_type: String = sub.get("type", "")
 			if sub_type == "repeat":
-				print("[scenario] nested repeat tidak didukung — skip")
+				print("[scenario] nested repeat tidak didukung -- skip")
 				continue
 			await _dispatch(sub_type, sub)
 			if _step_results.size() > 0:

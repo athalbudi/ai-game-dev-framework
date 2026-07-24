@@ -15,14 +15,14 @@ extends Node
 
 const OUTPUT_PATH := "user://shots/game_state.json"
 
-# Scene tracking — diupdate oleh game via report_scene()
+# Scene tracking -- diupdate oleh game via report_scene()
 # ScenarioRunner pakai ini untuk wait_scene yang tidak bergantung pada Godot scene transition
 var _current_scene_label: String = ""
 
 signal scene_label_changed(label: String)
 
 ## Report scene aktif ke framework.
-## Dipanggil dari game saat layar berubah — menggantikan Godot scene transition
+## Dipanggil dari game saat layar berubah -- menggantikan Godot scene transition
 ## yang tidak dipakai oleh game dengan navigasi programmatic.
 ##
 ## Contoh pemakaian:
@@ -46,7 +46,7 @@ func get_current_scene() -> String:
 ## Dipanggil otomatis saat step write_state dieksekusi.
 ## Game bisa override ini dengan mengimplementasikan _get_game_state() di node manapun.
 func _write_game_state() -> void:
-	# Cari node yang punya _get_game_state() — game-specific state provider
+	# Cari node yang punya _get_game_state() -- game-specific state provider
 	var providers := _find_nodes_with_method(get_tree().root, "_get_game_state")
 	var state: Dictionary
 	if providers.is_empty():
