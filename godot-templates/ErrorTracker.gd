@@ -149,7 +149,7 @@ func _scenario_bootstrap() -> void:
 		await get_tree().process_frame
 	# Load ScenarioRunner sebagai script instance langsung dari ErrorTracker
 	# Tidak bergantung pada Main node yang akan hancur karena hot-reload
-	var runner_script = load("res://scripts/ScenarioRunner.gd")
+	var runner_script: GDScript = load("res://scripts/ScenarioRunner.gd")
 	if runner_script == null:
 		print("[ErrorTracker] ERROR: Gagal load ScenarioRunner.gd")
 		get_tree().quit(1)
@@ -254,7 +254,7 @@ func has_errors() -> bool:
 
 ## Apakah ada error dengan category tertentu?
 func has_error_category(category: String) -> bool:
-	return _errors.any(func(e): return e.get("category") == category)
+	return _errors.any(func(e: Dictionary) -> bool: return e.get("category") == category)
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
