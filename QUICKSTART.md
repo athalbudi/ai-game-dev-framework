@@ -18,6 +18,16 @@ Tulis kode → Jalankan harness → AI lihat hasil → AI analisis → AI lapork
 
 ## Setup untuk Project Baru (10 Menit)
 
+> **Git setup:** Tambahkan `.godot/` ke `.gitignore` project Anda sebelum commit pertama.
+> Folder ini di-generate Godot saat runtime (cache, shader compiled, script bytecode) dan
+> bukan bagian dari source code. Tanpa ini, file runtime bisa masuk ke `git diff` dan
+> memicu false-positive di hard-block gate `run-and-analyze.ps1`.
+>
+> ```
+> # .gitignore
+> .godot/
+> ```
+
 ### Langkah 1 — Jalankan harness pertama kali
 
 Tidak perlu setup apapun di kode game. Harness langsung berjalan.

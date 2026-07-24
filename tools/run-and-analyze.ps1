@@ -79,7 +79,8 @@ param(
     [string]   $OutputReport         = "",
     [string]   $ReproducingScenario  = "",
     [string[]] $ProtectedPatterns    = @(),
-    [string]   $GateBaseRef          = "HEAD"
+    [string]   $GateBaseRef          = "HEAD",
+    [string]   $PatchRef             = ""
 )
 
 Set-StrictMode -Version Latest
@@ -112,7 +113,8 @@ function Test-ProtectedFileViolation {
     param(
         [string]   $RepoPath,
         [string[]] $ProtectedPatterns,
-        [string]   $BaseRef = "HEAD"
+        [string]   $BaseRef  = "HEAD",
+        [string]   $PatchRef = ""
     )
     $result = [ordered]@{
         violated       = $false
@@ -128,9 +130,24 @@ function Test-ProtectedFileViolation {
     }
     Push-Location $RepoPath
     try {
-        $unstaged = @(git diff --name-only $BaseRef 2>$null)
-        $staged   = @(git diff --name-only --cached $BaseRef 2>$null)
-        $changed  = @($unstaged + $staged | Where-Object { $_ -ne "" } | Select-Object -Unique)
+        if ($PatchRef -ne "") {
+            # Two-ref diff: bandingkan dua commit, tidak termasuk perubahan working-tree.
+            # Ini adalah mode yang benar untuk fix-loop otonom: patch sudah di-commit ke
+            # branch, gate membandingkan patch-branch vs base-branch tanpa noise dari
+            # file yang di-generate runtime (mis. .godot/, shots/). Efeknya deterministik
+            # dan tidak bergantung pada state working-tree saat verifikasi dijalankan.
+            $changed = @(git diff --name-only $BaseRef $PatchRef 2>$null |
+                         Where-Object { $_ -ne "" } | Select-Object -Unique)
+        } else {
+            # Single-ref diff (backward-compatible): bandingkan working-tree vs ref.
+            # Cocok untuk use-case non-loop (developer menjalankan run-and-analyze secara
+            # manual di working-tree dengan patch belum di-commit). Risiko false-positive
+            # dari file runtime (.godot/, shots/) ada -- mitigasi via -PatchRef jika dipakai
+            # dalam fix-loop otonom.
+            $unstaged = @(git diff --name-only $BaseRef 2>$null)
+            $staged   = @(git diff --name-only --cached $BaseRef 2>$null)
+            $changed  = @($unstaged + $staged | Where-Object { $_ -ne "" } | Select-Object -Unique)
+        }
     } finally {
         Pop-Location
     }
@@ -528,7 +545,7 @@ Write-Phase "GATE" "Cek protected-file violation..."
 
 $effectivePatterns = @(Get-DefaultProtectedPatterns -ReproducingScenario $ReproducingScenario) + @($ProtectedPatterns)
 $effectivePatterns = @($effectivePatterns | Select-Object -Unique)
-$gateResult = Test-ProtectedFileViolation -RepoPath $ProjectPath -ProtectedPatterns $effectivePatterns -BaseRef $GateBaseRef
+$gateResult = Test-ProtectedFileViolation -RepoPath $ProjectPath -ProtectedPatterns $effectivePatterns -BaseRef $GateBaseRef -PatchRef $PatchRef
 
 if ($gateResult.violated) {
     # Sengaja TIDAK pakai Write-Fail (exit langsung) -- laporan tetap harus ditulis

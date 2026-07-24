@@ -20,7 +20,8 @@
 
 [CmdletBinding()]
 param(
-    [switch] $DryRun
+    [switch] $DryRun,
+    [string] $GameProjectScriptsDir = ""
 )
 
 Set-StrictMode -Version Latest
@@ -95,6 +96,26 @@ $godotDst = Join-Path $kiloConfig "godot-templates"
 $gdFiles  = @(Get-ChildItem -LiteralPath $godotSrc -Filter "*.gd" -ErrorAction SilentlyContinue)
 foreach ($f in $gdFiles) {
     Sync-File $f.FullName (Join-Path $godotDst $f.Name)
+}
+
+# -- Sync ke vendored scripts di game project (opsional) -----------------------
+# Jika project game memiliki salinan framework templates di scripts/ mereka sendiri
+# (pattern yang umum untuk ErrorTracker.gd, GameStateWriter.gd, ScenarioRunner.gd),
+# jalankan dengan -GameProjectScriptsDir untuk sync sekaligus:
+#
+#   & ".\sync.ps1" -GameProjectScriptsDir "C:\path\ke\game\scripts"
+#
+# Tanpa parameter ini, hanya ~/.config/kilo yang ter-sync (default behavior).
+if ($script:PSBoundParameters.ContainsKey('GameProjectScriptsDir') -and $GameProjectScriptsDir -ne "") {
+    Write-Host "[sync] game-scripts/" -ForegroundColor DarkGray
+    $gameScriptsDst = $GameProjectScriptsDir
+    $frameworkTemplates = @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")
+    foreach ($tmpl in $frameworkTemplates) {
+        $src = Join-Path $godotSrc $tmpl
+        if (Test-Path -LiteralPath $src) {
+            Sync-File $src (Join-Path $gameScriptsDst $tmpl)
+        }
+    }
 }
 
 # -- Summary -------------------------------------------------------------------
