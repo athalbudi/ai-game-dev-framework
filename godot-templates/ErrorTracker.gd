@@ -8,10 +8,10 @@
 ##   ErrorTracker="*res://scripts/ErrorTracker.gd"
 ##
 ## Cara pakai:
-##   ErrorTracker.get_error_count()     — jumlah error sejak start atau reset terakhir
-##   ErrorTracker.get_errors()          — daftar semua error
-##   ErrorTracker.reset()               — reset counter
-##   ErrorTracker.get_last_error()      — error terakhir yang tercatat
+##   ErrorTracker.get_error_count()     -- jumlah error sejak start atau reset terakhir
+##   ErrorTracker.get_errors()          -- daftar semua error
+##   ErrorTracker.reset()               -- reset counter
+##   ErrorTracker.get_last_error()      -- error terakhir yang tercatat
 ##
 ## Integrasi dengan assert_no_error:
 ##   ScenarioRunner mencari node dengan method "_get_error_count()".
@@ -30,15 +30,15 @@
 
 extends Node
 
-# ── State ──────────────────────────────────────────────────────────────────────
+# -- State ----------------------------------------------------------------------
 var _errors: Array[Dictionary] = []
 var _warning_count: int = 0
 var _start_time: float = 0.0
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+# -- Entry point ----------------------------------------------------------------
 func _ready() -> void:
 	_start_time = Time.get_unix_time_from_system()
-	print("[ErrorTracker] Aktif — pantau error via log_error()")
+	print("[ErrorTracker] Aktif -- pantau error via log_error()")
 	# --shot mode dihandle oleh main.gd._ready() via call_deferred (pattern lama yang proven)
 	# ErrorTracker hanya menyediakan quit fallback jika game tidak quit sendiri
 	if "--shot" in OS.get_cmdline_user_args():
@@ -48,7 +48,7 @@ func _ready() -> void:
 
 func _shot_quit_watchdog() -> void:
 	# Bootstrap --shot: tunggu hot-reload selesai, lalu trigger _shot_tour di main node.
-	# Pola ini identik dengan _scenario_bootstrap — ErrorTracker sebagai autoload
+	# Pola ini identik dengan _scenario_bootstrap -- ErrorTracker sebagai autoload
 	# diload lebih stabil dari main.gd yang bergantung pada class_name globals.
 	# Dengan menunggu beberapa frame, hot-reload selesai dan semua class_name
 	# sudah ter-register sebelum _shot_tour dipanggil.
@@ -58,7 +58,7 @@ func _shot_quit_watchdog() -> void:
 	for _i in range(4):
 		await get_tree().process_frame
 
-	# Cari main node yang punya _shot_tour() — retry sampai 3600 frame (60 detik di 60fps)
+	# Cari main node yang punya _shot_tour() -- retry sampai 3600 frame (60 detik di 60fps)
 	# Beberapa game punya loading screen panjang sebelum main node siap (resources, Steam check, dll)
 	var main_node: Node = null
 	var maxSearchFrames := 3600
@@ -162,7 +162,7 @@ func _scenario_bootstrap() -> void:
 	get_tree().quit(exit_code)
 
 
-# ── Public API ─────────────────────────────────────────────────────────────────
+# -- Public API -----------------------------------------------------------------
 ## Jumlah error yang tercatat. Digunakan oleh ScenarioRunner assert_no_error.
 func _get_error_count() -> int:
 	return _errors.size()
@@ -257,7 +257,7 @@ func has_error_category(category: String) -> bool:
 	return _errors.any(func(e: Dictionary) -> bool: return e.get("category") == category)
 
 
-# ── Helper ─────────────────────────────────────────────────────────────────────
+# -- Helper ---------------------------------------------------------------------
 func _get_current_scene() -> String:
 	if get_tree() and get_tree().current_scene:
 		return get_tree().current_scene.name

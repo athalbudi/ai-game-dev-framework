@@ -55,6 +55,17 @@ function Sync-File {
             New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
         }
         Copy-Item -LiteralPath $src -Destination $dst -Force
+        # Re-write .gd files without BOM — Godot dan beberapa project punya strict encoding check
+        # yang gagal jika file punya BOM (UTF-8 with BOM = EF BB BF di awal file)
+        if ($src -match '\.gd$') {
+            $raw = [System.IO.File]::ReadAllBytes($dst)
+            $startIdx = if ($raw.Length -ge 3 -and $raw[0] -eq 0xEF -and $raw[1] -eq 0xBB -and $raw[2] -eq 0xBF) { 3 } else { 0 }
+            if ($startIdx -eq 3) {
+                $text = [System.Text.Encoding]::UTF8.GetString($raw, 3, $raw.Length - 3)
+                $noBom = New-Object System.Text.UTF8Encoding($false)
+                [System.IO.File]::WriteAllText($dst, $text, $noBom)
+            }
+        }
         Write-Ok (Split-Path $src -Leaf)
         $script:synced++
     } catch {
