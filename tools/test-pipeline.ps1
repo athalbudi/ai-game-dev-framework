@@ -473,9 +473,9 @@ warnings/return_value_discarded=0
 [node name="Main" type="Node"]
 "@ | Set-Content (Join-Path $strictDir "main.tscn") -Encoding UTF8
 
-        # Copy template tanpa BOM
+        # Copy template tanpa BOM -- termasuk ScenarioRunner untuk test scenario path
         $kiloTemplates = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
-        foreach ($tmpl in @("GameStateWriter.gd", "ErrorTracker.gd")) {
+        foreach ($tmpl in @("GameStateWriter.gd", "ErrorTracker.gd", "ScenarioRunner.gd")) {
             $src = Join-Path $kiloTemplates $tmpl
             $dst = Join-Path $strictScripts $tmpl
             if (Test-Path -LiteralPath $src) {
@@ -502,14 +502,57 @@ warnings/return_value_discarded=0
         })
 
         if ($templateErrors.Count -eq 0) {
-            Add-Result "strict mode (unsafe_method_access=2)" $true "0 parse error di GameStateWriter/ErrorTracker"
+            Add-Result "strict mode autoload (unsafe_method_access=2)" $true "0 parse error di GameStateWriter/ErrorTracker"
         } else {
             $errDetail = ($templateErrors | Select-Object -First 2) -join "; "
-            Add-Result "strict mode (unsafe_method_access=2)" $false $errDetail
+            Add-Result "strict mode autoload (unsafe_method_access=2)" $false $errDetail
         }
         Remove-Item -LiteralPath $logPath -Force -ErrorAction SilentlyContinue
+
+        # Part 2: test ScenarioRunner di bawah strict mode via --scenario
+        # ScenarioRunner bukan autoload -- hanya di-load saat --scenario dipanggil.
+        # Test ini memastikan jalur dinamis tersebut juga bersih di strict mode.
+        $scenarioDir = Join-Path $strictDir "scenarios"
+        $null = New-Item -ItemType Directory -Path $scenarioDir -Force
+        @"
+{
+  "scenario_id": "strict_smoke",
+  "description": "Strict mode smoke test",
+  "seed": 1,
+  "steps": [
+    {"type": "wait_frames", "frames": 2},
+    {"type": "log", "message": "strict mode scenario OK"}
+  ]
+}
+"@ | Set-Content (Join-Path $scenarioDir "strict_smoke.json") -Encoding UTF8
+
+        $scenarioLog = Join-Path $env:TEMP "kilo_strict_scenario.txt"
+        # Jalankan --import dulu agar cache ter-build
+        $null = Start-Process -FilePath $GodotExe `
+            -ArgumentList "--path", "`"$strictDir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+        $proc2 = Start-Process -FilePath $GodotExe `
+            -ArgumentList "--path", "`"$strictDir`"", "--", "--scenario", "res://scenarios/strict_smoke.json" `
+            -PassThru -NoNewWindow -RedirectStandardError $scenarioLog
+        $proc2.WaitForExit(30000)
+        if (-not $proc2.HasExited) { $proc2.Kill() }
+
+        $scenarioLines = @(Get-Content $scenarioLog -ErrorAction SilentlyContinue)
+        $scenarioParseErrors = @($scenarioLines | Where-Object {
+            $_ -match "Parse Error" -and $_ -match "ScenarioRunner" -and $_ -notmatch "GDScript::reload"
+        })
+        $scenarioPassed = $scenarioLines | Select-String "strict mode scenario OK"
+
+        if ($scenarioParseErrors.Count -eq 0) {
+            $detail = if ($scenarioPassed) { "ScenarioRunner parse bersih, scenario log OK" } else { "ScenarioRunner parse bersih (scenario mungkin timeout)" }
+            Add-Result "strict mode scenario (unsafe_method_access=2)" $true $detail
+        } else {
+            $errDetail = ($scenarioParseErrors | Select-Object -First 2) -join "; "
+            Add-Result "strict mode scenario (unsafe_method_access=2)" $false $errDetail
+        }
+        Remove-Item -LiteralPath $scenarioLog -Force -ErrorAction SilentlyContinue
     } catch {
-        Add-Result "strict mode (unsafe_method_access=2)" $false ("Exception: " + $_)
+        Add-Result "strict mode autoload (unsafe_method_access=2)" $false ("Exception: " + $_)
     }
 } else {
     Write-T "TEST 7: SKIP -- -GodotExe tidak diset"

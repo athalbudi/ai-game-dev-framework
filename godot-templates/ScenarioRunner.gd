@@ -17,8 +17,8 @@ const RESULT_PATH    := "user://shots/scenario_result.json"
 const SCHEMA_VERSION := "1.0"
 
 var _scenario: Dictionary = {}
-var _steps: Array = []
-var _step_results: Array = []
+var _steps: Array[Dictionary] = []
+var _step_results: Array[Dictionary] = []
 var _current_step: int = 0
 var _scenario_start_time: float = 0.0
 var _step_start_time: float = 0.0

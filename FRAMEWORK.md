@@ -104,7 +104,8 @@ Menyalin template universal ke `<ProjectPath>/scenarios/`. Skip jika sudah ada.
    func goto_title() -> void:
        _clear()
        if has_node("/root/GameStateWriter"):
-           get_node("/root/GameStateWriter").report_scene("title")
+           # Gunakan .call() agar kompatibel dengan GDScript strict mode (unsafe_method_access)
+           get_node("/root/GameStateWriter").call("report_scene", "title")
        # ... sisa kode
    ```
    Ini memungkinkan `wait_scene` step di scenario bekerja untuk game dengan
