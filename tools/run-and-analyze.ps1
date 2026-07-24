@@ -34,6 +34,24 @@
 .PARAMETER OutputReport
     Path file laporan JSON output. Default: <ShotsDir>\run-analyze-report.json
 
+.PARAMETER ReproducingScenario
+    Path (relatif ke ProjectPath) ke scenario yang dirujuk fix-request.json sebagai
+    reproducing_scenario. Jika diisi, file ini otomatis masuk daftar protected file --
+    lihat GATE di bawah.
+
+.PARAMETER ProtectedPatterns
+    Daftar pola (wildcard, relatif ke ProjectPath, pakai "/" bukan "\") yang tidak boleh
+    disentuh oleh patch yang sedang diverifikasi. Default mencakup seluruh scenarios/,
+    file ignore-config visual-diff, dan tiga template runtime (ScenarioRunner/
+    GameStateWriter/ErrorTracker.gd) yang di-vendor ke scripts/ project.
+    Lihat GAME_STATE_SPEC.md bagian "fix-request.json" untuk konteks kenapa gate ini ada:
+    fix loop tanpa manusia di antara "patch ditulis" dan "patch dijalankan" tidak punya
+    kesempatan lain menangkap patch yang melemahkan alat ukurnya sendiri.
+
+.PARAMETER GateBaseRef
+    Git ref pembanding untuk deteksi file yang berubah. Default: "HEAD" (uncommitted
+    working-tree changes, cocok untuk patch yang belum di-commit di worktree isolasi).
+
 .EXAMPLE
     # Loop lengkap dengan smoke test
     & "$env:USERPROFILE\.config\kilo\tools\run-and-analyze.ps1" -ProjectPath "C:\dev\mygame"
@@ -53,12 +71,15 @@
 
 [CmdletBinding()]
 param(
-    [string] $ProjectPath    = "",
-    [string] $ScenarioName   = "",
-    [string] $GodotExe       = "",
-    [int]    $Timeout        = 180,
-    [switch] $SkipHarness,
-    [string] $OutputReport   = ""
+    [string]   $ProjectPath          = "",
+    [string]   $ScenarioName         = "",
+    [string]   $GodotExe             = "",
+    [int]      $Timeout              = 180,
+    [switch]   $SkipHarness,
+    [string]   $OutputReport         = "",
+    [string]   $ReproducingScenario  = "",
+    [string[]] $ProtectedPatterns    = @(),
+    [string]   $GateBaseRef          = "HEAD"
 )
 
 Set-StrictMode -Version Latest
@@ -78,6 +99,71 @@ function Write-Info  { param($msg)
 
 $kiloConfig = Join-Path $env:USERPROFILE ".config\kilo"
 $harnessPs1 = Join-Path $kiloConfig "tools\shot-harness.ps1"
+
+# -- GATE: protected-file hard block -----------------------------------------------
+# Tanpa manusia di antara "patch ditulis" dan "patch dijalankan" (fix loop otonom),
+# gate ini adalah SATU-SATUNYA kesempatan menangkap patch yang melemahkan alat ukur
+# verifikasinya sendiri -- scenario yang diedit supaya lolos, ignore-region yang
+# diperluas supaya regresi visual tidak terdeteksi, atau template runtime yang
+# diubah supaya assertion tidak lagi menguji apa yang seharusnya. Ini keputusan
+# pass/fail itu sendiri, bukan filter tambahan di laporan -- kalau ada match,
+# verifikasi GAGAL tanpa terkecuali, terlepas dari bersihnya hasil scenario/visual-diff.
+function Test-ProtectedFileViolation {
+    param(
+        [string]   $RepoPath,
+        [string[]] $ProtectedPatterns,
+        [string]   $BaseRef = "HEAD"
+    )
+    $result = [ordered]@{
+        violated       = $false
+        changed_files  = @()
+        protected_hits = @()
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoPath ".git"))) {
+        # Bukan git repo -- gate tidak bisa dievaluasi. Fail-closed (anggap violated),
+        # bukan fail-open, karena tanpa git tidak ada cara lain memverifikasi scope patch.
+        $result.violated = $true
+        $result.protected_hits = @("(bukan git repository -- gate tidak bisa dievaluasi, fail-closed)")
+        return $result
+    }
+    Push-Location $RepoPath
+    try {
+        $unstaged = @(git diff --name-only $BaseRef 2>$null)
+        $staged   = @(git diff --name-only --cached $BaseRef 2>$null)
+        $changed  = @($unstaged + $staged | Where-Object { $_ -ne "" } | Select-Object -Unique)
+    } finally {
+        Pop-Location
+    }
+    $result.changed_files = $changed
+    foreach ($file in $changed) {
+        $fileNorm = $file -replace '\\', '/'
+        foreach ($pattern in $ProtectedPatterns) {
+            if ($fileNorm -like $pattern) {
+                $result.protected_hits += "$fileNorm (cocok pola: $pattern)"
+                $result.violated = $true
+            }
+        }
+    }
+    return $result
+}
+
+# Default protected patterns -- mulai ketat, longgarkan lewat -ProtectedPatterns
+# eksplisit per kasus, bukan sebaliknya (lihat GAME_STATE_SPEC.md).
+function Get-DefaultProtectedPatterns {
+    param([string] $ReproducingScenario = "")
+    $patterns = [System.Collections.Generic.List[string]]::new()
+    if ($ReproducingScenario -ne "") {
+        $patterns.Add(($ReproducingScenario -replace '\\', '/'))
+    }
+    $patterns.Add("scenarios/*")
+    $patterns.Add("scenarios/*/*")
+    $patterns.Add("shots.zoom.json")
+    $patterns.Add("visual-diff-ignore.json")
+    $patterns.Add("scripts/ScenarioRunner.gd")
+    $patterns.Add("scripts/GameStateWriter.gd")
+    $patterns.Add("scripts/ErrorTracker.gd")
+    return @($patterns)
+}
 
 # -- Auto-migrate manifest jika schema lama ----------------------------------------
 function Invoke-SchemaMigrationIfNeeded {
@@ -422,10 +508,29 @@ if (Test-Path -LiteralPath $gameStatePath) {
     $analysis.recommendations += "Implementasikan _write_game_state() untuk analisis lebih dalam (fase mature)"
 }
 
+# ── FASE GATE: protected-file hard block ──────────────────────────────────────
+Write-Phase "GATE" "Cek protected-file violation..."
+
+$effectivePatterns = @(Get-DefaultProtectedPatterns -ReproducingScenario $ReproducingScenario) + @($ProtectedPatterns)
+$effectivePatterns = @($effectivePatterns | Select-Object -Unique)
+$gateResult = Test-ProtectedFileViolation -RepoPath $ProjectPath -ProtectedPatterns $effectivePatterns -BaseRef $GateBaseRef
+
+if ($gateResult.violated) {
+    # Sengaja TIDAK pakai Write-Fail (exit langsung) -- laporan tetap harus ditulis
+    # lengkap dengan hasil scenario/visual-diff supaya manusia yang menerima eskalasi
+    # punya konteks penuh, bukan cuma "gate gagal".
+    Write-Host "[run-analyze] GATE FAIL: patch menyentuh file verifikasi -- eskalasi wajib, tidak lanjut ke merge" -ForegroundColor Red
+    foreach ($hit in $gateResult.protected_hits) { Write-Warn "  $hit" }
+} else {
+    Write-Ok "GATE: tidak ada protected-file violation ($($gateResult.changed_files.Count) file berubah)"
+}
+
 # ── FASE 5: REPORT ─────────────────────────────────────────────────────────────
 Write-Phase "REPORT" "Membuat laporan..."
 
-$overallStatus = if ($analysis.critical_issues.Count -gt 0) { "issues_found" } else { "clean" }
+$overallStatus = if ($gateResult.violated) { "escalation_required" } `
+                 elseif ($analysis.critical_issues.Count -gt 0) { "issues_found" } `
+                 else { "clean" }
 
 $report = [ordered]@{
     schema_version   = "1.0"
@@ -442,6 +547,12 @@ $report = [ordered]@{
             visual_regression = $phase4aStatus
             scenario_results  = if ($scenarioResult) { $scenarioResult.status } else { "not_run" }
         }
+        gate     = if ($gateResult.violated) { "violated" } else { "ok" }
+    }
+    gate             = [ordered]@{
+        violated       = $gateResult.violated
+        changed_files  = @($gateResult.changed_files)
+        protected_hits = @($gateResult.protected_hits)
     }
     analysis         = $analysis
     manifest_summary = if ($manifest) { [ordered]@{
@@ -473,10 +584,22 @@ Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
 Write-Host " RUN-AND-ANALYZE SELESAI" -ForegroundColor Cyan
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host " Status      : $overallStatus" -ForegroundColor $(if ($overallStatus -eq "clean") { "Green" } else { "Yellow" })
+Write-Host " Status      : $overallStatus" -ForegroundColor $(
+    if ($overallStatus -eq "clean") { "Green" }
+    elseif ($overallStatus -eq "escalation_required") { "Red" }
+    else { "Yellow" }
+)
 Write-Host " Scenario    : $(Split-Path $scenarioPath -Leaf)"
 Write-Host " Harness     : $phase1Status"
 Write-Host " Run         : $phase3Status"
+
+if ($gateResult.violated) {
+    Write-Host ""
+    Write-Host " GATE VIOLATION -- eskalasi wajib, TIDAK boleh merge otomatis:" -ForegroundColor Red
+    foreach ($hit in $gateResult.protected_hits) {
+        Write-Host "   - $hit" -ForegroundColor Red
+    }
+}
 
 if ($analysis.critical_issues.Count -gt 0) {
     Write-Host ""
@@ -497,3 +620,7 @@ if ($analysis.recommendations.Count -gt 0) {
 Write-Host ""
 Write-Host " Laporan detail: $OutputReport" -ForegroundColor Gray
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+# Exit code hard block -- orchestrator fix-loop harus bisa percaya exit code saja
+# tanpa parsing JSON untuk tahu apakah lanjut ke merge atau eskalasi ke manusia.
+if ($gateResult.violated) { exit 1 }
