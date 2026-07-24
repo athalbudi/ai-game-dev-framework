@@ -105,6 +105,10 @@ func _dispatch(step_type: String, step: Dictionary) -> void:
 		await _exec_wait_condition(step)
 	elif step_type == "action":
 		await _exec_action(step)
+	elif step_type == "touch_tap":
+		await _exec_touch_tap(step)
+	elif step_type == "controller_press":
+		await _exec_controller_press(step)
 	elif step_type == "mouse_click":
 		await _exec_mouse_click(step)
 	elif step_type == "screenshot":
@@ -252,6 +256,50 @@ func _exec_mouse_click(step: Dictionary) -> void:
 	if wait_after > 0:
 		await _wait_frames(wait_after)
 	_step_pass({"x": x, "y": y})
+
+
+func _exec_touch_tap(step: Dictionary) -> void:
+	var x: float = float(step.get("x", 0))
+	var y: float = float(step.get("y", 0))
+	var wait_after: int = int(step.get("wait_frames", 0))
+	var pos := Vector2(x, y)
+	var press := InputEventScreenTouch.new()
+	press.position = pos
+	press.pressed = true
+	press.index = 0
+	Input.parse_input_event(press)
+	await _wait_frames(2)
+	var rel := InputEventScreenTouch.new()
+	rel.position = pos
+	rel.pressed = false
+	rel.index = 0
+	Input.parse_input_event(rel)
+	if wait_after > 0:
+		await _wait_frames(wait_after)
+	_step_pass({"x": x, "y": y})
+
+
+func _exec_controller_press(step: Dictionary) -> void:
+	var button: int = int(step.get("button", JOY_BUTTON_A))
+	var duration_frames: int = int(step.get("duration_frames", 2))
+	var wait_after: int = int(step.get("wait_frames", 0))
+	var device: int = int(step.get("device", 0))
+	var press := InputEventJoypadButton.new()
+	press.button_index = button
+	press.pressed = true
+	press.device = device
+	press.pressure = 1.0
+	Input.parse_input_event(press)
+	await _wait_frames(duration_frames)
+	var rel := InputEventJoypadButton.new()
+	rel.button_index = button
+	rel.pressed = false
+	rel.device = device
+	rel.pressure = 0.0
+	Input.parse_input_event(rel)
+	if wait_after > 0:
+		await _wait_frames(wait_after)
+	_step_pass({"button": button, "device": device})
 
 
 func _exec_screenshot(step: Dictionary) -> void:

@@ -97,8 +97,10 @@ func _shot_quit_watchdog() -> void:
 		return
 
 	# Trigger shot tour via ErrorTracker (bukan call_deferred dari main._ready)
+	# Gunakan .call_deferred("_shot_tour") agar kompatibel dengan GDScript strict mode --
+	# memanggil custom method langsung di atas Node return value gagal di unsafe_method_access=2
 	print("[ErrorTracker] --shot watchdog: memanggil _shot_tour di %s" % main_node.name)
-	main_node._shot_tour.call_deferred()
+	main_node.call_deferred("_shot_tour")
 
 	# Tunggu shot tour selesai (maksimum 5 menit)
 	var shotsDir := "user://shots"

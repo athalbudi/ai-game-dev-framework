@@ -51,7 +51,7 @@ Tidak terikat pada game tertentu, engine tertentu, atau struktur folder tertentu
 
 | File | Deskripsi |
 |---|---|
-| `ScenarioRunner.gd` | Scenario engine (16 step types) — di-load oleh ErrorTracker, bukan Autoload |
+| `ScenarioRunner.gd` | Scenario engine (17 step types) -- di-load oleh ErrorTracker, bukan Autoload |
 | `GameStateWriter.gd` | Autoload: scene tracking via `report_scene()` + `_write_game_state()` hook |
 | `InputRecorder.gd` | Autoload untuk merekam input gameplay manual ke recording JSON |
 | `RecordingConverter.gd` | Konversi file rekaman ke scenario JSON untuk bug reproduction |
@@ -146,7 +146,24 @@ connect ke server saat `--shot` headless.
 
 ---
 
-## Known Limitations — Godot 4.7 Hot-Reload
+## Known Limitations -- GDScript Strict Mode
+
+Pada project yang mengaktifkan `gdscript/warnings/unsafe_method_access=2` di `project.godot`,
+dua framework autoload inti akan gagal di-load:
+
+- `GameStateWriter.gd:66` -- memanggil `et.get_errors()` langsung di atas `Node` return value
+- `ErrorTracker.gd` -- memanggil `main_node._shot_tour.call_deferred()` di atas `Node` return value
+
+**Status:** Fix sudah diterapkan di versi terkini -- keduanya kini menggunakan `.call("method_name")`
+dan `call_deferred("method_name")` sesuai idiom yang sudah dipakai konsisten di `ScenarioRunner.gd`.
+Jika masih menggunakan template lama, salin ulang dari `godot-templates/`.
+
+**Cara cek:** Jalankan game dengan `--headless --quit` dan cek apakah ada error
+`Parse Error: The method "..." is not present on the inferred type "Node"`.
+
+---
+
+## Known Limitations -- Godot 4.7 Hot-Reload
 
 Godot 4.7 me-compile script di **background thread** bersamaan dengan shader cache loading,
 sebelum `_ready()` Autoload atau GDScript apapun bisa berjalan. Saat compile pertama ini,

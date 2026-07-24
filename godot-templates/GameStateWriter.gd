@@ -63,7 +63,9 @@ func _write_game_state() -> void:
 		}
 		if has_node("/root/ErrorTracker"):
 			var et := get_node("/root/ErrorTracker")
-			state["error_log"] = et.get_errors()
+			# Gunakan .call() agar kompatibel dengan GDScript strict mode (unsafe_method_access)
+			if et.has_method("get_errors"):
+				state["error_log"] = et.call("get_errors")
 	else:
 		state = providers[0].call("_get_game_state")
 		# Pastikan field universal selalu ada
