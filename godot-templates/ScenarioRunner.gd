@@ -17,8 +17,8 @@ const RESULT_PATH    := "user://shots/scenario_result.json"
 const SCHEMA_VERSION := "1.0"
 
 var _scenario: Dictionary = {}
-var _steps: Array[Dictionary] = []
-var _step_results: Array[Dictionary] = []
+var _steps: Array = []
+var _step_results: Array = []
 var _current_step: int = 0
 var _scenario_start_time: float = 0.0
 var _step_start_time: float = 0.0
@@ -425,20 +425,21 @@ func _exec_seed_override(step: Dictionary) -> void:
 
 func _exec_repeat(step: Dictionary) -> void:
 	var count: int = int(step.get("count", 1))
-	var sub_steps: Array[Dictionary] = step.get("steps", [])
+	var sub_steps: Array = step.get("steps", [])
 	if sub_steps.is_empty():
 		_step_skip("repeat tidak punya field 'steps'")
 		return
 	var failed: int = 0
 	for i in range(count):
-		for sub in sub_steps:
+		for sub: Dictionary in sub_steps:
 			var sub_type: String = sub.get("type", "")
 			if sub_type == "repeat":
 				print("[scenario] nested repeat tidak didukung -- skip")
 				continue
 			await _dispatch(sub_type, sub)
 			if _step_results.size() > 0:
-				if _step_results[-1].get("status") == "fail":
+				var last_result: Dictionary = _step_results[-1]
+				if last_result.get("status") == "fail":
 					failed += 1
 	_step_pass({"repeated": count, "failed_in_repeat": failed})
 
@@ -467,7 +468,8 @@ func emit_scenario_signal(sig_name: String) -> void:
 # --- Result helpers ---
 
 func _step_pass(data) -> void:
-	var result := {"step": _current_step, "type": _steps[_current_step].get("type", ""), "status": "pass"}
+	var cur_step: Dictionary = _steps[_current_step]
+	var result := {"step": _current_step, "type": cur_step.get("type", ""), "status": "pass"}
 	if data != null:
 		result["data"] = data
 	_step_results.append(result)
@@ -475,13 +477,15 @@ func _step_pass(data) -> void:
 
 
 func _step_fail(reason: String) -> void:
-	var result := {"step": _current_step, "type": _steps[_current_step].get("type", ""), "status": "fail", "reason": reason}
+	var cur_step: Dictionary = _steps[_current_step]
+	var result := {"step": _current_step, "type": cur_step.get("type", ""), "status": "fail", "reason": reason}
 	_step_results.append(result)
 	print("[scenario] FAIL: ", reason)
 
 
 func _step_skip(reason: String) -> void:
-	var result := {"step": _current_step, "type": _steps[_current_step].get("type", ""), "status": "skip", "reason": reason}
+	var cur_step: Dictionary = _steps[_current_step]
+	var result := {"step": _current_step, "type": cur_step.get("type", ""), "status": "skip", "reason": reason}
 	_step_results.append(result)
 	print("[scenario] SKIP: ", reason)
 
@@ -492,7 +496,7 @@ func _write_result(status: String, error_msg) -> void:
 	var pass_count := 0
 	var fail_count := 0
 	var skip_count := 0
-	for r in _step_results:
+	for r: Dictionary in _step_results:
 		match r.get("status", ""):
 			"pass": pass_count += 1
 			"fail": fail_count += 1
