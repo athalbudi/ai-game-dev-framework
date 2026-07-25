@@ -182,7 +182,16 @@ function Invoke-FixLoopWorktree {
         }
 
         # Buat worktree yang checkout branch tersebut
-        git worktree add $worktreePath $BranchName 2>$null | Out-Null
+        # git worktree add menulis "Preparing worktree..." ke stderr meski sukses.
+        # Dengan $ErrorActionPreference = Stop, output stderr native command bisa
+        # memicu terminating error. Simpan dan restore EAP untuk panggilan ini saja.
+        $savedEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            git worktree add $worktreePath $BranchName 2>$null | Out-Null
+        } finally {
+            $ErrorActionPreference = $savedEAP
+        }
 
         if (Test-Path -LiteralPath $worktreePath) {
             $result.success       = $true
