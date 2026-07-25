@@ -141,11 +141,15 @@ yang tersedia tanpa koneksi server aktif:
 
 Hasil validasi empiris framework terhadap Godot 4.3 (godot-open-rts, 2026-07-25):
 
-**`filesystem_cache10` tidak ada di Godot 4.3:**
-File `.godot/editor/filesystem_cache10` yang dipakai framework untuk class_name preflight
-hanya ada di Godot 4.7. Di Godot 4.3, `--import --headless` hanya menghasilkan
-`project_metadata.cfg`. Framework menangani ini secara otomatis via fallback ke Strategi 2
-(manual scan semua .gd files) -- tidak ada perubahan kode game yang diperlukan.
+**`filesystem_cache*` ada di Godot 4.3 dengan nama berbeda:**
+File cache class_name di `.godot/editor/` menggunakan nama yang berbeda per versi Godot:
+- Godot 4.3: `filesystem_cache8`
+- Godot 4.7: `filesystem_cache10`
+
+Angka di belakang nama mengikuti versi format internal Godot. Formatnya kompatibel --
+field `$parts[7]` adalah field class di kedua versi. Framework menggunakan glob
+`filesystem_cache*` untuk menemukan file yang benar di semua versi secara otomatis.
+Fallback ke Strategi 2 (manual scan) tetap aktif jika glob tidak menemukan file apapun.
 
 **Provenance check untuk verifikasi binary Godot:**
 Untuk memastikan cache dibuat oleh versi Godot yang benar, jalankan `--import` lalu cek
