@@ -67,6 +67,16 @@
     & "$env:USERPROFILE\.config\kilo\tools\run-and-analyze.ps1" `
         -ProjectPath "C:\dev\mygame" `
         -SkipHarness
+
+.EXAMPLE
+    # Fix-loop mode: isolasi patch di worktree + verifikasi scope + gate
+    & "$env:USERPROFILE\.config\kilo\tools\run-and-analyze.ps1" `
+        -ProjectPath "C:\dev\mygame" `
+        -FixLoopMode `
+        -FixRequestPath "C:\dev\mygame\shots\fix-requests.json" `
+        -PatchBranch "fix/heal-bug-20260725" `
+        -PatchRef "fix/heal-bug-20260725" `
+        -GateBaseRef "main"
 #>
 
 [CmdletBinding()]
@@ -80,7 +90,13 @@ param(
     [string]   $ReproducingScenario  = "",
     [string[]] $ProtectedPatterns    = @(),
     [string]   $GateBaseRef          = "HEAD",
-    [string]   $PatchRef             = ""
+    [string]   $PatchRef             = "",
+    # Tahap 2: Fix-loop mode
+    [switch]   $FixLoopMode,
+    [string]   $FixRequestPath       = "",
+    [string]   $PatchBranch          = "",
+    [int]      $MaxIterations        = 2,
+    [string]   $WorktreeBasePath     = ""
 )
 
 Set-StrictMode -Version Latest
@@ -100,6 +116,204 @@ function Write-Info  { param($msg)
 
 $kiloConfig = Join-Path $env:USERPROFILE ".config\kilo"
 $harnessPs1 = Join-Path $kiloConfig "tools\shot-harness.ps1"
+
+# -- TAHAP 2: Worktree provisioning -----------------------------------------------
+# Setiap iterasi fix-loop berjalan di git worktree terpisah, bukan working tree utama.
+# Ini memastikan:
+#   - Patch AI tidak mengkontaminasi main/develop branch sampai lolos verifikasi
+#   - Cleanup bersih: buang worktree = buang semua artefak patch yang gagal
+#   - Dua iterasi paralel bisa berjalan tanpa konflik (worktree path unik)
+#
+# Kontrak: commit-before-verify
+#   AI harus COMMIT patch ke branch di dalam worktree SEBELUM gate dievaluasi.
+#   Gate menggunakan -PatchRef (nama branch) untuk diff, bukan working-tree diff.
+#   Ini mencegah noise dari file runtime (.godot/, shots/) masuk ke evaluasi gate.
+function Invoke-FixLoopWorktree {
+    param(
+        [string] $RepoPath,
+        [string] $BranchName,
+        [string] $BaseBranch   = "main",
+        [string] $WorktreeBase = ""
+    )
+
+    $result = [ordered]@{
+        success      = $false
+        worktree_path = ""
+        branch       = $BranchName
+        error        = ""
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoPath ".git"))) {
+        $result.error = "ProjectPath bukan git repository -- worktree tidak bisa dibuat"
+        return $result
+    }
+
+    # Tentukan path worktree: default di parent project + nama branch (sanitized)
+    if ($WorktreeBase -eq "") {
+        $WorktreeBase = Split-Path $RepoPath -Parent
+    }
+    $safeBranch    = $BranchName -replace '[\\/:*?"<>|]', '-'
+    $worktreePath  = Join-Path $WorktreeBase "_worktree_$safeBranch"
+
+    # Cleanup sisa worktree dari run sebelumnya jika ada
+    if (Test-Path -LiteralPath $worktreePath) {
+        Push-Location $RepoPath
+        try {
+            git worktree remove --force $worktreePath 2>$null | Out-Null
+        } catch { }
+        Pop-Location
+        if (Test-Path -LiteralPath $worktreePath) {
+            Remove-Item -LiteralPath $worktreePath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Push-Location $RepoPath
+    try {
+        # Buat branch baru dari BaseBranch (atau dari HEAD jika BaseBranch tidak ada)
+        $branchExists = (git branch --list $BranchName 2>$null).Trim() -ne ""
+        if (-not $branchExists) {
+            $baseExists = (git branch --list $BaseBranch 2>$null).Trim() -ne ""
+            $startPoint = if ($baseExists) { $BaseBranch } else { "HEAD" }
+            git branch $BranchName $startPoint 2>$null | Out-Null
+        }
+
+        # Buat worktree yang checkout branch tersebut
+        git worktree add $worktreePath $BranchName 2>$null | Out-Null
+
+        if (Test-Path -LiteralPath $worktreePath) {
+            $result.success       = $true
+            $result.worktree_path = $worktreePath
+            Write-Phase "WORKTREE" "Provisioned: $worktreePath (branch: $BranchName)"
+        } else {
+            $result.error = "git worktree add tidak menghasilkan folder: $worktreePath"
+        }
+    } catch {
+        $result.error = "Gagal membuat worktree: $_"
+    } finally {
+        Pop-Location
+    }
+
+    return $result
+}
+
+function Remove-FixLoopWorktree {
+    param(
+        [string] $RepoPath,
+        [string] $WorktreePath,
+        [string] $BranchName,
+        [switch] $DeleteBranch
+    )
+    if (-not (Test-Path -LiteralPath $WorktreePath)) { return }
+    Push-Location $RepoPath
+    try {
+        git worktree remove --force $WorktreePath 2>$null | Out-Null
+    } catch { } finally { Pop-Location }
+    if (Test-Path -LiteralPath $WorktreePath) {
+        Remove-Item -LiteralPath $WorktreePath -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($DeleteBranch -and $BranchName -ne "") {
+        Push-Location $RepoPath
+        try { git branch -D $BranchName 2>$null | Out-Null } catch { } finally { Pop-Location }
+    }
+    Write-Phase "WORKTREE" "Removed: $WorktreePath"
+}
+
+# -- TAHAP 3: Scope constraint (allowlist dari fix-request) -----------------------
+# AI hanya boleh mengubah file yang tercantum di target_file dalam fix-request.json.
+# Ini membatasi blast radius tanpa membatasi kemampuan AI menulis kode.
+#
+# PENTING: Denylist (Tahap 4 / Test-ProtectedFileViolation) SELALU dievaluasi lebih dulu
+# dan MENANG atas allowlist. Artinya: meskipun fix-request menyebut file verifikasi
+# sebagai target_file, gate Tahap 4 tetap menolaknya. fix-request tidak bisa dipakai
+# sebagai celah melewati proteksi yang sudah ada.
+function Test-ScopeViolation {
+    param(
+        [string]   $RepoPath,
+        [string]   $FixRequestPath,
+        [string]   $BaseRef  = "HEAD",
+        [string]   $PatchRef = ""
+    )
+
+    $result = [ordered]@{
+        violated        = $false
+        changed_files   = @()
+        out_of_scope    = @()
+        allowed_files   = @()
+        fix_request_id  = ""
+        error           = ""
+    }
+
+    # Baca fix-request.json
+    if (-not (Test-Path -LiteralPath $FixRequestPath)) {
+        $result.error = "fix-request tidak ditemukan: $FixRequestPath"
+        return $result
+    }
+    try {
+        $fixReqData = Get-Content -LiteralPath $FixRequestPath -Raw | ConvertFrom-Json
+    } catch {
+        $result.error = "fix-request.json tidak bisa di-parse: $_"
+        return $result
+    }
+
+    # Kumpulkan semua target_file dari semua fix_requests
+    # (satu file fix-request bisa berisi beberapa fix_request untuk satu iterasi)
+    $allowedFiles = [System.Collections.Generic.List[string]]::new()
+    $frIds        = [System.Collections.Generic.List[string]]::new()
+    $requests     = if ($fixReqData.PSObject.Properties["fix_requests"]) { @($fixReqData.fix_requests) } `
+                    elseif ($fixReqData.PSObject.Properties["fix_request_id"]) { @($fixReqData) } `
+                    else { @() }
+    foreach ($req in $requests) {
+        if ($req.PSObject.Properties["fix_request_id"]) { $frIds.Add($req.fix_request_id) }
+        if ($req.PSObject.Properties["target_file"] -and $req.target_file -ne "") {
+            $tf = $req.target_file -replace '\\', '/'
+            if (-not $allowedFiles.Contains($tf)) { $allowedFiles.Add($tf) }
+        }
+    }
+    $result.allowed_files  = @($allowedFiles)
+    $result.fix_request_id = $frIds -join ", "
+
+    if ($allowedFiles.Count -eq 0) {
+        # Tidak ada target_file -- scope tidak bisa dievaluasi, tidak memblokir
+        $result.error = "fix-request tidak punya target_file -- scope check dilewati"
+        return $result
+    }
+
+    # Dapatkan daftar file yang berubah (same logic as Test-ProtectedFileViolation)
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoPath ".git"))) {
+        $result.error = "bukan git repo -- scope check tidak bisa dievaluasi"
+        return $result
+    }
+    Push-Location $RepoPath
+    try {
+        if ($PatchRef -ne "") {
+            $changed = @(git diff --name-only $BaseRef $PatchRef 2>$null |
+                         Where-Object { $_ -ne "" } | Select-Object -Unique)
+        } else {
+            $unstaged = @(git diff --name-only $BaseRef 2>$null)
+            $staged   = @(git diff --name-only --cached $BaseRef 2>$null)
+            $changed  = @($unstaged + $staged | Where-Object { $_ -ne "" } | Select-Object -Unique)
+        }
+    } finally { Pop-Location }
+
+    $result.changed_files = @($changed | ForEach-Object { $_ -replace '\\', '/' })
+
+    # Cek apakah ada file yang berubah tapi tidak ada di allowlist
+    $outOfScope = [System.Collections.Generic.List[string]]::new()
+    foreach ($f in $result.changed_files) {
+        $inScope = $false
+        foreach ($allowed in $allowedFiles) {
+            # Exact match atau prefix match (kalau allowed adalah direktori)
+            if ($f -eq $allowed -or $f.StartsWith("$allowed/") -or ($allowed -like "*") -and ($f -like $allowed)) {
+                $inScope = $true; break
+            }
+        }
+        if (-not $inScope) { $outOfScope.Add($f) }
+    }
+
+    $result.out_of_scope = @($outOfScope)
+    $result.violated     = ($outOfScope.Count -gt 0)
+    return $result
+}
 
 # -- GATE: protected-file hard block -----------------------------------------------
 # Tanpa manusia di antara "patch ditulis" dan "patch dijalankan" (fix loop otonom),
@@ -557,6 +771,35 @@ if ($gateResult.violated) {
     Write-Ok "GATE: tidak ada protected-file violation ($($gateResult.changed_files.Count) file berubah)"
 }
 
+# ── TAHAP 3: Scope constraint (allowlist check) ──────────────────────────────
+# Dievaluasi SETELAH denylist (di atas) dan hanya jika denylist tidak violated.
+# Denylist menang atas allowlist -- fix-request tidak bisa dipakai sebagai celah
+# melewati proteksi yang sudah ada di denylist.
+$scopeResult = $null
+if (-not $gateResult.violated -and $FixLoopMode -and $FixRequestPath -ne "") {
+    Write-Phase "SCOPE" "Cek scope constraint dari fix-request..."
+    $scopeResult = Test-ScopeViolation -RepoPath $ProjectPath `
+        -FixRequestPath $FixRequestPath `
+        -BaseRef $GateBaseRef `
+        -PatchRef $PatchRef
+
+    if ($scopeResult.error -ne "") {
+        Write-Warn "Scope check: $($scopeResult.error)"
+    } elseif ($scopeResult.violated) {
+        Write-Host "[run-analyze] SCOPE FAIL: patch menyentuh file di luar allowlist fix-request" -ForegroundColor Red
+        foreach ($f in $scopeResult.out_of_scope) {
+            Write-Warn "  Out-of-scope: $f"
+        }
+        Write-Info "  Allowed files dari fix-request: $($scopeResult.allowed_files -join ', ')"
+        # Scope violation menjadi bagian dari laporan dan mempengaruhi overall_status
+        # tapi tidak otomatis override denylist -- denylist sudah diperiksa di atas
+        $gateResult.violated = $true
+        $gateResult.protected_hits = @($gateResult.protected_hits) + @("SCOPE: file di luar allowlist: $($scopeResult.out_of_scope -join ', ')")
+    } else {
+        Write-Ok "SCOPE: semua perubahan dalam allowlist fix-request ($($scopeResult.allowed_files.Count) file diizinkan)"
+    }
+}
+
 # ── FASE 5: REPORT ─────────────────────────────────────────────────────────────
 Write-Phase "REPORT" "Membuat laporan..."
 
@@ -586,6 +829,19 @@ $report = [ordered]@{
         changed_files  = @($gateResult.changed_files)
         protected_hits = @($gateResult.protected_hits)
     }
+    scope            = if ($scopeResult) { [ordered]@{
+        violated     = $scopeResult.violated
+        out_of_scope = @($scopeResult.out_of_scope)
+        allowed_files = @($scopeResult.allowed_files)
+        fix_request_id = $scopeResult.fix_request_id
+        error        = $scopeResult.error
+    } } else { $null }
+    fix_loop         = if ($FixLoopMode) { [ordered]@{
+        enabled          = $true
+        fix_request_path = $FixRequestPath
+        patch_branch     = $PatchBranch
+        max_iterations   = $MaxIterations
+    } } else { $null }
     analysis         = $analysis
     manifest_summary = if ($manifest) { [ordered]@{
         telemetry_phase = $manifest.telemetry_phase
