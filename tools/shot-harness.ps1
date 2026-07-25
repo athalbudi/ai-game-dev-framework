@@ -217,7 +217,13 @@ function Invoke-GodotClassCachePreflight {
 
     # Strategi 1: Generate dari filesystem_cache10 (lebih akurat dari scan manual)
     # filesystem_cache10 dihasilkan oleh Godot editor dan berisi class_name + base class
-    # yang sudah di-validate oleh Godot parser — format: filename::GDScript::...::::ClassName<>BaseClass<>...
+    # yang sudah di-validate oleh Godot parser -- format: filename::GDScript::...::::ClassName<>BaseClass<>...
+    # CATATAN KOMPATIBILITAS (terverifikasi empiris 2026-07-25):
+    #   - Godot 4.7: file ini ADA setelah --import, berisi semua class_name
+    #   - Godot 4.3: file ini TIDAK ADA -- Strategi 2 (manual scan) aktif secara otomatis
+    #   Provenance check: jalankan --import, lalu cek 'git status'. Jika .import files termodifikasi,
+    #   itu bukan Godot versi yang sama yang membuat cache (Godot 4.3 tidak memodifikasi .import saat
+    #   --headless --import, Godot 4.7 memodifikasi ratusan file).
     $fsCachePath = Join-Path $cacheDir "editor\filesystem_cache10"
     if (Test-Path -LiteralPath $fsCachePath) {
         $lines   = Get-Content -LiteralPath $fsCachePath -Encoding UTF8 -ErrorAction SilentlyContinue

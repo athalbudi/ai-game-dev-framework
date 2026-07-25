@@ -137,6 +137,30 @@ yang tersedia tanpa koneksi server aktif:
 - Login screen, title screen, pre-connection screen -- BISA di-screenshot
 - In-game world, gameplay, chat -- TIDAK bisa tanpa server aktif
 
+## Known Limitations -- Godot pra-4.7 (terverifikasi Godot 4.3)
+
+Hasil validasi empiris framework terhadap Godot 4.3 (godot-open-rts, 2026-07-25):
+
+**`filesystem_cache10` tidak ada di Godot 4.3:**
+File `.godot/editor/filesystem_cache10` yang dipakai framework untuk class_name preflight
+hanya ada di Godot 4.7. Di Godot 4.3, `--import --headless` hanya menghasilkan
+`project_metadata.cfg`. Framework menangani ini secara otomatis via fallback ke Strategi 2
+(manual scan semua .gd files) -- tidak ada perubahan kode game yang diperlukan.
+
+**Provenance check untuk verifikasi binary Godot:**
+Untuk memastikan cache dibuat oleh versi Godot yang benar, jalankan `--import` lalu cek
+`git status`. Jika ada file `.import` yang termodifikasi, itu bukan Godot versi lama yang
+membuat cache (Godot 4.3 tidak memodifikasi `.import` files, Godot 4.7 memodifikasi ratusan).
+
+**Import headless mungkin gagal jika ada preload() pada resource yang belum ter-import:**
+Godot 4.3 `--import` headless bisa gagal jika GDScript menggunakan `preload()` pada file
+audio/texture yang belum ter-import sebelumnya. Solusi: buka project di editor GUI sekali
+sebelum headless run. Ini adalah keterbatasan Godot, bukan framework.
+
+**Rekomendasi untuk project Godot pra-4.7:**
+Framework bisa digunakan di Godot 4.3+ dengan fallback manual-scan yang aktif otomatis.
+Jika project menggunakan `preload()` extensif pada audio/resource, import awal via editor
+GUI perlu dilakukan sekali agar `--shot` bisa berjalan headless.
 **Workaround yang direkomendasikan:**
 1. Tambahkan offline/demo mode ke game untuk testing headless
 2. Buat mock server sederhana yang bisa di-spawn bersama game untuk CI
