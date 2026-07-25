@@ -743,6 +743,72 @@ if ($GodotExe -ne "" -and (Test-Path -LiteralPath "C:\Users\Athallah Budiman\Doc
 }
 Write-S
 
+# ── TEST 10: -FixLoopMode integration -- verifikasi worktree benar-benar dipakai ─
+# TEST 9 hanya menguji fungsi level rendah (Invoke-FixLoopWorktree isolasi).
+# TEST 10 memverifikasi bahwa -FixLoopMode di run-and-analyze.ps1 benar-benar
+# mengarahkan SEMUA fase (INIT, OBSERVE, RUN, ANALYZE) ke worktree, bukan ProjectPath asli.
+# Ini adalah integration test yang menangkap bug "variabel dihitung tapi tidak dipakai".
+Write-T "TEST 10: -FixLoopMode integration -- INIT menunjukkan worktree path"
+if ($GodotExe -ne "" -and (Test-Path -LiteralPath "C:\Users\Athallah Budiman\Documents\ai-game-dev-framework\.git")) {
+    $runAnalyzePs1Deployed = Join-Path $env:USERPROFILE ".config\kilo\tools\run-and-analyze.ps1"
+    $intTestRepoPath = "C:\Users\Athallah Budiman\Documents\ai-game-dev-framework"
+    $intTestBranch   = "test-fixloop-integration-$(Get-Date -Format 'HHmmss')"
+    $intTestBase     = Join-Path $env:TEMP "kilo-fixloop-integration"
+    $null = New-Item -ItemType Directory -Path $intTestBase -Force
+    try {
+        # Jalankan run-and-analyze dengan -FixLoopMode dan -SkipHarness
+        # Tangkap output untuk verifikasi bahwa INIT menunjukkan worktree path (bukan ProjectPath asli)
+        $outLog = Join-Path $intTestBase "run-analyze-out.txt"
+        $savedEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        # Gunakan *>&1 untuk menangkap Write-Host (stream 6) dan stderr (stream 2)
+        # Write-Host menulis ke Information stream, bukan stdout -- 2>&1 tidak cukup
+        $output = & $runAnalyzePs1Deployed `
+            -ProjectPath $intTestRepoPath `
+            -SkipHarness `
+            -FixLoopMode `
+            -PatchBranch $intTestBranch `
+            -WorktreeBasePath $intTestBase `
+            -GateBaseRef "main" *>&1
+        $ErrorActionPreference = $savedEAP
+
+        $outputStr = $output -join "`n"
+
+        # Verifikasi 1: WORKTREE phase muncul di output (worktree ter-provision)
+        $worktreeProvisioned = ($outputStr -match "WORKTREE") -and ($outputStr -match "Provisioned")
+
+        # Verifikasi 2: INIT menunjukkan worktree path, bukan ProjectPath asli
+        # Worktree path mengandung nama branch dalam nama folder _worktree_<branch>
+        $initShowsWorktree = $outputStr -match "INIT.*_worktree_"
+
+        # Verifikasi 3: Worktree TIDAK ada lagi setelah run (cleanup otomatis)
+        $expectedWorktreePath = Join-Path $intTestBase "_worktree_$intTestBranch"
+        $worktreeCleanedUp = -not (Test-Path -LiteralPath $expectedWorktreePath)
+
+        if ($worktreeProvisioned -and $initShowsWorktree) {
+            Add-Result "-FixLoopMode routes INIT ke worktree path" $true "INIT menunjukkan worktree path yang benar"
+        } elseif ($worktreeProvisioned -and -not $initShowsWorktree) {
+            Add-Result "-FixLoopMode routes INIT ke worktree path" $false "Worktree ter-provision tapi INIT masih menunjukkan ProjectPath asli (wiring bug)"
+        } elseif (-not $worktreeProvisioned) {
+            $errLines = ($output | Select-String "WORKTREE|error|Error" | Select-Object -First 3) -join "; "
+            Add-Result "-FixLoopMode routes INIT ke worktree path" $false "Worktree tidak ter-provision: $errLines"
+        }
+
+        Add-Result "-FixLoopMode cleanup worktree setelah run" $worktreeCleanedUp ("worktree " + $(if ($worktreeCleanedUp) { "dihapus otomatis" } else { "TIDAK dihapus -- leak!" }))
+
+    } catch {
+        Add-Result "-FixLoopMode integration" $false ("Exception: " + $_)
+    } finally {
+        # Safety cleanup: hapus branch jika masih ada
+        Push-Location $intTestRepoPath
+        try { git branch -D $intTestBranch 2>$null | Out-Null } catch { } finally { Pop-Location }
+        Remove-Item -LiteralPath $intTestBase -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-T "TEST 10: SKIP -- framework repo atau run-and-analyze.ps1 tidak tersedia"
+}
+Write-S
+
 
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
