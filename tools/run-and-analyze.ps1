@@ -170,9 +170,13 @@ function Invoke-FixLoopWorktree {
     Push-Location $RepoPath
     try {
         # Buat branch baru dari BaseBranch (atau dari HEAD jika BaseBranch tidak ada)
-        $branchExists = (git branch --list $BranchName 2>$null).Trim() -ne ""
+        # CATATAN: git branch --list mengembalikan $null (bukan string kosong) untuk branch
+        # yang belum ada -- jangan panggil .Trim() langsung, bungkus dalam @() dulu.
+        $branchListOutput = @(git branch --list $BranchName 2>$null | Where-Object { $_ -ne $null })
+        $branchExists = $branchListOutput.Count -gt 0
         if (-not $branchExists) {
-            $baseExists = (git branch --list $BaseBranch 2>$null).Trim() -ne ""
+            $baseListOutput = @(git branch --list $BaseBranch 2>$null | Where-Object { $_ -ne $null })
+            $baseExists = $baseListOutput.Count -gt 0
             $startPoint = if ($baseExists) { $BaseBranch } else { "HEAD" }
             git branch $BranchName $startPoint 2>$null | Out-Null
         }
@@ -417,6 +421,33 @@ function Invoke-SchemaMigrationIfNeeded {
 if ($ProjectPath -eq "") { $ProjectPath = (Get-Location).Path }
 if (-not (Test-Path -LiteralPath $ProjectPath -PathType Container)) {
     Write-Fail "ProjectPath tidak ditemukan: $ProjectPath"
+}
+
+# ── 1b. TAHAP 2: Provision worktree jika -FixLoopMode aktif ─────────────────
+# Worktree di-provision SEBELUM harness dijalankan sehingga semua operasi
+# (OBSERVE, RUN, ANALYZE, GATE) terjadi di dalam isolasi yang benar.
+$worktreeInfo = $null
+$worktreeProjectPath = $ProjectPath  # default: gunakan ProjectPath langsung
+
+if ($FixLoopMode -and $PatchBranch -ne "") {
+    Write-Phase "WORKTREE" "Provisioning worktree untuk branch '$PatchBranch'..."
+    $worktreeInfo = Invoke-FixLoopWorktree `
+        -RepoPath $ProjectPath `
+        -BranchName $PatchBranch `
+        -BaseBranch $GateBaseRef `
+        -WorktreeBase $WorktreeBasePath
+
+    if ($worktreeInfo.success) {
+        Write-Ok "Worktree: $($worktreeInfo.worktree_path)"
+        # Jalankan harness dan analisis di dalam worktree (bukan ProjectPath asli)
+        # supaya perubahan AI yang belum di-commit tidak bocor ke working tree utama.
+        $worktreeProjectPath = $worktreeInfo.worktree_path
+    } else {
+        Write-Warn "Worktree gagal di-provision: $($worktreeInfo.error)"
+        Write-Warn "Melanjutkan tanpa isolasi worktree (fallback ke ProjectPath)"
+    }
+} elseif ($FixLoopMode -and $PatchBranch -eq "") {
+    Write-Warn "-FixLoopMode aktif tapi -PatchBranch tidak diisi -- worktree tidak dibuat"
 }
 $projectName = Split-Path $ProjectPath -Leaf
 Write-Phase "INIT" "Project: $projectName ($ProjectPath)"

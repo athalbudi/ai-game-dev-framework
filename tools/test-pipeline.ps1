@@ -693,6 +693,56 @@ try {
 }
 Write-S
 
+# ── TEST 9: Invoke-FixLoopWorktree -- worktree provisioning Tahap 2 ──────────────
+# Test ini memverifikasi:
+# 1. Fungsi berjalan tanpa crash pada branch baru (bug null.Trim() sebelumnya)
+# 2. Worktree ter-provision dengan benar (folder terbuat, branch terbuat)
+# 3. Remove-FixLoopWorktree membersihkan dengan benar
+# Menggunakan repo framework itu sendiri sebagai target (selalu ada .git)
+Write-T "TEST 9: Invoke-FixLoopWorktree -- worktree provisioning (Tahap 2)"
+if ($GodotExe -ne "" -and (Test-Path -LiteralPath "C:\Users\Athallah Budiman\Documents\ai-game-dev-framework\.git")) {
+    $runAnalyzePs1 = Join-Path $env:USERPROFILE ".config\kilo\tools\run-and-analyze.ps1"
+    $testRepoPath  = "C:\Users\Athallah Budiman\Documents\ai-game-dev-framework"
+    $testBranch    = "test-worktree-pipeline-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    $testBase      = Join-Path $env:TEMP "kilo-worktree-test"
+    $null = New-Item -ItemType Directory -Path $testBase -Force
+    try {
+        # Dot-source run-and-analyze.ps1 untuk akses ke Invoke-FixLoopWorktree
+        . $runAnalyzePs1 -ProjectPath $testRepoPath -SkipHarness -ErrorAction SilentlyContinue 2>$null
+    } catch { }
+
+    try {
+        # Test 1: Invoke-FixLoopWorktree tidak crash pada branch baru
+        $wt = Invoke-FixLoopWorktree -RepoPath $testRepoPath -BranchName $testBranch -BaseBranch "main" -WorktreeBase $testBase
+        if (-not $wt.success) {
+            Add-Result "Invoke-FixLoopWorktree (branch baru)" $false ("Error: " + $wt.error)
+        } else {
+            $worktreeExists = Test-Path -LiteralPath $wt.worktree_path
+            if ($worktreeExists) {
+                Add-Result "Invoke-FixLoopWorktree (branch baru)" $true "worktree terbuat di $($wt.worktree_path)"
+                # Test 2: Cleanup bersih
+                Remove-FixLoopWorktree -RepoPath $testRepoPath -WorktreePath $wt.worktree_path -BranchName $testBranch -DeleteBranch
+                $cleanedUp = -not (Test-Path -LiteralPath $wt.worktree_path)
+                Add-Result "Remove-FixLoopWorktree cleanup" $cleanedUp ("worktree " + $(if ($cleanedUp) { "berhasil dihapus" } else { "masih ada setelah remove" }))
+            } else {
+                Add-Result "Invoke-FixLoopWorktree (branch baru)" $false "fungsi success=true tapi folder tidak terbuat"
+                # Cleanup branch jika ada
+                Push-Location $testRepoPath
+                try { git branch -D $testBranch 2>$null | Out-Null } catch { } finally { Pop-Location }
+            }
+        }
+    } catch {
+        Add-Result "Invoke-FixLoopWorktree (branch baru)" $false ("Exception: " + $_)
+        # Cleanup
+        Push-Location $testRepoPath
+        try { git branch -D $testBranch 2>$null | Out-Null } catch { } finally { Pop-Location }
+    }
+    Remove-Item -LiteralPath $testBase -Recurse -Force -ErrorAction SilentlyContinue
+} else {
+    Write-T "TEST 9: SKIP -- framework repo atau run-and-analyze.ps1 tidak tersedia"
+}
+Write-S
+
 
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
