@@ -225,7 +225,7 @@ function Invoke-GodotClassCachePreflight {
     #   Provenance check: jalankan --import, lalu cek 'git status'. Jika .import files termodifikasi,
     #   itu bukan Godot versi yang sama yang membuat cache (Godot 4.3 tidak memodifikasi .import saat
     #   --headless --import, Godot 4.7 memodifikasi ratusan file).
-    $fsCacheFiles = @(Get-ChildItem -LiteralPath (Join-Path $cacheDir "editor") -Filter "filesystem_cache*" -ErrorAction SilentlyContinue | Sort-Object Name -Descending)
+    $fsCacheFiles = @(Get-ChildItem -LiteralPath (Join-Path $cacheDir "editor") -Filter "filesystem_cache*" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
     $fsCachePath  = if ($fsCacheFiles.Count -gt 0) { $fsCacheFiles[0].FullName } else { "" }
     if ($fsCachePath -ne "" -and (Test-Path -LiteralPath $fsCachePath)) {
         $lines   = Get-Content -LiteralPath $fsCachePath -Encoding UTF8 -ErrorAction SilentlyContinue
@@ -269,7 +269,7 @@ function Invoke-GodotClassCachePreflight {
         if ($entries.Count -gt 0) {
             $content = "list=[" + ($entries -join ", ") + "]"
             Set-Content -LiteralPath $cacheFile -Value $content -Encoding UTF8 -NoNewline
-            Write-Step ("Preflight: $($entries.Count) class_name di-cache dari filesystem_cache10")
+            Write-Step ("Preflight: $($entries.Count) class_name di-cache dari $(Split-Path $fsCachePath -Leaf)")
             return
         }
     }
