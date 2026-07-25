@@ -898,6 +898,25 @@ $report = [ordered]@{
                        elseif ($scenarioResult.PSObject.Properties["skipped"]) { $scenarioResult.skipped } else { 0 }
         duration_sec = if ($scenarioResult.PSObject.Properties["duration_sec"]) { $scenarioResult.duration_sec } else { $null }
     } } else { $null }
+    visual_comparison = if ($diffReport -and $shotsDir -ne "") {
+        # Side-by-side before/after PNG paths untuk setiap file yang berubah (REGRESI atau INTENTIONAL).
+        # Memungkinkan developer/reviewer melihat perubahan visual tanpa perlu mencari file secara manual.
+        # Path: current = shotsDir\<file>, baseline = shotsDir\baseline\<file>
+        $baselineDir = Join-Path $shotsDir "baseline"
+        $comparisons = [System.Collections.Generic.List[object]]::new()
+        foreach ($f in @($diffReport.files | Where-Object { $_.status -in @("REGRESI", "INTENTIONAL") })) {
+            $currentPath  = Join-Path $shotsDir $f.file
+            $baselinePath = Join-Path $baselineDir $f.file
+            $comparisons.Add([ordered]@{
+                file          = $f.file
+                status        = $f.status
+                change_pct    = if ($f.PSObject.Properties["change_pct"]) { $f.change_pct } else { $null }
+                current_png   = if (Test-Path -LiteralPath $currentPath)  { $currentPath  } else { $null }
+                baseline_png  = if (Test-Path -LiteralPath $baselinePath) { $baselinePath } else { $null }
+            })
+        }
+        @($comparisons)
+    } else { $null }
 }
 
 # Tulis laporan
