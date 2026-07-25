@@ -118,6 +118,12 @@ if ($script:PSBoundParameters.ContainsKey('GameProjectScriptsDir') -and $GamePro
     }
 }
 
+# -- Sync fix-request-template.json ke root kilo config (untuk test-pipeline TEST 8) --
+$frTemplate = Join-Path $repoRoot "fix-request-template.json"
+if (Test-Path -LiteralPath $frTemplate) {
+    Sync-File $frTemplate (Join-Path $kiloConfig "fix-request-template.json")
+}
+
 # -- Summary -------------------------------------------------------------------
 Write-Host "[sync] ------------------------------------------------" -ForegroundColor DarkGray
 $col = if ($errors -gt 0) { "Red" } elseif ($DryRun) { "Cyan" } else { "Green" }
