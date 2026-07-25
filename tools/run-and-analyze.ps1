@@ -458,14 +458,14 @@ if ($FixLoopMode -and $PatchBranch -ne "") {
 } elseif ($FixLoopMode -and $PatchBranch -eq "") {
     Write-Warn "-FixLoopMode aktif tapi -PatchBranch tidak diisi -- worktree tidak dibuat"
 }
-$projectName = Split-Path $ProjectPath -Leaf
-Write-Phase "INIT" "Project: $projectName ($ProjectPath)"
+$projectName = Split-Path $worktreeProjectPath -Leaf
+Write-Phase "INIT" "Project: $projectName ($worktreeProjectPath)"
 
 # ── 2. Resolve ShotsDir dari konfigurasi harness ──────────────────────────────
 # Baca project.godot untuk mapping user:// -> AppData path
 # Mendukung config/use_custom_user_dir=true + config/custom_user_dir_name seperti shot-harness.ps1
 $shotsDir = ""
-$projectGodot = Join-Path $ProjectPath "project.godot"
+$projectGodot = Join-Path $worktreeProjectPath "project.godot"
 if (Test-Path -LiteralPath $projectGodot) {
     try {
         $content = Get-Content -LiteralPath $projectGodot -Raw
@@ -500,7 +500,7 @@ if (Test-Path -LiteralPath $projectGodot) {
     } catch { }
 }
 if ($shotsDir -eq "") {
-    $shotsDir = Join-Path $ProjectPath "shots"
+    $shotsDir = Join-Path $worktreeProjectPath "shots"
 }
 Write-Info "ShotsDir: $shotsDir"
 
@@ -523,7 +523,7 @@ if (-not $SkipHarness) {
 
     # Panggil langsung tanpa array-splat agar argumen terikat by-name, bukan posisional
     $harnessCallArgs = @{
-        ProjectPath = $ProjectPath
+        ProjectPath = $worktreeProjectPath
         Timeout     = $Timeout
     }
     if ($GodotExe -ne "") { $harnessCallArgs["GodotExe"] = $GodotExe }
@@ -559,7 +559,7 @@ if (Test-Path -LiteralPath $manifestPath) {
 Write-Phase "GENERATE" "Resolving scenario..."
 
 $scenarioPath = ""
-$scenariosDir = Join-Path $ProjectPath "scenarios"
+$scenariosDir = Join-Path $worktreeProjectPath "scenarios"
 $phase2Status = "ok"
 
 if ($ScenarioName -ne "") {
@@ -653,7 +653,7 @@ if ($phase3Status -ne "skip_no_godot" -and (Test-Path -LiteralPath $projectGodot
     try {
         $scenarioFlag = "user://shots/test_scenario.json"
         $proc = Start-Process -FilePath $GodotExe `
-            -ArgumentList "--path", "`"$ProjectPath`"", "--", "--scenario", $scenarioFlag `
+            -ArgumentList "--path", "`"$worktreeProjectPath`"", "--", "--scenario", $scenarioFlag `
             -PassThru -NoNewWindow
         $finished = $proc.WaitForExit($Timeout * 1000)
         if (-not $finished) {
@@ -948,6 +948,16 @@ if ($analysis.recommendations.Count -gt 0) {
 Write-Host ""
 Write-Host " Laporan detail: $OutputReport" -ForegroundColor Gray
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+# Cleanup worktree jika sukses di-provision -- baik gate pass maupun fail
+# Worktree harus selalu dibersihkan agar tidak menumpuk di disk setelah tiap iterasi.
+# Cleanup dilakukan SETELAH laporan ditulis supaya laporan tetap tersedia untuk review.
+if ($worktreeInfo -and $worktreeInfo.success) {
+    Remove-FixLoopWorktree -RepoPath $ProjectPath `
+        -WorktreePath $worktreeInfo.worktree_path `
+        -BranchName ""  # JANGAN hapus branch -- branch tetap perlu untuk merge jika gate pass
+    Write-Info "Worktree dibersihkan: $($worktreeInfo.worktree_path)"
+}
 
 # Exit code hard block -- orchestrator fix-loop harus bisa percaya exit code saja
 # tanpa parsing JSON untuk tahu apakah lanjut ke merge atau eskalasi ke manusia.
