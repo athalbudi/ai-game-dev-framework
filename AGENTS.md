@@ -85,6 +85,42 @@ Ketika AI selesai mengimplementasikan perubahan yang menyentuh UI atau tampilan:
 
 ---
 
+## Aturan Efisiensi Token
+
+Biaya token bersifat kuadratik terhadap panjang sesi: request ke-i membawa i×g token history.
+Dari data aktual proyek ini: g ≈ 21.400 token/exchange, 72 exchange = 56M token.
+Memecah ke 4 sesi × 18 exchange menghemat ~3.8×; 8 sesi × 9 exchange menghemat ~7.5×.
+
+### Aturan wajib
+
+1. **Rotasi sesi pada ~20 exchange.** Mulai sesi baru untuk topik atau task yang berbeda.
+   Di awal sesi baru, baca `git log` dan file ringkasan — jangan andalkan memory sesi lama.
+
+2. **Baca range, bukan file penuh.** File besar (contoh: `shot-harness.ps1` ~19K token)
+   masuk context dan dibayar ulang di setiap request sesudahnya.
+   Gunakan grep + offset/limit untuk membaca hanya bagian yang relevan.
+
+3. **Satu script menguji banyak hipotesis sekaligus.** Daripada 8 ronde tanya-jawab,
+   tulis satu script yang menguji 4 hipotesis dan kembalikan output ringkas.
+   Ini menyerang g (ukuran per exchange) dan n (jumlah exchange) sekaligus.
+
+4. **Tulis temuan ke disk, bukan ke context.** Sebelum sesi berakhir, tulis ringkasan
+   ke file (contoh: `docs/session-notes.md` atau comment di kode).
+   Sesi berikutnya baca file itu, bukan mewarisi ratusan ribu token history.
+
+5. **RTK untuk command output.** Prefix semua shell command dengan `rtk` untuk
+   mengompresi output sebelum masuk context. Gunakan `rtk gain` untuk melihat penghematan.
+   Catatan: RTK mengompresi output command, bukan history — lever sekunder, bukan utama.
+
+### Aturan untuk regression test baru
+
+Setiap test baru yang diklaim "membuktikan fix" harus pernah diobservasi GAGAL terhadap
+kode yang belum diperbaiki sebelum dianggap valid. Kenaikan angka hijau bukan bukti —
+justru itu yang paling mudah disalahartikan. Verifikasi dengan menjalankan test terhadap
+build lama atau versi stripped sebelum commit.
+
+---
+
 ## Aturan Umum
 
 - Selalu baca file yang relevan sebelum membuat klaim tentang kode
