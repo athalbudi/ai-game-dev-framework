@@ -310,6 +310,10 @@ function Test-ScopeViolation {
         return $result
     }
     Push-Location $RepoPath
+    # EAP save/restore: sama seperti Test-ProtectedFileViolation -- git advisory
+    # warnings crash dengan ErrorActionPreference = Stop di PS 5.1.
+    $savedEAPScope = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     try {
         if ($PatchRef -ne "") {
             $changed = @(git diff --name-only $BaseRef $PatchRef 2>$null |
@@ -319,7 +323,10 @@ function Test-ScopeViolation {
             $staged   = @(git diff --name-only --cached $BaseRef 2>$null)
             $changed  = @($unstaged + $staged | Where-Object { $_ -ne "" } | Select-Object -Unique)
         }
-    } finally { Pop-Location }
+    } finally {
+        $ErrorActionPreference = $savedEAPScope
+        Pop-Location
+    }
 
     $result.changed_files = @($changed | ForEach-Object { $_ -replace '\\', '/' })
 
@@ -369,26 +376,24 @@ function Test-ProtectedFileViolation {
         return $result
     }
     Push-Location $RepoPath
+    # EAP save/restore: git advisory warnings (LF/CRLF, autocrlf) diteruskan sebagai
+    # error stream di PS 5.1 dan bisa crash dengan $ErrorActionPreference = "Stop".
+    # 2>$null tidak menangkap ini -- harus turunkan EAP sementara saat panggil git.
+    $savedEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     try {
         if ($PatchRef -ne "") {
             # Two-ref diff: bandingkan dua commit, tidak termasuk perubahan working-tree.
-            # Ini adalah mode yang benar untuk fix-loop otonom: patch sudah di-commit ke
-            # branch, gate membandingkan patch-branch vs base-branch tanpa noise dari
-            # file yang di-generate runtime (mis. .godot/, shots/). Efeknya deterministik
-            # dan tidak bergantung pada state working-tree saat verifikasi dijalankan.
             $changed = @(git diff --name-only $BaseRef $PatchRef 2>$null |
                          Where-Object { $_ -ne "" } | Select-Object -Unique)
         } else {
             # Single-ref diff (backward-compatible): bandingkan working-tree vs ref.
-            # Cocok untuk use-case non-loop (developer menjalankan run-and-analyze secara
-            # manual di working-tree dengan patch belum di-commit). Risiko false-positive
-            # dari file runtime (.godot/, shots/) ada -- mitigasi via -PatchRef jika dipakai
-            # dalam fix-loop otonom.
             $unstaged = @(git diff --name-only $BaseRef 2>$null)
             $staged   = @(git diff --name-only --cached $BaseRef 2>$null)
             $changed  = @($unstaged + $staged | Where-Object { $_ -ne "" } | Select-Object -Unique)
         }
     } finally {
+        $ErrorActionPreference = $savedEAP
         Pop-Location
     }
     $result.changed_files = $changed
