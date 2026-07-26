@@ -1,6 +1,6 @@
 ## Handoff — 2026-07-26
 
-Commit terakhir: c35ae81 docs: perbarui AGENTS.md efisiensi token + tambah docs/handoff.md
+Commit terakhir: jalankan `git log --oneline -1`
 
 Status: working tree bersih, sudah di-push ke origin/main
 
