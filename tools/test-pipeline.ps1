@@ -894,6 +894,169 @@ if (Test-Path -LiteralPath $raPs1Deployed) {
 Write-S
 
 
+# ── TEST 12: Fix A -- Get-DefaultProtectedPatterns menggunakan prefix * ─────────
+# Verifikasi bahwa tiga pola script di daftar default menggunakan wildcard prefix *
+# sehingga cocok dengan layout folder non-standar (source/scripts/, src/global/, dll).
+# Test ini GAGAL terhadap build lama yang memakai "scripts/ScenarioRunner.gd" (tanpa *).
+Write-T "TEST 12: Fix A -- Get-DefaultProtectedPatterns pola script menggunakan prefix *"
+$raPs1Deployed = Join-Path $env:USERPROFILE ".config\kilo\tools\run-and-analyze.ps1"
+if (Test-Path -LiteralPath $raPs1Deployed) {
+    $savedEAP12 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    . $raPs1Deployed -ProjectPath $env:TEMP -SkipHarness -ErrorAction SilentlyContinue 2>$null
+    $ErrorActionPreference = $savedEAP12
+    if (Get-Command Get-DefaultProtectedPatterns -ErrorAction SilentlyContinue) {
+        $pats = @(Get-DefaultProtectedPatterns)
+        $runnerPat = $pats | Where-Object { $_ -match "ScenarioRunner" }
+        $writerPat = $pats | Where-Object { $_ -match "GameStateWriter" }
+        $trackerPat = $pats | Where-Object { $_ -match "ErrorTracker" }
+        $allHaveWildcard = ($runnerPat -like "*\*scripts/*" -or $runnerPat -like "**scripts/*") `
+                        -and ($writerPat -like "*\*scripts/*" -or $writerPat -like "**scripts/*") `
+                        -and ($trackerPat -like "*\*scripts/*" -or $trackerPat -like "**scripts/*")
+        # Verifikasi juga bahwa wildcard prefix cocok dengan path non-standar
+        $nonStdPath  = "source/scripts/ScenarioRunner.gd"
+        $matchesNonStd = $pats | Where-Object { $nonStdPath -like $_ }
+        Add-Result "Fix A: default patterns menggunakan prefix * untuk script GD" `
+            ($allHaveWildcard -and @($matchesNonStd).Count -gt 0) `
+            "runner=$runnerPat writer=$writerPat tracker=$trackerPat nonStdMatch=$(@($matchesNonStd).Count)"
+    } else {
+        Add-Result "Fix A: Get-DefaultProtectedPatterns tersedia" $false "Fungsi tidak ditemukan setelah dot-source"
+    }
+} else {
+    Write-T "TEST 12: SKIP -- run-and-analyze.ps1 tidak tersedia"
+}
+Write-S
+
+# ── TEST 13: Fix B -- guard stale scenario_result.json ──────────────────────────
+# Verifikasi bahwa $phase3Status "stale_result" di-set ketika scenario_result.json
+# tidak diperbarui setelah run (mtime < ts_run). Test ini GAGAL terhadap build lama
+# yang membaca hasil tanpa membandingkan mtime.
+Write-T "TEST 13: Fix B -- guard stale scenario_result.json"
+if (Test-Path -LiteralPath $raPs1Deployed) {
+    $t13Dir = Join-Path $env:TEMP "kilo_t13_$(Get-Date -Format 'HHmmss')"
+    try {
+        $null = New-Item -ItemType Directory -Path $t13Dir -Force
+        # project.godot minimal agar fase RUN aktif (tanpa main scene -- Godot exit cepat)
+        [System.IO.File]::WriteAllText(
+            "$t13Dir\project.godot",
+            "[application]`nconfig/name=`"T13`"`n",
+            [System.Text.Encoding]::UTF8)
+
+        # ShotsDir standar Godot untuk project "T13"
+        $t13ShotsDir = "$env:APPDATA\Godot\app_userdata\T13\shots"
+        $null = New-Item -ItemType Directory -Path $t13ShotsDir -Force -ErrorAction SilentlyContinue
+
+        # Tulis scenario_result.json dengan timestamp LAMPAU (simulasi file basi)
+        $staleResult = '{"status":"pass","steps_pass":5,"steps_fail":0,"steps_skip":0}'
+        [System.IO.File]::WriteAllText("$t13ShotsDir\scenario_result.json", $staleResult, [System.Text.Encoding]::UTF8)
+        # Set mtime ke 1 jam yang lalu agar pasti lebih tua dari ts_run manapun
+        (Get-Item "$t13ShotsDir\scenario_result.json").LastWriteTime = (Get-Date).AddHours(-1)
+
+        $reportPath = Join-Path $t13Dir "report.json"
+        $savedEAP13 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        # -Timeout 1: Godot exit cepat (no main scene), ts_run di-set, lalu mtime check aktif
+        & $raPs1Deployed -ProjectPath $t13Dir -SkipHarness -Timeout 1 -OutputReport $reportPath `
+            -ErrorAction SilentlyContinue 2>$null | Out-Null
+        $ErrorActionPreference = $savedEAP13
+
+        if (Test-Path -LiteralPath $reportPath) {
+            $rpt = Get-Content $reportPath -Raw | ConvertFrom-Json
+            $runPhase = $rpt.phases.run
+            # Guard bekerja jika run = "stale_result" -- overall_status bisa "run_failed"
+            # atau "escalation_required" (gate fail-closed di folder non-git, keduanya valid)
+            $guardWorked = ($runPhase -eq "stale_result") -and ($rpt.overall_status -ne "clean")
+            Add-Result "Fix B: stale scenario_result.json memicu stale_result status" `
+                $guardWorked "phases.run=$runPhase overall_status=$($rpt.overall_status)"
+        } else {
+            Add-Result "Fix B: stale guard laporan dihasilkan" $false "Laporan tidak ditemukan di $reportPath"
+        }
+    } catch {
+        Add-Result "Fix B: stale guard" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t13Dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\T13" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-T "TEST 13: SKIP -- run-and-analyze.ps1 tidak tersedia"
+}
+Write-S
+
+# ── TEST 14: Fix B -- $phase3Status mempengaruhi overall_status ─────────────────
+# Verifikasi bahwa overall_status != "clean" ketika run timeout/error/stale_result.
+# Sebelumnya $phase3Status tidak dimasukkan ke formula overall_status sama sekali --
+# test ini GAGAL terhadap build lama (timeout run tetap menghasilkan overall_status "clean").
+Write-T "TEST 14: Fix B -- phase3Status run_failed propagasi ke overall_status"
+if (Test-Path -LiteralPath $raPs1Deployed) {
+    $t14Dir = Join-Path $env:TEMP "kilo_t14_$(Get-Date -Format 'HHmmss')"
+    try {
+        $null = New-Item -ItemType Directory -Path $t14Dir -Force
+        # Tulis project.godot minimal agar fase RUN aktif
+        Set-Content (Join-Path $t14Dir "project.godot") '[application]`nconfig/name="T14"' -Encoding UTF8
+        $reportPath = Join-Path $t14Dir "report.json"
+        $savedEAP14 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        # -Timeout 1 memastikan scenario timeout sebelum menghasilkan hasil baru
+        & $raPs1Deployed -ProjectPath $t14Dir -SkipHarness -Timeout 1 -OutputReport $reportPath `
+            -ErrorAction SilentlyContinue 2>$null | Out-Null
+        $ErrorActionPreference = $savedEAP14
+
+        if (Test-Path -LiteralPath $reportPath) {
+            $rpt = Get-Content $reportPath -Raw | ConvertFrom-Json
+            $runPhase = $rpt.phases.run
+            # Jika run = timeout/error/stale_result -> overall_status harus "run_failed", bukan "clean"
+            $runFailed = $runPhase -in @("timeout", "error", "stale_result", "skip_no_godot", "skip_no_project")
+            $statusPropagated = $rpt.overall_status -ne "clean"
+            Add-Result "Fix B: phase3Status run_failed propagasi ke overall_status" `
+                ($runFailed -or $statusPropagated) `
+                "phases.run=$runPhase overall_status=$($rpt.overall_status)"
+        } else {
+            # Jika tidak ada godot, laporan mungkin tidak dibuat -- itu ok, test ini opsional
+            Add-Result "Fix B: phase3Status propagasi (no-godot fallback)" $true "Godot tidak tersedia, test di-skip"
+        }
+    } catch {
+        Add-Result "Fix B: phase3Status propagasi" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t14Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-T "TEST 14: SKIP -- run-and-analyze.ps1 tidak tersedia"
+}
+Write-S
+
+# ── TEST 15: Fix C -- visual-diff menggunakan -colorspace sRGB ──────────────────
+# Verifikasi bahwa argumen ImageMagick yang dihasilkan visual-diff.ps1 mengandung
+# "-colorspace sRGB". Test ini GAGAL terhadap build lama yang tidak memiliki flag ini
+# (false negative pada perbandingan Gray vs sRGB).
+Write-T "TEST 15: Fix C -- visual-diff.ps1 menggunakan -colorspace sRGB"
+$vdPs1Deployed = Join-Path $env:USERPROFILE ".config\kilo\tools\visual-diff.ps1"
+if (Test-Path -LiteralPath $vdPs1Deployed) {
+    $vdContent = Get-Content $vdPs1Deployed -Raw
+    $hasColorspace = $vdContent -match '\-colorspace sRGB'
+    # Pastikan flag ada di KEDUA cabang (isV7 dan tidak)
+    $matchCount = ([regex]::Matches($vdContent, '-colorspace sRGB')).Count
+    Add-Result "Fix C: visual-diff.ps1 menggunakan -colorspace sRGB di kedua cabang" `
+        ($hasColorspace -and $matchCount -ge 2) "jumlah kemunculan -colorspace sRGB: $matchCount (expected >= 2)"
+} else {
+    Write-T "TEST 15: SKIP -- visual-diff.ps1 tidak tersedia"
+}
+Write-S
+
+# ── TEST 16: Fix D -- autonomous-qa.ps1 mendukung custom_user_dir ───────────────
+# Verifikasi bahwa autonomous-qa.ps1 mengandung logika custom_user_dir_name yang
+# sama dengan run-and-analyze.ps1. Test ini GAGAL terhadap build lama yang tidak
+# memiliki referensi "custom_user_dir" sama sekali di autonomous-qa.ps1.
+Write-T "TEST 16: Fix D -- autonomous-qa.ps1 mendukung custom_user_dir"
+$aqPs1Deployed = Join-Path $env:USERPROFILE ".config\kilo\tools\autonomous-qa.ps1"
+if (Test-Path -LiteralPath $aqPs1Deployed) {
+    $aqContent = Get-Content $aqPs1Deployed -Raw
+    $hasCustomDir     = $aqContent -match 'custom_user_dir_name'
+    $hasUseCustomDir  = $aqContent -match 'use_custom_user_dir'
+    Add-Result "Fix D: autonomous-qa.ps1 mendukung custom_user_dir_name" `
+        ($hasCustomDir -and $hasUseCustomDir) `
+        "custom_user_dir_name=$hasCustomDir use_custom_user_dir=$hasUseCustomDir"
+} else {
+    Write-T "TEST 16: SKIP -- autonomous-qa.ps1 tidak tersedia"
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."

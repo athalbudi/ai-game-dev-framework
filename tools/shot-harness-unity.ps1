@@ -150,6 +150,7 @@ try {
                       "-buildTarget", $BuildTarget,
                       "-logFile", "`"$logFile`"" `
         -PassThru -NoNewWindow
+    $proc.Handle | Out-Null  # pastikan ExitCode tidak null setelah WaitForExit(ms)
 
     $timeoutMs       = $Timeout * 1000
     $checkIntervalMs = [Math]::Max(5000, $Timeout * 250)

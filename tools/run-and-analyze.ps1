@@ -421,9 +421,9 @@ function Get-DefaultProtectedPatterns {
     $patterns.Add("scenarios/*/*")
     $patterns.Add("shots.zoom.json")
     $patterns.Add("visual-diff-ignore.json")
-    $patterns.Add("scripts/ScenarioRunner.gd")
-    $patterns.Add("scripts/GameStateWriter.gd")
-    $patterns.Add("scripts/ErrorTracker.gd")
+    $patterns.Add("*scripts/ScenarioRunner.gd")
+    $patterns.Add("*scripts/GameStateWriter.gd")
+    $patterns.Add("*scripts/ErrorTracker.gd")
     return @($patterns)
 }
 
@@ -450,6 +450,19 @@ if (-not (Test-Path -LiteralPath $ProjectPath -PathType Container)) {
     Write-Fail "ProjectPath tidak ditemukan: $ProjectPath"
 }
 
+# ── 1a. Resolve Godot executable (perlu sebelum worktree --import) ─────────────
+if ($GodotExe -eq "") {
+    $godotCandidates = @("godot", "godot4", "godot.exe", "godot4.exe")
+    foreach ($g in $godotCandidates) {
+        $found = Get-Command $g -ErrorAction SilentlyContinue
+        if ($found) { $GodotExe = $found.Source; break }
+    }
+    if ($GodotExe -eq "") {
+        Write-Warn "Godot executable tidak ditemukan — fase RUN dan worktree --import akan di-skip"
+        Write-Warn "Gunakan -GodotExe untuk specify path, atau pastikan godot ada di PATH"
+    }
+}
+
 # ── 1b. TAHAP 2: Provision worktree jika -FixLoopMode aktif ─────────────────
 # Worktree di-provision SEBELUM harness dijalankan sehingga semua operasi
 # (OBSERVE, RUN, ANALYZE, GATE) terjadi di dalam isolasi yang benar.
@@ -469,6 +482,22 @@ if ($FixLoopMode -and $PatchBranch -ne "") {
         # Jalankan harness dan analisis di dalam worktree (bukan ProjectPath asli)
         # supaya perubahan AI yang belum di-commit tidak bocor ke working tree utama.
         $worktreeProjectPath = $worktreeInfo.worktree_path
+
+        # Jalankan --import agar .godot/ terisi di worktree sebelum scenario dijalankan.
+        # Tanpa ini Godot tidak bisa compile script dan scenario selalu gagal di step 1.
+        if ($GodotExe -ne "") {
+            Write-Phase "WORKTREE" "Menjalankan --import di worktree (isi .godot/)..."
+            $importProc = Start-Process -FilePath $GodotExe `
+                -ArgumentList "--path", "`"$worktreeProjectPath`"", "--import", "--quit-after", "2" `
+                -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+            if ($importProc) {
+                $importProc.Handle | Out-Null
+                $importProc.WaitForExit(60000) | Out-Null
+                Write-Ok "Import worktree selesai (exit: $($importProc.ExitCode))"
+            }
+        } else {
+            Write-Warn "GodotExe belum diketahui saat provisioning -- --import di-skip, cari Godot lebih dulu"
+        }
     } else {
         Write-Warn "Worktree gagal di-provision: $($worktreeInfo.error)"
         Write-Warn "Melanjutkan tanpa isolasi worktree (fallback ke ProjectPath)"
@@ -688,20 +717,11 @@ Write-Phase "RUN" "Menjalankan scenario..."
 
 $scenarioResultPath = Join-Path $shotsDir "scenario_result.json"
 $scenarioResult     = $null
-$phase3Status       = "skip"
+$phase3Status       = if ($GodotExe -eq "") { "skip_no_godot" } else { "skip" }
 
-# Resolve Godot executable
 if ($GodotExe -eq "") {
-    $godotCandidates = @("godot", "godot4", "godot.exe", "godot4.exe")
-    foreach ($g in $godotCandidates) {
-        $found = Get-Command $g -ErrorAction SilentlyContinue
-        if ($found) { $GodotExe = $found.Source; break }
-    }
-    if ($GodotExe -eq "") {
-        Write-Warn "Godot executable tidak ditemukan — skip fase RUN"
-        Write-Warn "Gunakan -GodotExe untuk specify path, atau pastikan godot ada di PATH"
-        $phase3Status = "skip_no_godot"
-    }
+    Write-Warn "Godot executable tidak ditemukan — skip fase RUN"
+    Write-Warn "Gunakan -GodotExe untuk specify path, atau pastikan godot ada di PATH"
 }
 
 if ($phase3Status -ne "skip_no_godot" -and (Test-Path -LiteralPath $projectGodot)) {
@@ -730,22 +750,29 @@ if ($phase3Status -ne "skip_no_godot" -and (Test-Path -LiteralPath $projectGodot
     $phase3Status = "skip_no_project"
 }
 
-# Baca hasil scenario
+# Baca hasil scenario — hanya jika file ditulis SETELAH run dimulai (guard stale result)
 if (Test-Path -LiteralPath $scenarioResultPath) {
-    try {
-        $scenarioResult = Get-Content -LiteralPath $scenarioResultPath -Raw | ConvertFrom-Json
-        # Suport kedua kontrak field: steps_pass/steps_fail/steps_skip (ScenarioRunner v1)
-        # dan passed/failed/skipped (format lama)
-        $passed  = if ($scenarioResult.PSObject.Properties["steps_pass"])  { $scenarioResult.steps_pass }  `
-                   elseif ($scenarioResult.PSObject.Properties["passed"])  { $scenarioResult.passed }  else { 0 }
-        $failed  = if ($scenarioResult.PSObject.Properties["steps_fail"])  { $scenarioResult.steps_fail }  `
-                   elseif ($scenarioResult.PSObject.Properties["failed"])  { $scenarioResult.failed }  else { 0 }
-        $skipped = if ($scenarioResult.PSObject.Properties["steps_skip"])  { $scenarioResult.steps_skip }  `
-                   elseif ($scenarioResult.PSObject.Properties["skipped"]) { $scenarioResult.skipped } else { 0 }
-        $status  = $scenarioResult.status
-        Write-Ok "Hasil: $status ($passed pass / $failed fail / $skipped skip)"
-    } catch {
-        Write-Warn "Gagal membaca scenario_result.json: $_"
+    $resultMtime = (Get-Item -LiteralPath $scenarioResultPath).LastWriteTime
+    if ($phase3Status -in @("ok", "timeout") -and $resultMtime -lt $ts_run) {
+        Write-Warn "scenario_result.json tidak diperbarui setelah run (mtime: $resultMtime < ts_run: $ts_run) — hasil lama diabaikan"
+        $phase3Status = "stale_result"
+    }
+    if ($phase3Status -ne "stale_result") {
+        try {
+            $scenarioResult = Get-Content -LiteralPath $scenarioResultPath -Raw | ConvertFrom-Json
+            # Suport kedua kontrak field: steps_pass/steps_fail/steps_skip (ScenarioRunner v1)
+            # dan passed/failed/skipped (format lama)
+            $passed  = if ($scenarioResult.PSObject.Properties["steps_pass"])  { $scenarioResult.steps_pass }  `
+                       elseif ($scenarioResult.PSObject.Properties["passed"])  { $scenarioResult.passed }  else { 0 }
+            $failed  = if ($scenarioResult.PSObject.Properties["steps_fail"])  { $scenarioResult.steps_fail }  `
+                       elseif ($scenarioResult.PSObject.Properties["failed"])  { $scenarioResult.failed }  else { 0 }
+            $skipped = if ($scenarioResult.PSObject.Properties["steps_skip"])  { $scenarioResult.steps_skip }  `
+                       elseif ($scenarioResult.PSObject.Properties["skipped"]) { $scenarioResult.skipped } else { 0 }
+            $status  = $scenarioResult.status
+            Write-Ok "Hasil: $status ($passed pass / $failed fail / $skipped skip)"
+        } catch {
+            Write-Warn "Gagal membaca scenario_result.json: $_"
+        }
     }
 }
 
@@ -899,7 +926,9 @@ if (-not $gateResult.violated -and $FixLoopMode -and $FixRequestPath -ne "") {
 # ── FASE 5: REPORT ─────────────────────────────────────────────────────────────
 Write-Phase "REPORT" "Membuat laporan..."
 
+$phase3Failed  = $phase3Status -in @("timeout", "error", "stale_result")
 $overallStatus = if ($gateResult.violated) { "escalation_required" } `
+                 elseif ($phase3Failed) { "run_failed" } `
                  elseif ($analysis.critical_issues.Count -gt 0) { "issues_found" } `
                  else { "clean" }
 

@@ -498,6 +498,7 @@ if ($NoRun) {
         $proc = Start-Process -FilePath $GodotExe `
             -ArgumentList "--path", "`"$ProjectPath`"", "--", "--shot" `
             -PassThru -NoNewWindow -RedirectStandardError $godotLog
+        $proc.Handle | Out-Null  # pastikan ExitCode tidak null setelah WaitForExit(ms)
 
         # Pantau proses secara aktif dengan interval $hangCheckSec
         $checkIntervalMs = $hangCheckSec * 1000

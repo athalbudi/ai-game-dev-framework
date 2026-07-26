@@ -455,9 +455,9 @@ foreach ($cur in $currentPngs) {
         # ----------------------------------------------------------------
 
         if ($isV7) {
-            $imArgs = "compare -metric AE `"$basePathForDiff`" `"$curPathForDiff`" `"$diffOut`""
+            $imArgs = "compare -metric AE -colorspace sRGB `"$basePathForDiff`" `"$curPathForDiff`" `"$diffOut`""
         } else {
-            $imArgs = "-metric AE `"$basePathForDiff`" `"$curPathForDiff`" `"$diffOut`""
+            $imArgs = "-metric AE -colorspace sRGB `"$basePathForDiff`" `"$curPathForDiff`" `"$diffOut`""
         }
 
         try {

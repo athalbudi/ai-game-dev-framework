@@ -533,3 +533,68 @@ Semua field bisa digabung dalam satu file `visual-diff-ignore.json`:
 | Hang | Tidak ada PNG + CPU ~0% | `timeout_hang` |
 
 Tambahkan `-Timeout <detik>` jika game memang lambat secara normal.
+
+---
+
+## Fix-Loop Otonom (`-FixLoopMode`)
+
+`run-and-analyze.ps1` mendukung mode fix-loop yang menjalankan verifikasi patch AI secara terisolasi.
+
+```powershell
+& "$env:USERPROFILE\.config\kilo\tools\run-and-analyze.ps1" `
+    -ProjectPath "C:\dev\mygame" `
+    -FixLoopMode `
+    -PatchBranch "fix/bug-scene-value" `
+    -FixRequestPath "fix-request.json"
+```
+
+### Alur fix-loop
+
+1. **Worktree provisioning** — patch di-checkout ke git worktree terisolasi (`_worktree_<branch>`)
+2. **`--import`** — Godot dijalankan dengan `--import` di worktree agar `.godot/` terisi sebelum scenario dieksekusi
+3. **Gate protected-file** — verifikasi bahwa patch tidak menyentuh file verifikasi itu sendiri
+4. **Scope constraint** — verifikasi bahwa patch hanya menyentuh file yang diizinkan di `fix-request.json`
+5. **Scenario run** — scenario dijalankan di worktree; hasil dibandingkan dengan `ts_run` (guard stale result)
+6. **Visual diff** — screenshot before/after dibandingkan; path PNG dicatat di laporan
+7. **Cleanup** — worktree dihapus setelah selesai, baik gate pass maupun fail
+
+### Gate protected-file dan `-ProtectedPatterns`
+
+Gate memblokir patch yang menyentuh file verifikasi sendiri — skenario "AI melumpuhkan alat ukurnya sendiri".
+
+**Default protected patterns** (built-in, selalu aktif):
+```
+scenarios/*
+scenarios/*/*
+shots.zoom.json
+visual-diff-ignore.json
+*scripts/ScenarioRunner.gd
+*scripts/GameStateWriter.gd
+*scripts/ErrorTracker.gd
+```
+
+Prefix `*` pada tiga script terakhir memastikan pola cocok di semua layout folder project
+(contoh: `scripts/`, `source/scripts/`, `src/global/`).
+
+**Override per kasus dengan `-ProtectedPatterns`:**
+```powershell
+& "$env:USERPROFILE\.config\kilo\tools\run-and-analyze.ps1" `
+    -ProjectPath "C:\dev\mygame" `
+    -FixLoopMode -PatchBranch "fix/my-bug" `
+    -ProtectedPatterns @("*MyCustomRunner.gd", "tests/*")
+```
+
+`-ProtectedPatterns` **ditambahkan** ke daftar default, bukan menggantikannya. Untuk menutup
+lubang di project dengan layout non-standar, tambahkan pola spesifik project via parameter ini.
+
+Jika gate terpicu: laporan akan berisi `overall_status: escalation_required` dan exit code 1 —
+loop berhenti dan menunggu approval manual sebelum patch diaplikasikan.
+
+### Status `overall_status`
+
+| Nilai | Kondisi |
+|---|---|
+| `clean` | Gate pass, scenario pass, tidak ada critical issue |
+| `run_failed` | Scenario timeout, error, atau hasil `scenario_result.json` basi (file tidak diperbarui setelah run) |
+| `issues_found` | Ada critical issue dari analisis (visual regression, dll) |
+| `escalation_required` | Gate protected-file atau scope violation — butuh approval manual |
