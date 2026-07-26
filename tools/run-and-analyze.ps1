@@ -476,6 +476,44 @@ if ($FixLoopMode -and $PatchBranch -ne "") {
 } elseif ($FixLoopMode -and $PatchBranch -eq "") {
     Write-Warn "-FixLoopMode aktif tapi -PatchBranch tidak diisi -- worktree tidak dibuat"
 }
+
+# ── 1c. Turunkan -PatchRef otomatis dari -PatchBranch saat fix-loop ──────────
+# Kontrak "commit-before-verify": di fix-loop otonom patch sudah di-commit ke
+# $PatchBranch, jadi gate HARUS membandingkan commit-vs-commit ($GateBaseRef vs
+# $PatchBranch). Diff dua-ref itu kebal terhadap noise working-tree (.godot/,
+# shots/) yang dihasilkan harness saat verifikasi berjalan.
+#
+# Sebelumnya $PatchRef adalah parameter terpisah yang tidak diturunkan dari
+# apa pun -- pemanggil fix-loop harus mengingatnya sendiri, dan kalau lupa
+# gate diam-diam jatuh ke diff working-tree. Kontraknya terdokumentasi tapi
+# tidak ditegakkan.
+#
+# Kalau branch-nya tidak ada, JANGAN set $PatchRef: `git diff base branch-hantu`
+# mengembalikan kosong, dan gate akan lolos tanpa memeriksa apa pun (fail-open).
+# Fallback ke diff single-ref lebih konservatif -- mungkin ada false-positive
+# dari file runtime, tapi tidak pernah meloloskan patch tanpa diperiksa.
+if ($FixLoopMode -and $PatchBranch -ne "" -and $PatchRef -eq "") {
+    $savedEAPRef = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    Push-Location $ProjectPath
+    try {
+        git rev-parse --verify --quiet "$PatchBranch^{commit}" 2>$null | Out-Null
+        $branchResolves = ($LASTEXITCODE -eq 0)
+    } catch {
+        $branchResolves = $false
+    } finally {
+        Pop-Location
+        $ErrorActionPreference = $savedEAPRef
+    }
+
+    if ($branchResolves) {
+        $PatchRef = $PatchBranch
+        Write-Info "Gate mode: two-ref diff ($GateBaseRef..$PatchBranch)"
+    } else {
+        Write-Warn "Branch '$PatchBranch' tidak resolve -- gate fallback ke diff single-ref (working-tree)"
+    }
+}
+
 $projectName = Split-Path $worktreeProjectPath -Leaf
 Write-Phase "INIT" "Project: $projectName ($worktreeProjectPath)"
 

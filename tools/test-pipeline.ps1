@@ -796,6 +796,14 @@ if ($GodotExe -ne "" -and (Test-Path -LiteralPath "C:\Users\Athallah Budiman\Doc
 
         Add-Result "-FixLoopMode cleanup worktree setelah run" $worktreeCleanedUp ("worktree " + $(if ($worktreeCleanedUp) { "dihapus otomatis" } else { "TIDAK dihapus -- leak!" }))
 
+        # Verifikasi 4: -PatchRef diturunkan OTOMATIS dari -PatchBranch.
+        # Pemanggilan di atas sengaja TIDAK mengirim -PatchRef. Kalau gate tetap
+        # memakai diff single-ref, kontrak commit-before-verify tidak ditegakkan
+        # dan noise working-tree (.godot/, shots/) bisa memicu false-positive.
+        $twoRefWired = $outputStr -match "Gate mode: two-ref diff"
+        Add-Result "-FixLoopMode auto-wires -PatchRef ke two-ref diff" $twoRefWired `
+            ($(if ($twoRefWired) { "gate pakai two-ref ($intTestBranch) tanpa -PatchRef eksplisit" } else { "gate masih single-ref -- -PatchRef tidak diturunkan" }))
+
     } catch {
         Add-Result "-FixLoopMode integration" $false ("Exception: " + $_)
     } finally {
@@ -828,13 +836,20 @@ if (Test-Path -LiteralPath $raPs1Deployed) {
         $savedEAP11 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
         git init -q 2>$null
         git config core.autocrlf true 2>$null
-        [System.IO.File]::WriteAllText("$t11Base\allowed.gd", "# base`n", [System.Text.Encoding]::UTF8)
-        [System.IO.File]::WriteAllText("$t11Base\other.gd",   "# base`n", [System.Text.Encoding]::UTF8)
+        # Baseline di-commit dengan CRLF, working copy nanti ditulis LF -- mismatch ini
+        # yang memaksa git mengeluarkan advisory "LF will be replaced by CRLF".
+        [System.IO.File]::WriteAllText("$t11Base\allowed.gd", "# base`r`n", [System.Text.Encoding]::UTF8)
+        [System.IO.File]::WriteAllText("$t11Base\other.gd",   "# base`r`n", [System.Text.Encoding]::UTF8)
         git add . 2>$null; git commit -q -m "baseline" 2>$null
         # Modifikasi KEDUANYA agar dirty (single-ref diff akan mendeteksi keduanya)
         [System.IO.File]::WriteAllText("$t11Base\allowed.gd", "# changed`n", [System.Text.Encoding]::UTF8)
         [System.IO.File]::WriteAllText("$t11Base\other.gd",   "# changed`n", [System.Text.Encoding]::UTF8)
-        git add . 2>$null
+        # JANGAN `git add` di sini. Staging membuat git mengeluarkan advisory LF/CRLF
+        # pada saat add (di dalam blok EAP=Continue ini, jadi tertelan) dan TIDAK
+        # mengeluarkannya lagi saat `git diff` -- yang berarti kondisi crash EAP hilang
+        # dan test ini berhenti menjadi regression test untuk bug tersebut.
+        # Terukur: staged -> advisory=False -> lolos bahkan di build tanpa fix EAP.
+        #          unstaged -> advisory=True -> crash di build tanpa fix, pass di build ber-fix.
         $ErrorActionPreference = $savedEAP11
         Pop-Location
 
