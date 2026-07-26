@@ -809,58 +809,69 @@ if ($GodotExe -ne "" -and (Test-Path -LiteralPath "C:\Users\Athallah Budiman\Doc
 }
 Write-S
 
-# ── TEST 11: Test-ScopeViolation -- allowlist check Tahap 3 ──────────────────
-# Verifikasi:
-# 1. File dalam allowlist tidak trigger violation
-# 2. File di luar allowlist trigger violation
-# 3. Denylist menang atas allowlist (file protected + dalam allowlist = violated)
-# Test murni PS -- tidak butuh Godot
-Write-T "TEST 11: Test-ScopeViolation -- allowlist dan denylist-wins"
+# ── TEST 11: Test-ScopeViolation -- behavioral correctness (bukan just no-crash) ─
+# Verifikasi behavior aktual Test-ScopeViolation dengan fixture deterministik:
+# A. File dalam allowlist + working tree dirty dengan file itu -> tidak violated
+# B. File di luar allowlist + working tree dirty -> violated (out_of_scope non-empty)
+# C. Test-ProtectedFileViolation dengan file protected di diff -> violated
+#
+# Menggunakan repo temp dengan core.autocrlf=true dan file yang benar-benar dirty
+# agar git diff single-ref menghasilkan output nyata (bukan tree bersih = trivially pass).
+Write-T "TEST 11: Test-ScopeViolation -- behavioral correctness dengan repo temp dirty"
 $raPs1Deployed = Join-Path $env:USERPROFILE ".config\kilo\tools\run-and-analyze.ps1"
-$scopeTestRepo = "C:\Users\Athallah Budiman\Documents\ai-game-dev-framework"
 if (Test-Path -LiteralPath $raPs1Deployed) {
+    $t11Base = Join-Path $env:TEMP "kilo_t11_$(Get-Date -Format 'HHmmss')"
     try {
-        # Dot-source untuk akses Test-ScopeViolation dan Test-ProtectedFileViolation
-        $savedEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-        . $raPs1Deployed -ProjectPath $scopeTestRepo -SkipHarness -ErrorAction SilentlyContinue 2>$null
-        $ErrorActionPreference = $savedEAP
+        # Buat repo temp dengan core.autocrlf=true
+        $null = New-Item -ItemType Directory -Path $t11Base -Force
+        Push-Location $t11Base
+        $savedEAP11 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        git init -q 2>$null
+        git config core.autocrlf true 2>$null
+        [System.IO.File]::WriteAllText("$t11Base\allowed.gd", "# base`n", [System.Text.Encoding]::UTF8)
+        [System.IO.File]::WriteAllText("$t11Base\other.gd",   "# base`n", [System.Text.Encoding]::UTF8)
+        git add . 2>$null; git commit -q -m "baseline" 2>$null
+        # Modifikasi KEDUANYA agar dirty (single-ref diff akan mendeteksi keduanya)
+        [System.IO.File]::WriteAllText("$t11Base\allowed.gd", "# changed`n", [System.Text.Encoding]::UTF8)
+        [System.IO.File]::WriteAllText("$t11Base\other.gd",   "# changed`n", [System.Text.Encoding]::UTF8)
+        git add . 2>$null
+        $ErrorActionPreference = $savedEAP11
+        Pop-Location
 
-        # Buat fix-request fixture dengan target_file = source/Main.gd
-        $scopeFixture = [ordered]@{
-            fix_requests = @(
-                [ordered]@{
-                    fix_request_id   = "test_scope_fr"
-                    target_file      = "source/Main.gd"
-                    type             = "test"
-                    severity         = "low"
-                    description      = "test fixture"
-                    suggested_action = "n/a"
-                    step_hint        = ""
-                    status           = "actionable"
-                }
-            )
+        # Dot-source untuk akses fungsi
+        $savedEAP11b = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        . $raPs1Deployed -ProjectPath $t11Base -SkipHarness -ErrorAction SilentlyContinue 2>$null
+        $ErrorActionPreference = $savedEAP11b
+
+        # fix-request fixture -- only allowed.gd diizinkan
+        $frPath = Join-Path $t11Base "fix-request.json"
+        @{ fix_requests = @(@{ fix_request_id="t11"; target_file="allowed.gd"; type="test"; severity="low"; description="t11"; suggested_action="n/a"; step_hint=""; status="actionable" }) } |
+            ConvertTo-Json -Depth 4 | Set-Content $frPath -Encoding UTF8
+
+        # Test A: allowed.gd ada di diff DAN di allowlist -> bukan out-of-scope
+        #         other.gd ada di diff tapi tidak di allowlist -> out-of-scope
+        $rA = Test-ScopeViolation -RepoPath $t11Base -FixRequestPath $frPath -BaseRef "HEAD"
+        $outOfScope = @($rA.out_of_scope)
+        # other.gd harus ada di out_of_scope; allowed.gd tidak
+        $otherFlagged   = $outOfScope | Where-Object { $_ -match "other.gd" }
+        $allowedFlagged = $outOfScope | Where-Object { $_ -match "allowed.gd" }
+        if (@($otherFlagged).Count -gt 0 -and @($allowedFlagged).Count -eq 0) {
+            Add-Result "Test-ScopeViolation out-of-scope detection" $true "other.gd flagged, allowed.gd tidak (correct)"
+        } else {
+            Add-Result "Test-ScopeViolation out-of-scope detection" $false "other=$(@($otherFlagged).Count) allowed=$(@($allowedFlagged).Count) -- expected other=1 allowed=0"
         }
-        $frFixturePath = Join-Path $env:TEMP "kilo_scope_test_fr.json"
-        $scopeFixture | ConvertTo-Json -Depth 4 | Set-Content $frFixturePath -Encoding UTF8
 
-        # Test A: file dalam allowlist (working tree bersih) -- tidak violated
-        $resultA = Test-ScopeViolation -RepoPath $scopeTestRepo -FixRequestPath $frFixturePath -BaseRef "HEAD"
-        $testAPass = (-not $resultA.violated) -or ($resultA.changed_files.Count -eq 0)
-        Add-Result "Test-ScopeViolation (file dalam allowlist)" $testAPass "violated=$($resultA.violated), changed=$($resultA.changed_files.Count)"
+        # Test B: Test-ProtectedFileViolation -- other.gd sebagai protected pattern
+        $rB = Test-ProtectedFileViolation -RepoPath $t11Base `
+            -ProtectedPatterns @("other.gd") `
+            -BaseRef "HEAD"
+        $hitOther = @($rB.protected_hits | Where-Object { $_ -match "other.gd" })
+        Add-Result "Test-ProtectedFileViolation detects protected file in diff" ($rB.violated -and @($hitOther).Count -gt 0) "violated=$($rB.violated) hits=$(@($hitOther).Count)"
 
-        # Test B: denylist menang -- file protected dalam allowlist tetap violated via denylist
-        $gateResult = Test-ProtectedFileViolation -RepoPath $scopeTestRepo `
-            -ProtectedPatterns @("source/Main.gd") `
-            -BaseRef "HEAD" `
-            -PatchRef "HEAD"
-        # Working tree bersih, so not violated via diff -- tapi logic benar: denylist independent dari allowlist
-        # Verifikasi bahwa kedua fungsi bisa dipanggil tanpa crash (EAP bug sebelumnya)
-        $testBPass = ($gateResult -ne $null) -and ($resultA -ne $null)
-        Add-Result "Test-ScopeViolation + Test-ProtectedFileViolation (no EAP crash)" $testBPass "kedua fungsi terpanggil tanpa crash"
-
-        Remove-Item $frFixturePath -Force -ErrorAction SilentlyContinue
     } catch {
-        Add-Result "Test-ScopeViolation" $false ("Exception (kemungkinan EAP crash): " + $_)
+        Add-Result "Test-ScopeViolation behavioral" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t11Base -Recurse -Force -ErrorAction SilentlyContinue
     }
 } else {
     Write-T "TEST 11: SKIP -- run-and-analyze.ps1 tidak tersedia"
