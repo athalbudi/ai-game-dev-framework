@@ -91,26 +91,53 @@ Biaya token bersifat kuadratik terhadap panjang sesi: request ke-i membawa i×g 
 Dari data aktual proyek ini: g ≈ 21.400 token/exchange, 72 exchange = 56M token.
 Memecah ke 4 sesi × 18 exchange menghemat ~3.8×; 8 sesi × 9 exchange menghemat ~7.5×.
 
+**Temuan kritis:** Kuota harian (150M) menghitung token **mentah**, bukan token terdiskon.
+Ini dibuktikan dari batas fisik: rata-rata 782K token/request dengan plafon 1M tidak konsisten
+dengan adanya cache diskon 10× — itu akan melampaui plafon. Konsekuensinya: caching berguna
+untuk biaya uang, tapi tidak mengurangi konsumsi kuota. Yang mengurangi kuota hanya lever
+yang memperkecil token mentah: rotasi sesi dan baca range.
+
+Estimasi penghematan kuota dari data aktual:
+
+| Pola | Total token | % kuota harian |
+|---|---:|---:|
+| Sekarang (1 sesi × 72 exchange) | 56,3M | 38% |
+| + rotasi sesi (4 × 18) | 14,5M | 10% |
+| + baca range (g: 21K→8K) | 6,3M | 4% |
+
 ### Aturan wajib
 
 1. **Rotasi sesi pada ~20 exchange.** Mulai sesi baru untuk topik atau task yang berbeda.
-   Di awal sesi baru, baca `git log` dan file ringkasan — jangan andalkan memory sesi lama.
+   Di awal sesi baru, baca `git log` dan file handoff — jangan andalkan memory sesi lama.
 
-2. **Baca range, bukan file penuh.** File besar (contoh: `shot-harness.ps1` ~19K token)
-   masuk context dan dibayar ulang di setiap request sesudahnya.
-   Gunakan grep + offset/limit untuk membaca hanya bagian yang relevan.
+2. **Baca range, bukan file penuh.** File besar (contoh: `shot-harness.ps1` ~16K token,
+   `run-and-analyze.ps1` ~12K, `test-pipeline.ps1` ~11K) masuk context dan dibayar ulang
+   di setiap request sesudahnya. Grep dulu untuk menemukan lokasi, baca ±40 baris sekitarnya.
 
 3. **Satu script menguji banyak hipotesis sekaligus.** Daripada 8 ronde tanya-jawab,
    tulis satu script yang menguji 4 hipotesis dan kembalikan output ringkas.
    Ini menyerang g (ukuran per exchange) dan n (jumlah exchange) sekaligus.
 
-4. **Tulis temuan ke disk, bukan ke context.** Sebelum sesi berakhir, tulis ringkasan
-   ke file (contoh: `docs/session-notes.md` atau comment di kode).
-   Sesi berikutnya baca file itu, bukan mewarisi ratusan ribu token history.
+4. **Tulis handoff ke disk sebelum sesi berakhir.** Format standar:
+   ```
+   ## Handoff — <tanggal>
+   Commit terakhir: <hash> <pesan>
+   Status: <clean/ada perubahan>
+   Selesai: <apa yang sudah dikerjakan>
+   Belum selesai: <apa yang masih outstanding>
+   File relevan: <list file yang perlu dibaca di sesi berikutnya>
+   ```
+   Simpan di `docs/handoff.md`. Sesi berikutnya baca file ini + `git log`, bukan mewarisi history.
 
-5. **RTK untuk command output.** Prefix semua shell command dengan `rtk` untuk
-   mengompresi output sebelum masuk context. Gunakan `rtk gain` untuk melihat penghematan.
+5. **RTK hanya untuk tool eksternal** (`git`, `npm`, `docker`, `gh`, `cargo`, dll).
+   Jangan prefix command PowerShell native dengan `rtk` — cmdlet PS tidak difilter RTK
+   dan mengaburkan output verifikasi yang butuh presisi.
    Catatan: RTK mengompresi output command, bukan history — lever sekunder, bukan utama.
+
+### Konvensi file handoff
+
+File: `docs/handoff.md` di root repo. Diperbarui setiap akhir sesi yang produktif.
+Sesi berikutnya WAJIB baca file ini sebelum melanjutkan pekerjaan.
 
 ### Aturan untuk regression test baru
 
