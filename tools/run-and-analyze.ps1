@@ -185,10 +185,23 @@ function Invoke-FixLoopWorktree {
         # git worktree add menulis "Preparing worktree..." ke stderr meski sukses.
         # Dengan $ErrorActionPreference = Stop, output stderr native command bisa
         # memicu terminating error. Simpan dan restore EAP untuk panggilan ini saja.
+        #
+        # PENTING: git tidak bisa checkout branch yang sudah aktif di working tree lain.
+        # Jika branch sedang aktif (current HEAD), gunakan commit hash (detached) sebagai workaround.
+        $currentBranch = @(git branch --show-current 2>$null) | Select-Object -First 1
+        $useRef = $BranchName
+        if ($currentBranch -eq $BranchName) {
+            # Branch sedang aktif di working tree utama -- checkout via commit hash (detached)
+            $commitHash = @(git rev-parse $BranchName 2>$null) | Select-Object -First 1
+            if ($commitHash -ne "") {
+                $useRef = $commitHash
+                Write-Phase "WORKTREE" "Branch aktif di working tree -- checkout via commit hash: $commitHash"
+            }
+        }
         $savedEAP = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
-            git worktree add $worktreePath $BranchName 2>$null | Out-Null
+            git worktree add $worktreePath $useRef 2>$null | Out-Null
         } finally {
             $ErrorActionPreference = $savedEAP
         }
