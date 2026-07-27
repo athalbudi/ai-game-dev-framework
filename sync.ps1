@@ -128,6 +128,24 @@ foreach ($f in $cmdFiles) {
     Sync-File $f.FullName (Join-Path $cmdDst $f.Name)
 }
 
+# -- Sync ci-templates/* -------------------------------------------------------
+Write-Host "[sync] ci-templates/" -ForegroundColor DarkGray
+$ciSrc = Join-Path $repoRoot "ci-templates"
+$ciDst = Join-Path $kiloConfig "ci-templates"
+$ciFiles = @(Get-ChildItem -LiteralPath $ciSrc -File -ErrorAction SilentlyContinue)
+foreach ($f in $ciFiles) {
+    Sync-File $f.FullName (Join-Path $ciDst $f.Name)
+}
+
+# -- Sync agent/* --------------------------------------------------------------
+Write-Host "[sync] agent/" -ForegroundColor DarkGray
+$agentSrc = Join-Path $repoRoot "agent"
+$agentDst = Join-Path $kiloConfig "agent"
+$agentFiles = @(Get-ChildItem -LiteralPath $agentSrc -File -ErrorAction SilentlyContinue)
+foreach ($f in $agentFiles) {
+    Sync-File $f.FullName (Join-Path $agentDst $f.Name)
+}
+
 # -- Sync ke vendored scripts di game project (opsional) -----------------------
 # Jika project game memiliki salinan framework templates di scripts/ mereka sendiri
 # (pattern yang umum untuk ErrorTracker.gd, GameStateWriter.gd, ScenarioRunner.gd),

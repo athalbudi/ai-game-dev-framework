@@ -312,30 +312,15 @@ if ($GodotExe -ne "" -and (Test-Path -LiteralPath $GodotExe)) {
     $goldenScripts = Join-Path $goldenDir "scripts"
     $null = New-Item -ItemType Directory -Path $goldenScripts -Force
 
-    # project.godot
-    @"
-[configuration]
-config_version=5
-
-[application]
-config/name="GoldenTest"
-run/main_scene="res://main.tscn"
-config/features=PackedStringArray("4.7")
-
-[autoload]
-GameStateWriter="*res://scripts/GameStateWriter.gd"
-ErrorTracker="*res://scripts/ErrorTracker.gd"
-"@ | Set-Content (Join-Path $goldenDir "project.godot") -Encoding UTF8
+    # project.godot -- gunakan WriteAllText tanpa BOM
+    $goldenProjContent = "[configuration]`nconfig_version=5`n`n[application]`nconfig/name=`"GoldenTest`"`nrun/main_scene=`"res://main.tscn`"`nconfig/features=PackedStringArray(`"4.7`")`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n"
+    [System.IO.File]::WriteAllText((Join-Path $goldenDir "project.godot"), $goldenProjContent, (New-Object System.Text.UTF8Encoding($false)))
 
     # main.tscn — format Godot 4 yang valid (tanpa uid agar portable di semua versi 4.x)
-    @"
-[gd_scene format=3 uid="uid://golden_main"]
-
-[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
-
-[node name="Main" type="Node"]
-script = ExtResource("1_main")
-"@ | Set-Content (Join-Path $goldenDir "main.tscn") -Encoding UTF8
+    # Gunakan WriteAllText tanpa BOM -- Set-Content -Encoding UTF8 di PS 5.1 menulis BOM
+    # (EF BB BF) yang menyebabkan Godot melempar "Parse Error: Expected '['" saat load
+    $mainTscnContent = "[gd_scene format=3 uid=`"uid://golden_main`"]`n`n[ext_resource type=`"Script`" path=`"res://scripts/main.gd`" id=`"1_main`"]`n`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1_main`")`n"
+    [System.IO.File]::WriteAllText((Join-Path $goldenDir "main.tscn"), $mainTscnContent, (New-Object System.Text.UTF8Encoding($false)))
 
     # main.gd -- mengikuti pattern AMAN: tidak pakai := dengan class_name, tidak pakai typed member var class_name
     @"
@@ -446,32 +431,13 @@ if ($GodotExe -ne "" -and (Test-Path -LiteralPath $GodotExe)) {
         $strictScripts = Join-Path $strictDir "scripts"
         $null = New-Item -ItemType Directory -Path $strictScripts -Force
 
-        # project.godot dengan unsafe_method_access=2 (strict)
-        @"
-[configuration]
-config_version=5
+        # project.godot dengan unsafe_method_access=2 (strict) -- tanpa BOM
+        $strictProjContent = "[configuration]`nconfig_version=5`n`n[application]`nconfig/name=`"StrictTest`"`nrun/main_scene=`"res://main.tscn`"`nconfig/features=PackedStringArray(`"4.7`")`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n`n[gdscript]`nwarnings/unsafe_method_access=2`nwarnings/unsafe_property_access=2`nwarnings/return_value_discarded=0`n"
+        [System.IO.File]::WriteAllText((Join-Path $strictDir "project.godot"), $strictProjContent, (New-Object System.Text.UTF8Encoding($false)))
 
-[application]
-config/name="StrictTest"
-run/main_scene="res://main.tscn"
-config/features=PackedStringArray("4.7")
-
-[autoload]
-GameStateWriter="*res://scripts/GameStateWriter.gd"
-ErrorTracker="*res://scripts/ErrorTracker.gd"
-
-[gdscript]
-warnings/unsafe_method_access=2
-warnings/unsafe_property_access=2
-warnings/return_value_discarded=0
-"@ | Set-Content (Join-Path $strictDir "project.godot") -Encoding UTF8
-
-        # main.tscn minimal
-        @"
-[gd_scene format=3 uid="uid://strict_main"]
-
-[node name="Main" type="Node"]
-"@ | Set-Content (Join-Path $strictDir "main.tscn") -Encoding UTF8
+        # main.tscn minimal -- tanpa BOM
+        $strictMainTscn = "[gd_scene format=3 uid=`"uid://strict_main`"]`n`n[node name=`"Main`" type=`"Node`"]`n"
+        [System.IO.File]::WriteAllText((Join-Path $strictDir "main.tscn"), $strictMainTscn, (New-Object System.Text.UTF8Encoding($false)))
 
         # Copy template tanpa BOM -- termasuk ScenarioRunner untuk test scenario path
         $kiloTemplates = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
@@ -1271,6 +1237,35 @@ func _ready() -> void:
         # Bersihkan userdata Godot yang dibuat saat --headless run
         Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\T17Check" -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+Write-S
+
+# ── TEST 18: Fix Q -- ScenarioRunner._evaluate_op memanggil push_warning untuk operator tak dikenal ─
+# Verifikasi bahwa default case _evaluate_op mengandung push_warning (bukan hanya silent fallback).
+# Test ini GAGAL terhadap build sebelum Fix Q di mana default case hanya "_: return actual == expected"
+# tanpa peringatan apapun -- operator salah ketik diam-diam jadi eq.
+# Verifikasi behavioral penuh butuh Godot headless dengan scenario JSON (dilakukan auditor);
+# source-text check ini cukup untuk CI karena perubahan yang relevan adalah satu baris tunggal.
+Write-T "TEST 18: Fix Q -- ScenarioRunner._evaluate_op memanggil push_warning untuk operator tak dikenal"
+$srPs1Deployed = Join-Path $env:USERPROFILE ".config\kilo\godot-templates\ScenarioRunner.gd"
+if (Test-Path -LiteralPath $srPs1Deployed) {
+    $srContent = Get-Content $srPs1Deployed -Raw
+    # Verifikasi push_warning ada di default case _evaluate_op -- cek dengan regex yang ketat:
+    # push_warning harus muncul SETELAH deklarasi _evaluate_op dan SEBELUM akhir fungsi
+    $evalOpMatch  = [regex]::Match($srContent, '(?s)func _evaluate_op.*?(?=\nfunc |\Z)')
+    if ($evalOpMatch.Success) {
+        $evalOpBody   = $evalOpMatch.Value
+        $hasWarning   = $evalOpBody -match 'push_warning'
+        $hasDefaultCase = $evalOpBody -match '_:\s*\n'
+        Add-Result "Fix Q: _evaluate_op memanggil push_warning untuk operator tak dikenal" `
+            ($hasWarning -and $hasDefaultCase) `
+            "hasWarning=$hasWarning hasDefaultCase=$hasDefaultCase"
+    } else {
+        Add-Result "Fix Q: _evaluate_op ditemukan di ScenarioRunner.gd" $false "_evaluate_op tidak ditemukan"
+    }
+} else {
+    Write-T "TEST 18: SKIP -- ScenarioRunner.gd tidak tersedia di deployed"
+    Add-Result "Fix Q: push_warning di _evaluate_op" $false "ScenarioRunner.gd tidak ditemukan di deployed"
 }
 Write-S
 
