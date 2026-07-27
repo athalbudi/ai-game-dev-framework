@@ -1,55 +1,35 @@
 ## Handoff — 2026-07-27
 
-Commit terakhir: jalankan `git log --oneline -1`
+Commit terakhir: `de53e6a` -- fix: TEST 6 BOM + sync ci-templates/agent/ + TEST 18 Fix Q
 
 Status: tree bersih, repo ↔ deployed sinkron, pushed ke origin/main
 
-### Selesai di sesi ini (audit keenam + Fix O2/P2 + TEST 17 strict mode)
+### Selesai di sesi ini
 
-- **Fix O2** (`RecordingConverter.gd:226-229`) — Hapus cabang `6:`/`7:` dari `_joypad_button_name`.
-  `JOY_BUTTON_START=6` dan `JOY_BUTTON_LEFT_STICK=7` sehingga cabang lama menyebabkan
-  START→l2 dan LEFT_STICK→r2 secara diam-diam. Trigger Godot 4 adalah axis, bukan button.
+- **Fix sync.ps1** — tambah `ci-templates/` dan `agent/` ke daftar sync.
+  Sebelumnya hanya 5 direktori; sekarang 7 direktori, 34+ file per sync.
 
-- **Fix P2** (`AnomalyDetector.gd`) — Selesaikan semua `.get()` pada Variant di strict mode:
-  - `sort_custom` lambda: tambah tipe eksplisit `a: Dictionary, b: Dictionary`
-  - `ss.get()` → `ss_d := ss as Dictionary` di `_detect_stale_screenshots`
-  - `coverage.get()` → `coverage_d := coverage as Dictionary` di `_detect_coverage_gaps`
-  - `f.get()` → `f_d := f as Dictionary` di `_detect_visual_regressions`
-  - `player.get()` → `player_d := player as Dictionary` di `_detect_state_anomalies`
-  - `step.get()` → `step_d := step as Dictionary` di `_scenario_matches`
-  - AnomalyDetector.gd sekarang 11/11 PASS di strict mode sungguhan
+- **Fix TEST 6 BOM** — ganti semua `Set-Content -Encoding UTF8` dengan `WriteAllText` tanpa BOM
+  di fixture Godot (golden `project.godot`, golden `main.tscn`, strict `project.godot`, strict `main.tscn`).
+  Set-Content di PS 5.1 menulis BOM (EF BB BF) → Godot `Parse Error: Expected '['` tiap run.
+  Sekarang bersih: TEST 6 tidak lagi mencetak noise parse error.
 
-- **Fix TEST17a** (`test-pipeline.ps1`) — Section strict dari `[gdscript]` (diabaikan Godot)
-  ke `[debug]` + `gdscript/warnings/unsafe_method_access=2` yang benar.
-  Sebelumnya: TEST 17 menjalankan vanilla dua kali, strict half inert.
+- **TEST 18** (`test-pipeline.ps1`) — regression test Fix Q: verifikasi `push_warning` ada
+  di body `_evaluate_op` di deployed `ScenarioRunner.gd`. GAGAL terhadap build sebelum Fix Q.
 
-- **Fix TEST17b** (`test-pipeline.ps1`) — SKIP dihitung `$false` bukan `$true`;
-  bersihkan `T17Check` userdata di `finally` block.
+**Self-test: 23/23 PASS** terverifikasi commit `de53e6a`.
 
-**Self-test: 22/22 PASS** terverifikasi commit `033744a`.
-TEST 17 strict mode sekarang menghasilkan output berbeda dari vanilla — diverifikasi.
+### Status outstanding dari semua audit (putaran 1-7)
 
-### Status semua item outstanding dari audit keenam
+Semua item kritis sudah tertutup. Tidak ada defect aktif yang diketahui.
 
-| Item | Status |
-|---|---|
-| Fix O2 regresi semantik trigger | ✅ diperbaiki |
-| Fix P2 AnomalyDetector strict mode | ✅ diperbaiki |
-| TEST 17 strict half inert | ✅ diperbaiki |
-| TEST 17 SKIP dihitung PASS | ✅ diperbaiki |
-| TEST 17 T17Check userdata bocor | ✅ diperbaiki |
+### Catatan untuk sesi berikutnya
 
-### Tidak ada outstanding teknis yang kritis
-
-Semua bug kritis dari seluruh rangkaian audit (putaran 1-6) sudah tertutup.
-TEST 6 BOM defect (`Set-Content -Encoding UTF8` menulis BOM) bersifat kosmetik.
-
-### File relevan untuk sesi berikutnya
-
-- `docs/handoff.md` (file ini)
-- `tools/test-pipeline.ps1` — 22 regression test
-- `godot-templates/AnomalyDetector.gd` — Fix P2 baru
-- `godot-templates/RecordingConverter.gd` — Fix O2 baru
+- `sync.ps1` sekarang sync 7 direktori (tools, godot-templates, scenarios-templates,
+  game-state-templates, command, ci-templates, agent)
+- `test-pipeline.ps1` sekarang punya 23 regression test
+- Enam step type scenario masih tanpa cakupan template (`assert_fps`, `assert_screenshot_exists`,
+  `controller_press`, `mouse_click`, `touch_tap`, `wait_signal`) — low priority
 
 ### Catatan efisiensi token
 
