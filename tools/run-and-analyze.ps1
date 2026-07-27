@@ -241,7 +241,13 @@ function Remove-FixLoopWorktree {
         Push-Location $RepoPath
         try { git branch -D $BranchName 2>$null | Out-Null } catch { } finally { Pop-Location }
     }
-    Write-Phase "WORKTREE" "Removed: $WorktreePath"
+    # Verifikasi aktual -- jangan laporkan "Removed" jika direktori masih ada
+    if (Test-Path -LiteralPath $WorktreePath) {
+        Write-Warn "WORKTREE cleanup gagal -- direktori masih ada: $WorktreePath"
+        Write-Warn "Kemungkinan ada proses yang masih memegang direktori. Kill proses Godot/Unity yang masih berjalan."
+    } else {
+        Write-Phase "WORKTREE" "Removed: $WorktreePath"
+    }
 }
 
 # -- TAHAP 3: Scope constraint (allowlist dari fix-request) -----------------------
@@ -485,18 +491,29 @@ if ($FixLoopMode -and $PatchBranch -ne "") {
 
         # Jalankan --import agar .godot/ terisi di worktree sebelum scenario dijalankan.
         # Tanpa ini Godot tidak bisa compile script dan scenario selalu gagal di step 1.
-        if ($GodotExe -ne "") {
+        # Guard: hanya jalankan jika project.godot ada di worktree -- tanpanya Godot
+        # menampilkan dialog "no main scene" dan tidak pernah exit, menyebabkan proses yatim
+        # yang menahan direktori worktree sehingga cleanup selalu gagal.
+        $worktreeGodot = Join-Path $worktreeProjectPath "project.godot"
+        if ($GodotExe -ne "" -and (Test-Path -LiteralPath $worktreeGodot)) {
             Write-Phase "WORKTREE" "Menjalankan --import di worktree (isi .godot/)..."
             $importProc = Start-Process -FilePath $GodotExe `
                 -ArgumentList "--path", "`"$worktreeProjectPath`"", "--import", "--quit-after", "2" `
                 -PassThru -NoNewWindow -ErrorAction SilentlyContinue
             if ($importProc) {
                 $importProc.Handle | Out-Null
-                $importProc.WaitForExit(60000) | Out-Null
-                Write-Ok "Import worktree selesai (exit: $($importProc.ExitCode))"
+                $importFinished = $importProc.WaitForExit(60000)
+                if (-not $importFinished) {
+                    $importProc.Kill()
+                    Write-Warn "Import worktree timeout (60 detik) -- proses Godot dibunuh, lanjutkan tanpa .godot/"
+                } else {
+                    Write-Ok "Import worktree selesai (exit: $($importProc.ExitCode))"
+                }
             }
+        } elseif ($GodotExe -eq "") {
+            Write-Warn "GodotExe belum diketahui saat provisioning -- --import di-skip"
         } else {
-            Write-Warn "GodotExe belum diketahui saat provisioning -- --import di-skip, cari Godot lebih dulu"
+            Write-Warn "project.godot tidak ditemukan di worktree -- --import di-skip (bukan project Godot)"
         }
     } else {
         Write-Warn "Worktree gagal di-provision: $($worktreeInfo.error)"
@@ -1066,3 +1083,4 @@ if ($worktreeInfo -and $worktreeInfo.success) {
 # Exit code hard block -- orchestrator fix-loop harus bisa percaya exit code saja
 # tanpa parsing JSON untuk tahu apakah lanjut ke merge atau eskalasi ke manusia.
 if ($gateResult.violated) { exit 1 }
+if ($phase3Failed) { exit 1 }

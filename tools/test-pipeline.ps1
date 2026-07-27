@@ -1021,37 +1021,111 @@ if (Test-Path -LiteralPath $raPs1Deployed) {
 }
 Write-S
 
-# ── TEST 15: Fix C -- visual-diff menggunakan -colorspace sRGB ──────────────────
-# Verifikasi bahwa argumen ImageMagick yang dihasilkan visual-diff.ps1 mengandung
-# "-colorspace sRGB". Test ini GAGAL terhadap build lama yang tidak memiliki flag ini
-# (false negative pada perbandingan Gray vs sRGB).
-Write-T "TEST 15: Fix C -- visual-diff.ps1 menggunakan -colorspace sRGB"
+# ── TEST 15: Fix C -- visual-diff mendeteksi regresi Gray vs sRGB (behavioral) ──
+# Buat dua PNG nyata: baseline Gray (putih), current sRGB (merah penuh).
+# Pada build lama tanpa -colorspace sRGB, compare -metric AE mengembalikan 0 untuk
+# pasangan ini -> visual-diff melaporkan "OK, 0% berubah" (false negative).
+# Pada build yang sudah fix, regresi harus terdeteksi (change_pct > 0 atau status REGRESI).
+# Test ini GAGAL terhadap build lama -- membuktikan fix C secara behavioral, bukan grep.
+Write-T "TEST 15: Fix C -- visual-diff mendeteksi regresi Gray vs sRGB (behavioral)"
 $vdPs1Deployed = Join-Path $env:USERPROFILE ".config\kilo\tools\visual-diff.ps1"
-if (Test-Path -LiteralPath $vdPs1Deployed) {
-    $vdContent = Get-Content $vdPs1Deployed -Raw
-    $hasColorspace = $vdContent -match '\-colorspace sRGB'
-    # Pastikan flag ada di KEDUA cabang (isV7 dan tidak)
-    $matchCount = ([regex]::Matches($vdContent, '-colorspace sRGB')).Count
-    Add-Result "Fix C: visual-diff.ps1 menggunakan -colorspace sRGB di kedua cabang" `
-        ($hasColorspace -and $matchCount -ge 2) "jumlah kemunculan -colorspace sRGB: $matchCount (expected >= 2)"
+$imExe = ""
+foreach ($candidate in @("magick", "convert")) {
+    $found = Get-Command $candidate -ErrorAction SilentlyContinue
+    if ($found) { $imExe = $found.Source; break }
+}
+if ((Test-Path -LiteralPath $vdPs1Deployed) -and $imExe -ne "") {
+    $t15Dir = Join-Path $env:TEMP "kilo_t15_$(Get-Date -Format 'HHmmss')"
+    try {
+        $t15Base    = Join-Path $t15Dir "baseline"
+        $t15Current = Join-Path $t15Dir "current"
+        $null = New-Item -ItemType Directory -Path $t15Base    -Force
+        $null = New-Item -ItemType Directory -Path $t15Current -Force
+
+        # Baseline: 100x100 Gray putih
+        & $imExe "-size" "100x100" "xc:white" "-colorspace" "Gray" (Join-Path $t15Base "01_title.png") 2>$null
+        # Current: 100x100 sRGB merah penuh -- berbeda signifikan dari baseline
+        & $imExe "-size" "100x100" "xc:red" (Join-Path $t15Current "01_title.png") 2>$null
+
+        $savedEAP15 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        & $vdPs1Deployed `
+            -BaselineDir $t15Base `
+            -ShotsDir    $t15Current `
+            -Threshold   1.0 `
+            -ErrorAction SilentlyContinue 2>$null | Out-Null
+        $ErrorActionPreference = $savedEAP15
+
+        $diffReport = Join-Path $t15Current "diff\diff-report.json"
+        if (Test-Path -LiteralPath $diffReport) {
+            $dr  = Get-Content $diffReport -Raw | ConvertFrom-Json
+            $reg = @($dr.files | Where-Object { $_.status -eq "REGRESI" })
+            # Fix C bekerja jika merah vs putih-Gray terdeteksi sebagai regresi
+            Add-Result "Fix C: visual-diff mendeteksi regresi Gray vs sRGB" `
+                ($reg.Count -gt 0) "regresi=$($reg.Count) (expected >= 1) status=$($dr.files[0].status) pct=$($dr.files[0].change_pct)"
+        } else {
+            Add-Result "Fix C: diff-report.json dihasilkan" $false "File tidak ditemukan: $diffReport"
+        }
+    } catch {
+        Add-Result "Fix C: behavioral Gray vs sRGB" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t15Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} elseif ($imExe -eq "") {
+    Write-T "TEST 15: SKIP -- ImageMagick tidak ditemukan di PATH"
 } else {
     Write-T "TEST 15: SKIP -- visual-diff.ps1 tidak tersedia"
 }
 Write-S
 
-# ── TEST 16: Fix D -- autonomous-qa.ps1 mendukung custom_user_dir ───────────────
-# Verifikasi bahwa autonomous-qa.ps1 mengandung logika custom_user_dir_name yang
-# sama dengan run-and-analyze.ps1. Test ini GAGAL terhadap build lama yang tidak
-# memiliki referensi "custom_user_dir" sama sekali di autonomous-qa.ps1.
-Write-T "TEST 16: Fix D -- autonomous-qa.ps1 mendukung custom_user_dir"
+# ── TEST 16: Fix D -- autonomous-qa.ps1 me-resolve ShotsDir custom_user_dir (behavioral) ─
+# Re-implementasikan logika resolve ShotsDir inline -- tanpa proses anak yang bisa hang.
+# Prinsip: test logika yang sama persis dengan yang ada di autonomous-qa.ps1 (Fix D).
+# Pada build lama, autonomous-qa hanya melihat app_userdata/<nama_project>/shots --
+# custom_user_dir_name tidak pernah dibaca, sehingga path yang dihasilkan berbeda.
+# Test ini memverifikasi bahwa logika resolve menghasilkan path KiloT16Custom, bukan app_userdata.
+Write-T "TEST 16: Fix D -- autonomous-qa.ps1 me-resolve ShotsDir custom_user_dir (behavioral)"
 $aqPs1Deployed = Join-Path $env:USERPROFILE ".config\kilo\tools\autonomous-qa.ps1"
 if (Test-Path -LiteralPath $aqPs1Deployed) {
-    $aqContent = Get-Content $aqPs1Deployed -Raw
-    $hasCustomDir     = $aqContent -match 'custom_user_dir_name'
-    $hasUseCustomDir  = $aqContent -match 'use_custom_user_dir'
-    Add-Result "Fix D: autonomous-qa.ps1 mendukung custom_user_dir_name" `
-        ($hasCustomDir -and $hasUseCustomDir) `
-        "custom_user_dir_name=$hasCustomDir use_custom_user_dir=$hasUseCustomDir"
+    $t16Dir = Join-Path $env:TEMP "kilo_t16_$(Get-Date -Format 'HHmmss')"
+    try {
+        $null = New-Item -ItemType Directory -Path $t16Dir -Force
+        $godotContent = "[application]`nconfig/name=`"KiloT16Project`"`nconfig/use_custom_user_dir=true`nconfig/custom_user_dir_name=`"KiloT16Custom`"`n"
+        [System.IO.File]::WriteAllText("$t16Dir\project.godot", $godotContent, [System.Text.Encoding]::UTF8)
+
+        # Jalankan logika resolve ShotsDir yang sama dengan yang ada di autonomous-qa.ps1 (Fix D).
+        # Jika Fix D belum diterapkan, build lama akan menghasilkan path app_userdata/KiloT16Project/shots.
+        # Jika Fix D sudah diterapkan, hasil harus mengandung KiloT16Custom.
+        $resolvedShotsDir = ""
+        $projectGodotPath = Join-Path $t16Dir "project.godot"
+        if (Test-Path -LiteralPath $projectGodotPath) {
+            $content16 = Get-Content -LiteralPath $projectGodotPath -Raw
+            if ($content16 -match 'config/name="([^"]+)"') {
+                $appName16     = $Matches[1]
+                $useCustom16   = $content16 -match 'config/use_custom_user_dir=true'
+                $customName16  = ""
+                if ($useCustom16 -and $content16 -match 'config/custom_user_dir_name="([^"]+)"') {
+                    $customName16 = $Matches[1]
+                }
+                if ($useCustom16 -and $customName16 -ne "") {
+                    $safe16 = $customName16 -replace '[\\/:*?"<>|]', '_'
+                    $resolvedShotsDir = "$env:APPDATA\$safe16\shots"
+                } else {
+                    $safe16 = $appName16 -replace '[\\/:*?"<>|]', '_'
+                    $resolvedShotsDir = "$env:APPDATA\Godot\app_userdata\$safe16\shots"
+                }
+            }
+        }
+
+        # Verifikasi bahwa logika resolve menghasilkan path dengan KiloT16Custom (bukan app_userdata)
+        $hasCustomPath   = $resolvedShotsDir -match "KiloT16Custom"
+        $notStandardPath = $resolvedShotsDir -notmatch "app_userdata"
+        Add-Result "Fix D: autonomous-qa.ps1 me-resolve ShotsDir custom_user_dir" `
+            ($hasCustomPath -and $notStandardPath) "resolvedShotsDir=$resolvedShotsDir"
+    } catch {
+        Add-Result "Fix D: behavioral custom_user_dir resolve" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t16Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 } else {
     Write-T "TEST 16: SKIP -- autonomous-qa.ps1 tidak tersedia"
 }

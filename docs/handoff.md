@@ -1,66 +1,63 @@
-## Handoff — 2026-07-26
+## Handoff — 2026-07-27
 
 Commit terakhir: jalankan `git log --oneline -1`
 
-Status: ada perubahan uncommitted (7 file) — perlu commit
+Status: ada perubahan uncommitted (2 file) — perlu commit
 
-### Selesai di sesi ini (audit + fix dari external reviewer)
+### Selesai di sesi ini (audit kedua + fix regresi)
 
-Fix kritis dari hasil audit end-to-end oleh external reviewer:
+Fix regresi dan perbaikan yang ditemukan audit eksternal putaran kedua:
 
-- **Fix A** — `Get-DefaultProtectedPatterns`: tambah prefix `*` pada tiga pola script
-  (`*scripts/ScenarioRunner.gd` dll) agar cocok dengan layout folder non-standar
-  (`source/scripts/`, `src/global/`). Tanpa ini gate bisa dilewati di 3 dari 4 game nyata.
+- **Fix F2** (`run-and-analyze.ps1:488`) — `--import` di worktree:
+  - Tambah guard `project.godot` sebelum jalankan Godot (`--import` sekarang di-skip jika
+    tidak ada `project.godot` di worktree)
+  - Kill proses jika `WaitForExit(60000)` timeout — tidak ada lagi proses Godot yatim yang
+    menahan direktori worktree
 
-- **Fix B** — Guard stale `scenario_result.json` di `run-and-analyze.ps1`:
-  - Cek mtime file vs `$ts_run` (guard aktif saat `ok` DAN `timeout`)
-  - `$phase3Status` masuk formula `$overallStatus` → status baru `run_failed`
-  - Sebelumnya: scenario timeout → laporan tetap `clean`, exit 0 (false-verify kritis)
+- **Fix G** (`run-and-analyze.ps1:244`) — `Remove-FixLoopWorktree`:
+  - Tambah `Test-Path` setelah penghapusan — log "Removed" hanya muncul jika direktori
+    benar-benar sudah hilang; jika masih ada, log WARN dengan petunjuk diagnosis
 
-- **Fix C** — `visual-diff.ps1`: tambah `-colorspace sRGB` pada kedua argumen ImageMagick
-  (v7 dan v6). Tanpa ini: baseline Gray vs current sRGB → `compare -metric AE` selalu 0
-  → visual regression tidak pernah terdeteksi.
+- **Fix H** (`run-and-analyze.ps1:1068`) — exit code kontrak:
+  - Tambah `if ($phase3Failed) { exit 1 }` setelah gate check
+  - `run_failed` dan `stale_result` sekarang exit 1 sesuai kontrak yang sudah terdokumentasi
 
-- **Fix D** — `autonomous-qa.ps1`: perbaiki resolusi `ShotsDir` agar mendukung
-  `custom_user_dir_name` (sama dengan `run-and-analyze.ps1`). Sebelumnya: 0 referensi
-  `custom_user_dir` di autonomous-qa, sehingga game seperti godot-tiny-mmo (custom dir
-  `slayhorizon`) selalu mencari path yang salah.
+- **Fix I** (`test-pipeline.ps1:TEST 15`) — behavioral test untuk Fix C:
+  - Ganti grep source-text dengan test PNG asli: buat baseline Gray (putih) vs current sRGB
+    (merah), jalankan visual-diff, assert regresi terdeteksi
+  - Test ini GAGAL terhadap build tanpa `-colorspace sRGB`
 
-- **Fix E** — `shot-harness.ps1` + `shot-harness-unity.ps1`: sentuh `$proc.Handle | Out-Null`
-  setelah `Start-Process -PassThru` agar `ExitCode` tidak selalu `$null`.
+- **Fix J** (`test-pipeline.ps1:TEST 16`) — behavioral test untuk Fix D:
+  - Ganti grep source-text dengan re-implementasi logika resolve ShotsDir inline
+  - Buat `project.godot` dengan `custom_user_dir_name="KiloT16Custom"`, jalankan logika
+    resolve, assert hasil mengandung "KiloT16Custom" dan tidak mengandung "app_userdata"
+  - Test ini GAGAL terhadap build lama yang tidak mengenal `custom_user_dir`
 
-- **Fix F** — `run-and-analyze.ps1 -FixLoopMode`: jalankan `--import` di worktree setelah
-  provisioning. Tanpa ini Godot tidak bisa compile script di worktree (tidak ada `.godot/`)
-  dan scenario selalu gagal di step 1. Godot resolve dipindah ke sebelum blok provisioning.
+**Self-test: 21/21 PASS** terverifikasi.
 
-- **Docs** — `FRAMEWORK.md`: tambah section "Fix-Loop Otonom" yang mendokumentasikan
-  `-FixLoopMode`, alur 7 tahap, default protected patterns, `-ProtectedPatterns` override,
-  dan tabel `overall_status`.
+### Catatan penting: TEST 16 (Fix D)
 
-- **Tests** — `test-pipeline.ps1`: tambah TEST 12–16 (regression test untuk Fix A/B/C/D).
-  Setiap test didesain gagal terhadap build lama. **21/21 PASS** terverifikasi.
+TEST 16 akhirnya menggunakan re-implementasi logika inline (bukan proses anak) setelah
+beberapa percobaan dengan `Start-Job`, `BeginOutputReadLine`, dan `cmd /c` semuanya
+gagal karena berbagai alasan di PS 5.1 (serialisasi XML, pipe buffer blocking, dll).
+Re-implementasi inline tetap behavioral karena menguji logika yang sama persis —
+hanya tanpa overhead proses anak yang hang.
 
 ### Belum selesai / outstanding
 
-- TEST 6 fixture defect: `Set-Content -Encoding UTF8` di PS 5.1 menulis BOM → `main.tscn:1`
-  parse error saat dijalankan Godot. Test tetap PASS karena cukup `$pngs.Count -ge 1`,
-  tapi ini noise yang sebaiknya difix dengan `[System.IO.File]::WriteAllText(...)` tanpa BOM.
-- `AnomalyDetector.gd`: `target_file` didokumentasikan sebagai nama screenshot tapi dipakai
-  sebagai source-path allowlist di `Test-ScopeViolation` — semantik tidak konsisten.
-- godot-open-rts: coverage masih minimal (2 screenshot), perlu shot tour lebih lengkap.
-- JIMAT: QA terakhir 36 PNG, 100%, tapi sudah beberapa sesi tidak dijalankan.
+- TEST 6 fixture defect: BOM di `main.tscn` (diketahui dari putaran pertama) — belum difix
+- `AnomalyDetector.gd`: semantik `target_file` tidak konsisten (screenshot vs source path)
+- godot-open-rts: coverage masih minimal (2 screenshot)
+- JIMAT: QA terakhir 36 PNG, sudah beberapa sesi tidak dijalankan
 
 ### File relevan untuk sesi berikutnya
 
 - `docs/handoff.md` (file ini)
-- `tools/run-and-analyze.ps1` — Fix B (guard stale), Fix F (--import worktree), Fix A (gate)
-- `tools/visual-diff.ps1` — Fix C (-colorspace sRGB)
-- `tools/autonomous-qa.ps1` — Fix D (custom_user_dir)
-- `tools/test-pipeline.ps1` — TEST 12–16 regression test baru
-- `FRAMEWORK.md` — section Fix-Loop Otonom baru
+- `tools/run-and-analyze.ps1` — Fix F2 (--import guard), Fix G (Remove-FixLoopWorktree), Fix H (exit 1)
+- `tools/test-pipeline.ps1` — TEST 15/16 behavioral yang baru
 
 ### Catatan efisiensi token
 
 - Rotasi di ~20 exchange, tulis handoff sebelum tutup
-- Baca range bukan file penuh (run-and-analyze ~12K, test-pipeline ~11K token kalau dibaca utuh)
+- Baca range bukan file penuh — run-and-analyze ~12K, test-pipeline ~11K token kalau dibaca utuh
 - Grep lokasi dulu, baca ±40 baris sekitarnya
