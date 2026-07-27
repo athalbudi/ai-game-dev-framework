@@ -2,55 +2,48 @@
 
 Commit terakhir: jalankan `git log --oneline -1`
 
-Status: tree bersih, repo ↔ deployed sinkron
+Status: tree bersih, repo ↔ deployed sinkron, pushed ke origin/main
 
-### Selesai di sesi ini (audit keempat + Fix L2/M)
+### Selesai di sesi ini
 
-- **Fix L2** (`run-and-analyze.ps1:774`) — Perluas regex deteksi error stderr Godot:
-  - Regex lama hanya cocok `Compile Error|Failed to load script|SCRIPT ERROR.*Parse Error`
-  - Error actual dari missing assets: `Cannot open file 'res://'`, `Failed loading resource`,
-    `ERROR:.*Parse Error.*non-existent resource` — 0 dari 142 baris cocok regex lama
-  - Regex baru mencakup kedua kelas; kecualikan `user://` (bukan asset project) dan `GDScript::reload`
-  - Menutup false-verify: worktree tanpa `.godot/` → 142 ERROR baris → Status: clean (salah)
+- **Push** 6 commit audit (a766ff8..63fbc7f) ke origin/main
 
-- **Fix M** (`test-pipeline.ps1:TEST 16`) — Isolasi scope dot-source:
-  - Dot-source berbagi scope — param block `autonomous-qa.ps1` me-reset `$GodotExe` ke `""`
-  - Simpan `$GodotExe` dan `$ProjectPath` sebelum dot-source, pulihkan sesudahnya
-  - Dorman sebelumnya (TEST 16 terakhir) tapi ranjau nyata untuk TEST 17+ atau reorder
+- **Fix worktree .godot/imported/** (`run-and-analyze.ps1:492`) — copy `.godot/imported/`
+  dari `$ProjectPath` ke worktree sebelum `--import` dijalankan:
+  - Sebelum: worktree baru kosong → 142+ ERROR resource loader → `compile_error` → exit 1
+  - Sesudah: 770 file di-copy → `--import` exit 0 → scenario selesai 4.8 detik
+  - Diverifikasi live di godot-open-rts: `fail (3/1/0)` sesuai ekspektasi (branch 74e3815 berisi bug)
+  - Guard: copy hanya jika `.godot/imported/` ada di ProjectPath dan belum ada di worktree
+  - `--import` tetap dijalankan sesudah copy untuk mensync perubahan script dari patch
 
-**Self-test: 21/21 PASS** terverifikasi commit `a766ff8`.
+### Status semua fix (dari seluruh rangkaian audit)
 
-### Status fix keseluruhan (dari semua putaran audit)
+| Fix | Keterangan |
+|---|---|
+| A — gate prefix `*` | Solid, diverifikasi auditor |
+| B — stale guard + run_failed | Solid, diverifikasi auditor |
+| C — colorspace sRGB | Solid, diverifikasi auditor |
+| D — Resolve-GodotShotsDir | Solid, diverifikasi auditor |
+| E — proc.Handle | Solid, diverifikasi auditor |
+| F2 — import guard + kill | Solid, diverifikasi auditor |
+| G — Remove worktree honest log | Solid, diverifikasi auditor |
+| H — exit 1 run_failed | Solid, diverifikasi auditor |
+| K — fungsi Resolve-GodotShotsDir | Solid, diverifikasi auditor |
+| L2 — regex error actual Godot | Solid, diverifikasi auditor |
+| M — scope isolation dot-source | Solid, diverifikasi auditor |
+| .godot/imported/ copy | Solid, diverifikasi live (sesi ini) |
 
-| Fix | Status | Terverifikasi auditor |
-|---|---|---|
-| A — gate prefix `*` | ✅ solid | Ya (patch verifier-only → escalation_required, exit 1) |
-| B — stale guard + run_failed | ✅ solid | Ya (stale_result, exit 1 terverifikasi) |
-| C — colorspace sRGB | ✅ solid | Ya (1.7476e+09 vs 0 pre-fix) |
-| D — Resolve-GodotShotsDir | ✅ solid | Ya (dot-source stub gagal, fungsi nyata pass) |
-| E — proc.Handle | ✅ solid | Ya (exit code kosong hilang dari log) |
-| F2 — import guard + kill | ✅ solid | Ya (1.7s vs hang, 0 leak di kedua mode) |
-| G — Remove worktree honest log | ✅ solid | Ya (cabang gagal terverifikasi kode) |
-| H — exit 1 run_failed | ✅ solid | Ya (EXITCODE=1 terverifikasi) |
-| K — Resolve-GodotShotsDir ekstrak | ✅ solid | Ya (stub test gagal, TEST 16 behavioral) |
-| L2 — regex error actual Godot | ✅ solid | Perlu verifikasi auditor |
-| M — scope isolation dot-source | ✅ solid | Perlu verifikasi auditor |
+### Tidak ada outstanding teknis yang kritis
 
-### Belum selesai / outstanding
-
-- Worktree isolation: `.godot/imported/` tetap kosong setelah `--import` karena binary assets tidak di git.
-  Fix L2 sekarang mendeteksi error ini dengan benar → `compile_error` → exit 1. Tapi akar masalahnya
-  (game tidak bisa compile di worktree tanpa assets) belum diperbaiki. Solusi jangka panjang:
-  copy `.godot/` dari ProjectPath ke worktree setelah provisioning.
-- TEST 6 BOM defect: `Set-Content -Encoding UTF8` di PS 5.1 menulis BOM → parse error Godot
-- `AnomalyDetector.gd`: semantik `target_file` tidak konsisten (screenshot vs source path)
+Semua bug kritis dari audit sudah tertutup. Item tersisa bersifat minor:
+- TEST 6 BOM defect (Set-Content menulis BOM di PS 5.1) — kosmetik, test tetap PASS
+- `AnomalyDetector.gd` semantik `target_file` tidak konsisten — in-development component
 
 ### File relevan untuk sesi berikutnya
 
 - `docs/handoff.md` (file ini)
-- `tools/run-and-analyze.ps1` — Fix L2 (regex error, baris ~774)
-- `tools/test-pipeline.ps1` — Fix M (scope isolation TEST 16, baris ~1101)
-- `tools/autonomous-qa.ps1` — Resolve-GodotShotsDir (Fix K, baris ~91)
+- `tools/run-and-analyze.ps1` — semua fix utama ada di sini
+- `tools/test-pipeline.ps1` — 21 regression test
 
 ### Catatan efisiensi token
 
