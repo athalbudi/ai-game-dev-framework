@@ -2,50 +2,40 @@
 
 Commit terakhir: jalankan `git log --oneline -1`
 
-Status: ada perubahan uncommitted (2 file) — perlu commit
+Status: tree bersih, repo ↔ deployed sinkron
 
-### Selesai di sesi ini (audit kedua + fix regresi)
+### Selesai di sesi ini (audit ketiga + fix K/L)
 
-Fix regresi dan perbaikan yang ditemukan audit eksternal putaran kedua:
+- **Fix K** (`autonomous-qa.ps1`) — Ekstrak logika resolve ShotsDir ke fungsi `Resolve-GodotShotsDir`
+  yang diekspor. Blok inline 35 baris diganti dengan satu pemanggilan fungsi.
+  Fungsi ini bisa diuji via dot-source tanpa menjalankan loop penuh.
 
-- **Fix F2** (`run-and-analyze.ps1:488`) — `--import` di worktree:
-  - Tambah guard `project.godot` sebelum jalankan Godot (`--import` sekarang di-skip jika
-    tidak ada `project.godot` di worktree)
-  - Kill proses jika `WaitForExit(60000)` timeout — tidak ada lagi proses Godot yatim yang
-    menahan direktori worktree
+- **TEST 16 behavioral sungguhan** (`test-pipeline.ps1`) — Dot-source `autonomous-qa.ps1`
+  dalam scope terisolasi, panggil `Resolve-GodotShotsDir()` dari file deployed, assert hasil
+  mengandung "KiloT16Custom" dan tidak mengandung "app_userdata".
+  GAGAL jika stub tanpa fungsi tersebut (diverifikasi oleh auditor).
 
-- **Fix G** (`run-and-analyze.ps1:244`) — `Remove-FixLoopWorktree`:
-  - Tambah `Test-Path` setelah penghapusan — log "Removed" hanya muncul jika direktori
-    benar-benar sudah hilang; jika masih ada, log WARN dengan petunjuk diagnosis
+- **Fix L** (`run-and-analyze.ps1`) — Tambah `-RedirectStandardError` ke `Start-Process`
+  scenario RUN + baca stderr log setelah selesai. Jika ada `Compile Error` / `Failed to load script`
+  (bukan GDScript::reload artifact), `phase3Status = "compile_error"` → exit 1.
+  Menutup gap: worktree tanpa `.godot/` → 193 ERROR baris → scenario pass 5/5 (false verify).
 
-- **Fix H** (`run-and-analyze.ps1:1068`) — exit code kontrak:
-  - Tambah `if ($phase3Failed) { exit 1 }` setelah gate check
-  - `run_failed` dan `stale_result` sekarang exit 1 sesuai kontrak yang sudah terdokumentasi
+**Self-test: 21/21 PASS** terverifikasi commit `c9dd042`.
 
-- **Fix I** (`test-pipeline.ps1:TEST 15`) — behavioral test untuk Fix C:
-  - Ganti grep source-text dengan test PNG asli: buat baseline Gray (putih) vs current sRGB
-    (merah), jalankan visual-diff, assert regresi terdeteksi
-  - Test ini GAGAL terhadap build tanpa `-colorspace sRGB`
+### Catatan penting dari auditor
 
-- **Fix J** (`test-pipeline.ps1:TEST 16`) — behavioral test untuk Fix D:
-  - Ganti grep source-text dengan re-implementasi logika resolve ShotsDir inline
-  - Buat `project.godot` dengan `custom_user_dir_name="KiloT16Custom"`, jalankan logika
-    resolve, assert hasil mengandung "KiloT16Custom" dan tidak mengandung "app_userdata"
-  - Test ini GAGAL terhadap build lama yang tidak mengenal `custom_user_dir`
-
-**Self-test: 21/21 PASS** terverifikasi.
-
-### Catatan penting: TEST 16 (Fix D)
-
-TEST 16 akhirnya menggunakan re-implementasi logika inline (bukan proses anak) setelah
-beberapa percobaan dengan `Start-Job`, `BeginOutputReadLine`, dan `cmd /c` semuanya
-gagal karena berbagai alasan di PS 5.1 (serialisasi XML, pipe buffer blocking, dll).
-Re-implementasi inline tetap behavioral karena menguji logika yang sama persis —
-hanya tanpa overhead proses anak yang hang.
+Fix L menutup deteksi di sisi PS (stderr Godot) tapi tidak menutup seluruh gap:
+`--import` masih tidak mengisi `.godot/imported/` secara lengkap di worktree isolasi karena
+assets binary tidak ada di git. Untuk verifikasi worktree yang benar-benar valid, perlu
+mengcopy atau re-generate `.godot/` dari project asli setelah provisioning. Ini belum diimplementasi.
 
 ### Belum selesai / outstanding
 
-- TEST 6 fixture defect: BOM di `main.tscn` (diketahui dari putaran pertama) — belum difix
+- Worktree isolation: `.godot/imported/` kosong setelah `--import` karena binary assets tidak di-track git.
+  Scenario bisa tetap gagal compile meski Fix L mendeteksinya. Solusi jangka panjang: copy `.godot/`
+  dari ProjectPath ke worktree setelah provisioning, atau skip worktree untuk project yang tidak punya
+  semua assets di git.
+- TEST 6 fixture defect: BOM di `main.tscn` (diketahui sejak putaran pertama)
 - `AnomalyDetector.gd`: semantik `target_file` tidak konsisten (screenshot vs source path)
 - godot-open-rts: coverage masih minimal (2 screenshot)
 - JIMAT: QA terakhir 36 PNG, sudah beberapa sesi tidak dijalankan
@@ -53,11 +43,12 @@ hanya tanpa overhead proses anak yang hang.
 ### File relevan untuk sesi berikutnya
 
 - `docs/handoff.md` (file ini)
-- `tools/run-and-analyze.ps1` — Fix F2 (--import guard), Fix G (Remove-FixLoopWorktree), Fix H (exit 1)
-- `tools/test-pipeline.ps1` — TEST 15/16 behavioral yang baru
+- `tools/autonomous-qa.ps1` — fungsi `Resolve-GodotShotsDir` (Fix K)
+- `tools/run-and-analyze.ps1` — Fix L (compile error detection), Fix F2/G/H dari sesi sebelumnya
+- `tools/test-pipeline.ps1` — TEST 16 behavioral via dot-source
 
 ### Catatan efisiensi token
 
 - Rotasi di ~20 exchange, tulis handoff sebelum tutup
-- Baca range bukan file penuh — run-and-analyze ~12K, test-pipeline ~11K token kalau dibaca utuh
-- Grep lokasi dulu, baca ±40 baris sekitarnya
+- Grep dulu, baca ±40 baris — jangan baca file penuh
+- run-and-analyze ~12K, test-pipeline ~11K, autonomous-qa ~8K token kalau dibaca utuh
