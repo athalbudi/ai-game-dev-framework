@@ -171,9 +171,16 @@ func _scenario_bootstrap() -> void:
 	# Load ScenarioRunner sebagai script instance langsung dari ErrorTracker
 	# Tidak bergantung pada Main node yang akan hancur karena hot-reload
 	# Gunakan GDScript type agar kompatibel dengan unsafe_method_access strict mode
-	var runner_script: GDScript = load("res://scripts/ScenarioRunner.gd")
+	# Self-locating: derive path dari lokasi ErrorTracker.gd itu sendiri sehingga
+	# salinan vendored di semua layout folder (scripts/, source/scripts/, src/global/, dll)
+	# bisa menemukan ScenarioRunner.gd tanpa adaptasi manual per-game.
+	# Cast ke Script eksplisit agar get_resource_path() tersedia di strict mode.
+	var self_script := get_script() as Script
+	var self_dir: String = self_script.resource_path.get_base_dir()
+	var runner_path: String = self_dir.path_join("ScenarioRunner.gd")
+	var runner_script: GDScript = load(runner_path)
 	if runner_script == null:
-		print("[ErrorTracker] ERROR: Gagal load ScenarioRunner.gd")
+		print("[ErrorTracker] ERROR: Gagal load ScenarioRunner.gd dari: %s" % runner_path)
 		get_tree().quit(1)
 		return
 	# Buat instance tanpa cast 'as Node' -- cast ke type konkret gagal di strict mode

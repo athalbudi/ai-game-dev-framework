@@ -1272,11 +1272,17 @@ Write-S
 # ── TEST 19: Drift detection -- vendored templates di game validasi ──────────────
 # Verifikasi bahwa salinan ErrorTracker.gd, GameStateWriter.gd, ScenarioRunner.gd
 # di keempat game validasi identik dengan versi terbaru di framework (md5-match).
-# Test ini GAGAL jika ada game yang belum di-sync setelah fix template framework.
-# Jalankan sync.ps1 -GameProjectScriptsDir <path> untuk memperbaikinya.
+# Setelah Fix ErrorTracker:174 (self-locating path), identik-byte kembali valid karena
+# tidak ada lagi adaptasi manual per-game yang diperlukan.
+# Path game dibaca dari env var KILO_GAMES_DIR -- default ke lokasi dev ini.
+# SKIP (dihitung FAIL) jika direktori games tidak ditemukan -- BUKAN PASS.
 Write-T "TEST 19: drift detection -- vendored templates di game validasi"
 $fwTemplatesDir = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
-$gamesBaseDir   = "C:\Users\Athallah Budiman\Documents\games"
+$gamesBaseDir   = if ($env:KILO_GAMES_DIR -and (Test-Path -LiteralPath $env:KILO_GAMES_DIR)) {
+                      $env:KILO_GAMES_DIR
+                  } else {
+                      "C:\Users\Athallah Budiman\Documents\games"
+                  }
 $vendorTemplates = @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")
 $gameVendorPaths = @{
     "godot-open-rts"  = "source\scripts"
@@ -1303,7 +1309,9 @@ foreach ($game in $gameVendorPaths.Keys) {
     }
 }
 if ($checkedCount -eq 0) {
-    Add-Result "vendored templates di game validasi sinkron" $true "SKIP -- tidak ada game validasi ditemukan di $gamesBaseDir"
+    # SKIP dihitung FAIL -- mesin tanpa game validasi tidak bisa memverifikasi drift
+    # Ini lebih jujur daripada PASS palsu. Set KILO_GAMES_DIR untuk enable test ini.
+    Add-Result "vendored templates di game validasi sinkron" $false "SKIP -- game validasi tidak ditemukan (set env KILO_GAMES_DIR atau pastikan path $gamesBaseDir ada)"
 } else {
     $detail = "checked=$checkedCount drift=$($driftFound.Count)"
     if ($driftFound.Count -gt 0) { $detail += " | drift: $($driftFound -join ', ')" }
