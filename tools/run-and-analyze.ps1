@@ -743,11 +743,13 @@ if ($GodotExe -eq "") {
 
 if ($phase3Status -ne "skip_no_godot" -and (Test-Path -LiteralPath $projectGodot)) {
     $ts_run = Get-Date
+    $scenarioLog = "$env:TEMP\kilo_scenario_stderr_$(Get-Date -Format 'yyyyMMddHHmmss').txt"
     try {
         $scenarioFlag = "user://shots/test_scenario.json"
         $proc = Start-Process -FilePath $GodotExe `
             -ArgumentList "--path", "`"$worktreeProjectPath`"", "--", "--scenario", $scenarioFlag `
-            -PassThru -NoNewWindow
+            -PassThru -NoNewWindow -RedirectStandardError $scenarioLog
+        $proc.Handle | Out-Null
         $finished = $proc.WaitForExit($Timeout * 1000)
         if (-not $finished) {
             $proc.Kill()
@@ -761,6 +763,27 @@ if ($phase3Status -ne "skip_no_godot" -and (Test-Path -LiteralPath $projectGodot
     } catch {
         Write-Warn "Gagal menjalankan scenario: $_"
         $phase3Status = "error"
+    }
+
+    # Deteksi compile/load error dari stderr Godot -- error ini tidak muncul di scenario_result.json
+    # karena ScenarioRunner tidak berjalan sama sekali jika script game gagal di-compile.
+    # Tanpa deteksi ini: game dengan Compile Error tetap melaporkan pass jika ada scenario_result lama.
+    if (Test-Path -LiteralPath $scenarioLog) {
+        try {
+            $scenarioLogLines = @(Get-Content $scenarioLog -ErrorAction SilentlyContinue)
+            $compileErrors = @($scenarioLogLines | Where-Object {
+                $_ -match "Compile Error|Failed to load script|SCRIPT ERROR.*Parse Error" `
+                -and $_ -notmatch "GDScript::reload"
+            })
+            if ($compileErrors.Count -gt 0 -and $phase3Status -eq "ok") {
+                Write-Warn "Terdeteksi $($compileErrors.Count) compile/load error di stderr Godot"
+                foreach ($ce in $compileErrors | Select-Object -First 3) {
+                    Write-Warn "  $ce"
+                }
+                $phase3Status = "compile_error"
+            }
+        } catch { }
+        Remove-Item -LiteralPath $scenarioLog -ErrorAction SilentlyContinue
     }
 } elseif ($phase3Status -ne "skip_no_godot") {
     Write-Warn "project.godot tidak ditemukan — skip fase RUN"
@@ -943,7 +966,7 @@ if (-not $gateResult.violated -and $FixLoopMode -and $FixRequestPath -ne "") {
 # ── FASE 5: REPORT ─────────────────────────────────────────────────────────────
 Write-Phase "REPORT" "Membuat laporan..."
 
-$phase3Failed  = $phase3Status -in @("timeout", "error", "stale_result")
+$phase3Failed  = $phase3Status -in @("timeout", "error", "stale_result", "compile_error")
 $overallStatus = if ($gateResult.violated) { "escalation_required" } `
                  elseif ($phase3Failed) { "run_failed" } `
                  elseif ($analysis.critical_issues.Count -gt 0) { "issues_found" } `

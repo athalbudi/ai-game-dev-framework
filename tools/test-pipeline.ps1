@@ -1077,13 +1077,15 @@ if ((Test-Path -LiteralPath $vdPs1Deployed) -and $imExe -ne "") {
 }
 Write-S
 
-# ── TEST 16: Fix D -- autonomous-qa.ps1 me-resolve ShotsDir custom_user_dir (behavioral) ─
-# Re-implementasikan logika resolve ShotsDir inline -- tanpa proses anak yang bisa hang.
-# Prinsip: test logika yang sama persis dengan yang ada di autonomous-qa.ps1 (Fix D).
-# Pada build lama, autonomous-qa hanya melihat app_userdata/<nama_project>/shots --
-# custom_user_dir_name tidak pernah dibaca, sehingga path yang dihasilkan berbeda.
-# Test ini memverifikasi bahwa logika resolve menghasilkan path KiloT16Custom, bukan app_userdata.
-Write-T "TEST 16: Fix D -- autonomous-qa.ps1 me-resolve ShotsDir custom_user_dir (behavioral)"
+# ── TEST 16: Fix D -- Resolve-GodotShotsDir di autonomous-qa.ps1 (behavioral) ──
+# Dot-source autonomous-qa.ps1 untuk mengakses fungsi Resolve-GodotShotsDir yang
+# diekspor (Fix D mengekstrak logika ke fungsi bernama -- sebelumnya logika inline
+# tidak bisa diuji tanpa menjalankan seluruh script).
+# Buat project.godot dengan custom_user_dir_name="KiloT16Custom", panggil fungsi,
+# assert hasil mengandung "KiloT16Custom" dan tidak mengandung "app_userdata".
+# Test ini GAGAL jika Resolve-GodotShotsDir tidak ada (build tanpa Fix D) ATAU
+# jika fungsinya ada tapi tidak mengenal custom_user_dir_name.
+Write-T "TEST 16: Fix D -- Resolve-GodotShotsDir di autonomous-qa.ps1 (behavioral)"
 $aqPs1Deployed = Join-Path $env:USERPROFILE ".config\kilo\tools\autonomous-qa.ps1"
 if (Test-Path -LiteralPath $aqPs1Deployed) {
     $t16Dir = Join-Path $env:TEMP "kilo_t16_$(Get-Date -Format 'HHmmss')"
@@ -1092,37 +1094,33 @@ if (Test-Path -LiteralPath $aqPs1Deployed) {
         $godotContent = "[application]`nconfig/name=`"KiloT16Project`"`nconfig/use_custom_user_dir=true`nconfig/custom_user_dir_name=`"KiloT16Custom`"`n"
         [System.IO.File]::WriteAllText("$t16Dir\project.godot", $godotContent, [System.Text.Encoding]::UTF8)
 
-        # Jalankan logika resolve ShotsDir yang sama dengan yang ada di autonomous-qa.ps1 (Fix D).
-        # Jika Fix D belum diterapkan, build lama akan menghasilkan path app_userdata/KiloT16Project/shots.
-        # Jika Fix D sudah diterapkan, hasil harus mengandung KiloT16Custom.
-        $resolvedShotsDir = ""
-        $projectGodotPath = Join-Path $t16Dir "project.godot"
-        if (Test-Path -LiteralPath $projectGodotPath) {
-            $content16 = Get-Content -LiteralPath $projectGodotPath -Raw
-            if ($content16 -match 'config/name="([^"]+)"') {
-                $appName16     = $Matches[1]
-                $useCustom16   = $content16 -match 'config/use_custom_user_dir=true'
-                $customName16  = ""
-                if ($useCustom16 -and $content16 -match 'config/custom_user_dir_name="([^"]+)"') {
-                    $customName16 = $Matches[1]
-                }
-                if ($useCustom16 -and $customName16 -ne "") {
-                    $safe16 = $customName16 -replace '[\\/:*?"<>|]', '_'
-                    $resolvedShotsDir = "$env:APPDATA\$safe16\shots"
-                } else {
-                    $safe16 = $appName16 -replace '[\\/:*?"<>|]', '_'
-                    $resolvedShotsDir = "$env:APPDATA\Godot\app_userdata\$safe16\shots"
-                }
-            }
+        # Dot-source autonomous-qa.ps1 dalam scope terisolasi via ScriptBlock agar
+        # eksekusi top-level script (yang akan memanggil Godot) tidak berjalan.
+        # Kita set ProjectPath ke path yang tidak ada -- Write-Fail akan dipanggil
+        # tapi kita catch exit dan hanya peduli pada fungsi yang sudah didefinisikan.
+        $savedEAP16 = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $fnAvailable = $false
+        $resolvedPath = ""
+        try {
+            # Jalankan dot-source di dalam try-catch -- exit 1 dari Write-Fail dilempar sebagai exception
+            . $aqPs1Deployed -ProjectPath "NONEXISTENT_PATH_T16" -MaxIterations 0 2>$null
+        } catch { }
+        $ErrorActionPreference = $savedEAP16
+
+        # Cek apakah Resolve-GodotShotsDir sekarang tersedia di scope
+        if (Get-Command Resolve-GodotShotsDir -ErrorAction SilentlyContinue) {
+            $fnAvailable  = $true
+            $resolvedPath = Resolve-GodotShotsDir -ProjectPath $t16Dir
         }
 
-        # Verifikasi bahwa logika resolve menghasilkan path dengan KiloT16Custom (bukan app_userdata)
-        $hasCustomPath   = $resolvedShotsDir -match "KiloT16Custom"
-        $notStandardPath = $resolvedShotsDir -notmatch "app_userdata"
-        Add-Result "Fix D: autonomous-qa.ps1 me-resolve ShotsDir custom_user_dir" `
-            ($hasCustomPath -and $notStandardPath) "resolvedShotsDir=$resolvedShotsDir"
+        $hasCustomPath   = $resolvedPath -match "KiloT16Custom"
+        $notStandardPath = $resolvedPath -notmatch "app_userdata"
+        Add-Result "Fix D: Resolve-GodotShotsDir di autonomous-qa.ps1 mendukung custom_user_dir" `
+            ($fnAvailable -and $hasCustomPath -and $notStandardPath) `
+            "fnAvailable=$fnAvailable resolvedPath=$resolvedPath"
     } catch {
-        Add-Result "Fix D: behavioral custom_user_dir resolve" $false ("Exception: " + $_)
+        Add-Result "Fix D: Resolve-GodotShotsDir behavioral" $false ("Exception: " + $_)
     } finally {
         Remove-Item -LiteralPath $t16Dir -Recurse -Force -ErrorAction SilentlyContinue
     }
