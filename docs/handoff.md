@@ -4,58 +4,52 @@ Commit terakhir: jalankan `git log --oneline -1`
 
 Status: tree bersih, repo ↔ deployed sinkron, pushed ke origin/main
 
-### Selesai di sesi ini (audit kelima + Fix N/O/P/Q/R + TEST 17)
+### Selesai di sesi ini (audit keenam + Fix O2/P2 + TEST 17 strict mode)
 
-**Dua BLOCKER fitur record/replay diperbaiki:**
+- **Fix O2** (`RecordingConverter.gd:226-229`) — Hapus cabang `6:`/`7:` dari `_joypad_button_name`.
+  `JOY_BUTTON_START=6` dan `JOY_BUTTON_LEFT_STICK=7` sehingga cabang lama menyebabkan
+  START→l2 dan LEFT_STICK→r2 secara diam-diam. Trigger Godot 4 adalah axis, bukan button.
 
-- **Fix N** (`InputRecorder.gd`) — 5x `return null` di `_record_event() -> Dictionary`
-  diganti `return {}`. Di Godot 4 `Dictionary` non-nullable — compile error di 4.7 DAN 4.3.
+- **Fix P2** (`AnomalyDetector.gd`) — Selesaikan semua `.get()` pada Variant di strict mode:
+  - `sort_custom` lambda: tambah tipe eksplisit `a: Dictionary, b: Dictionary`
+  - `ss.get()` → `ss_d := ss as Dictionary` di `_detect_stale_screenshots`
+  - `coverage.get()` → `coverage_d := coverage as Dictionary` di `_detect_coverage_gaps`
+  - `f.get()` → `f_d := f as Dictionary` di `_detect_visual_regressions`
+  - `player.get()` → `player_d := player as Dictionary` di `_detect_state_anomalies`
+  - `step.get()` → `step_d := step as Dictionary` di `_scenario_matches`
+  - AnomalyDetector.gd sekarang 11/11 PASS di strict mode sungguhan
 
-- **Fix O** (`RecordingConverter.gd`) — tiga bug:
-  - Tambah `class_name RecordingConverter` agar static call diri sendiri valid
-  - `convert_to_scenarios_dir`: ganti `convert(...)` dengan `RecordingConverter.convert(...)`
-  - Ganti `JOY_BUTTON_LEFT/RIGHT_TRIGGER` (tidak ada di Godot 4) dengan literal index 6/7
+- **Fix TEST17a** (`test-pipeline.ps1`) — Section strict dari `[gdscript]` (diabaikan Godot)
+  ke `[debug]` + `gdscript/warnings/unsafe_method_access=2` yang benar.
+  Sebelumnya: TEST 17 menjalankan vanilla dua kali, strict half inert.
 
-- **Fix P** (`AnomalyDetector.gd`) — perbaiki `unsafe_method_access=2` di strict mode:
-  - Ganti `.filter(func(s): s.get(...))` dengan loop explicit `Array[Dictionary]`
-  - Ganti `.map(func(s): s.get(...))` dengan loop explicit `Array[String]`
-  - 2 lokasi: `_detect_scenario_failures` dan `_detect_performance_signals`
+- **Fix TEST17b** (`test-pipeline.ps1`) — SKIP dihitung `$false` bukan `$true`;
+  bersihkan `T17Check` userdata di `finally` block.
 
-- **Fix Q** (`ScenarioRunner.gd:581`) — `_evaluate_op` default case sekarang memanggil
-  `push_warning()` untuk operator tak dikenal, alih-alih diam-diam fallback ke `eq`
+**Self-test: 22/22 PASS** terverifikasi commit `033744a`.
+TEST 17 strict mode sekarang menghasilkan output berbeda dari vanilla — diverifikasi.
 
-- **Fix R** (`sync.ps1`) — tambah sync untuk `scenarios-templates/`, `game-state-templates/`,
-  dan `command/`. Sebelumnya drift diam-diam; `save_load.json` deployed pakai `op: "ne"` (invalid)
-
-- **TEST 17** (`test-pipeline.ps1`) — compile semua 11 `.gd` template di Godot vanilla + strict.
-  Fixture menyertakan `GameStateWriter` sebagai Autoload. **22/22 PASS** terverifikasi.
-  Test ini akan menangkap Fix N/O/P sekaligus jika dihilangkan.
-
-### Status semua item outstanding dari audit kelima
+### Status semua item outstanding dari audit keenam
 
 | Item | Status |
 |---|---|
-| InputRecorder compile error (BLOCKER) | ✅ diperbaiki |
-| RecordingConverter compile error (BLOCKER) | ✅ diperbaiki |
-| AnomalyDetector strict mode | ✅ diperbaiki |
-| _evaluate_op silent fallback | ✅ diperbaiki |
-| sync.ps1 cakupan direktori | ✅ diperbaiki |
-| save_load.json drift | ✅ diselesaikan via sync |
-| TEST compile semua .gd | ✅ TEST 17 ditambahkan |
-| TEST 6 BOM defect (kosmetik) | ⬜ masih ada, tidak kritis |
+| Fix O2 regresi semantik trigger | ✅ diperbaiki |
+| Fix P2 AnomalyDetector strict mode | ✅ diperbaiki |
+| TEST 17 strict half inert | ✅ diperbaiki |
+| TEST 17 SKIP dihitung PASS | ✅ diperbaiki |
+| TEST 17 T17Check userdata bocor | ✅ diperbaiki |
 
 ### Tidak ada outstanding teknis yang kritis
 
-Semua bug kritis dari seluruh rangkaian audit (putaran 1-5) sudah tertutup.
-TEST 6 BOM defect (`Set-Content -Encoding UTF8` menulis BOM) bersifat kosmetik — test tetap PASS.
+Semua bug kritis dari seluruh rangkaian audit (putaran 1-6) sudah tertutup.
+TEST 6 BOM defect (`Set-Content -Encoding UTF8` menulis BOM) bersifat kosmetik.
 
 ### File relevan untuk sesi berikutnya
 
 - `docs/handoff.md` (file ini)
 - `tools/test-pipeline.ps1` — 22 regression test
-- `godot-templates/` — semua 6 template sudah compile bersih
-- `game-state-templates/` — semua 5 template sudah compile bersih
-- `sync.ps1` — sekarang sync 34 file (termasuk scenarios-templates, game-state-templates, command)
+- `godot-templates/AnomalyDetector.gd` — Fix P2 baru
+- `godot-templates/RecordingConverter.gd` — Fix O2 baru
 
 ### Catatan efisiensi token
 
