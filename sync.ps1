@@ -5,8 +5,11 @@
 
 .DESCRIPTION
     Menyalin file-file berikut dari repo ke ~/.config/kilo/:
-      - tools/*.ps1           -> ~/.config/kilo/tools/
-      - godot-templates/*.gd  -> ~/.config/kilo/godot-templates/
+      - tools/*.ps1                    -> ~/.config/kilo/tools/
+      - godot-templates/*.gd           -> ~/.config/kilo/godot-templates/
+      - scenarios-templates/*.json     -> ~/.config/kilo/scenarios-templates/
+      - game-state-templates/*.gd      -> ~/.config/kilo/game-state-templates/
+      - command/*.md                   -> ~/.config/kilo/command/
 
     File yang tidak ada di repo tidak dihapus dari deployed (aman untuk file lokal).
 
@@ -96,6 +99,33 @@ $godotDst = Join-Path $kiloConfig "godot-templates"
 $gdFiles  = @(Get-ChildItem -LiteralPath $godotSrc -Filter "*.gd" -ErrorAction SilentlyContinue)
 foreach ($f in $gdFiles) {
     Sync-File $f.FullName (Join-Path $godotDst $f.Name)
+}
+
+# -- Sync scenarios-templates/*.json -------------------------------------------
+Write-Host "[sync] scenarios-templates/" -ForegroundColor DarkGray
+$scenSrc = Join-Path $repoRoot "scenarios-templates"
+$scenDst = Join-Path $kiloConfig "scenarios-templates"
+$scenFiles = @(Get-ChildItem -LiteralPath $scenSrc -Filter "*.json" -ErrorAction SilentlyContinue)
+foreach ($f in $scenFiles) {
+    Sync-File $f.FullName (Join-Path $scenDst $f.Name)
+}
+
+# -- Sync game-state-templates/*.gd --------------------------------------------
+Write-Host "[sync] game-state-templates/" -ForegroundColor DarkGray
+$gstSrc = Join-Path $repoRoot "game-state-templates"
+$gstDst = Join-Path $kiloConfig "game-state-templates"
+$gstFiles = @(Get-ChildItem -LiteralPath $gstSrc -Filter "*.gd" -ErrorAction SilentlyContinue)
+foreach ($f in $gstFiles) {
+    Sync-File $f.FullName (Join-Path $gstDst $f.Name)
+}
+
+# -- Sync command/*.md ---------------------------------------------------------
+Write-Host "[sync] command/" -ForegroundColor DarkGray
+$cmdSrc = Join-Path $repoRoot "command"
+$cmdDst = Join-Path $kiloConfig "command"
+$cmdFiles = @(Get-ChildItem -LiteralPath $cmdSrc -Filter "*.md" -ErrorAction SilentlyContinue)
+foreach ($f in $cmdFiles) {
+    Sync-File $f.FullName (Join-Path $cmdDst $f.Name)
 }
 
 # -- Sync ke vendored scripts di game project (opsional) -----------------------

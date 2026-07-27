@@ -17,6 +17,7 @@
 ##   - Seed dari rekaman dipreservasi untuk reproduksi deterministik
 
 extends Node
+class_name RecordingConverter
 
 # -- Konstanta ------------------------------------------------------------------
 const MIN_WAIT_FRAMES := 2   # gap minimum sebelum insert wait_frames
@@ -89,7 +90,7 @@ static func convert(recording_path: String, scenario_name: String = "") -> Strin
 static func convert_to_scenarios_dir(recording_path: String,
                                       project_path: String,
                                       scenario_name: String = "") -> String:
-	var tmp_path := convert(recording_path, scenario_name)
+	var tmp_path := RecordingConverter.convert(recording_path, scenario_name)
 	if tmp_path.is_empty():
 		return ""
 
@@ -222,8 +223,10 @@ static func _joypad_button_name(button_index: int) -> String:
 		JOY_BUTTON_Y:             return "triangle"
 		JOY_BUTTON_LEFT_SHOULDER: return "l1"
 		JOY_BUTTON_RIGHT_SHOULDER: return "r1"
-		JOY_BUTTON_LEFT_TRIGGER:  return "l2"
-		JOY_BUTTON_RIGHT_TRIGGER: return "r2"
+		# JOY_BUTTON_LEFT_TRIGGER / RIGHT_TRIGGER tidak ada di Godot 4 -- trigger adalah axis
+		# (JOY_AXIS_TRIGGER_LEFT / RIGHT). Peta ke nama string saja untuk backward compat.
+		6:                        return "l2"   # legacy trigger index
+		7:                        return "r2"   # legacy trigger index
 		JOY_BUTTON_LEFT_STICK:    return "l3"
 		JOY_BUTTON_RIGHT_STICK:   return "r3"
 		JOY_BUTTON_DPAD_UP:       return "dpad_up"

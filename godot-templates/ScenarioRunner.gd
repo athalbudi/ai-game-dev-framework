@@ -578,7 +578,9 @@ func _evaluate_op(actual, op: String, expected) -> bool:
 		"is_false": return actual == false or actual == 0 or str(actual) == "false"
 		"not_null": return actual != null
 		"is_null":  return actual == null
-		_:          return actual == expected
+		_:
+			push_warning("[scenario] _evaluate_op: operator tidak dikenal '%s' -- dianggap 'eq'. Operator valid: eq neq gt gte lt lte is_true is_false not_null is_null" % op)
+			return actual == expected
 
 
 func _find_nodes_with_method(node: Node, method_name: String) -> Array[Node]:

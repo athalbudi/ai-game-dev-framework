@@ -163,7 +163,7 @@ func _record_event(event: InputEvent, frame_offset: int) -> Dictionary:
 	if event is InputEventAction:
 		var e := event as InputEventAction
 		if not e.action:
-			return null
+			return {}
 		base.merge({
 			"type": "action",
 			"action": str(e.action),
@@ -212,7 +212,7 @@ func _record_event(event: InputEvent, frame_offset: int) -> Dictionary:
 		var e := event as InputEventMouseMotion
 		# Mouse motion: rekam setiap 10 frame untuk mengurangi noise
 		if frame_offset % 10 != 0:
-			return null
+			return {}
 		base.merge({
 			"type": "mouse_motion",
 			"x": snappedf(e.position.x, 0.5),
@@ -234,7 +234,7 @@ func _record_event(event: InputEvent, frame_offset: int) -> Dictionary:
 	elif event is InputEventScreenDrag:
 		var e := event as InputEventScreenDrag
 		if frame_offset % 5 != 0:
-			return null
+			return {}
 		base.merge({
 			"type": "drag",
 			"index": e.index,
@@ -259,7 +259,7 @@ func _record_event(event: InputEvent, frame_offset: int) -> Dictionary:
 		var e := event as InputEventJoypadMotion
 		# Skip micro-drift
 		if abs(e.axis_value) < 0.1:
-			return null
+			return {}
 		base.merge({
 			"type": "joypad_axis",
 			"device": e.device,
@@ -268,7 +268,7 @@ func _record_event(event: InputEvent, frame_offset: int) -> Dictionary:
 		})
 		return base
 
-	return null
+	return {}
 
 
 func _take_checkpoint_screenshot() -> void:

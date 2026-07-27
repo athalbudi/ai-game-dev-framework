@@ -1139,6 +1139,137 @@ if (Test-Path -LiteralPath $aqPs1Deployed) {
 }
 Write-S
 
+# ── TEST 17: Compile semua .gd template di Godot vanilla dan strict mode ────────
+# Verifikasi bahwa semua 11 template .gd (6 godot-templates/ + 5 game-state-templates/)
+# dapat di-load oleh Godot tanpa parse/compile error, di Godot vanilla DAN strict mode.
+# Test ini GAGAL terhadap build lama di mana InputRecorder.gd dan RecordingConverter.gd
+# mempunyai return null / JOY_BUTTON konstanta yang tidak ada di Godot 4.
+Write-T "TEST 17: compile semua .gd template di Godot vanilla dan strict mode"
+$godotExe17 = ""
+foreach ($g in @("godot","godot4","godot.exe","godot4.exe")) {
+    $found = Get-Command $g -ErrorAction SilentlyContinue
+    if ($found) { $godotExe17 = $found.Source; break }
+}
+$kiloGodotTemplates     = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+$kiloGameStateTemplates = Join-Path $env:USERPROFILE ".config\kilo\game-state-templates"
+
+if ($godotExe17 -eq "") {
+    Write-T "TEST 17: SKIP -- Godot tidak ditemukan di PATH"
+    Add-Result "compile semua .gd template (vanilla + strict)" $true "SKIP -- Godot tidak tersedia"
+} elseif (-not (Test-Path -LiteralPath $kiloGodotTemplates)) {
+    Write-T "TEST 17: SKIP -- ~/.config/kilo/godot-templates tidak ditemukan"
+    Add-Result "compile semua .gd template (vanilla + strict)" $false "godot-templates tidak tersedia di deployed"
+} else {
+    $t17Dir = Join-Path $env:TEMP "kilo_t17_$(Get-Date -Format 'HHmmss')"
+    try {
+        # Buat project Godot minimal dengan semua .gd sebagai script biasa (bukan autoload)
+        $null = New-Item -ItemType Directory -Path $t17Dir -Force
+        $null = New-Item -ItemType Directory -Path "$t17Dir\scripts" -Force
+
+        # Kumpulkan semua .gd template
+        $allGdFiles = @()
+        $allGdFiles += @(Get-ChildItem -LiteralPath $kiloGodotTemplates     -Filter "*.gd" -ErrorAction SilentlyContinue)
+        if (Test-Path -LiteralPath $kiloGameStateTemplates) {
+            $allGdFiles += @(Get-ChildItem -LiteralPath $kiloGameStateTemplates -Filter "*.gd" -ErrorAction SilentlyContinue)
+        }
+
+        # Salin semua .gd ke scripts/ tanpa BOM
+        foreach ($f in $allGdFiles) {
+            $dstPath = "$t17Dir\scripts\$($f.Name)"
+            $raw = [System.IO.File]::ReadAllBytes($f.FullName)
+            $startIdx = if ($raw.Length -ge 3 -and $raw[0] -eq 0xEF -and $raw[1] -eq 0xBB -and $raw[2] -eq 0xBF) { 3 } else { 0 }
+            $text = [System.Text.Encoding]::UTF8.GetString($raw, $startIdx, $raw.Length - $startIdx)
+            $noBom = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($dstPath, $text, $noBom)
+        }
+
+        # Buat GDScript checker yang me-load setiap file dan cek is_valid()
+        $scriptNames = @($allGdFiles | ForEach-Object { $_.Name })
+        $fileListGD  = ($scriptNames | ForEach-Object { '"scripts/' + $_ + '"' }) -join ', '
+        $gdChecker = @"
+extends Node
+func _ready() -> void:
+    var fail_count := 0
+    for f in [$fileListGD]:
+        var s = ResourceLoader.load(f)
+        if s == null or not (s is GDScript) or not (s as GDScript).can_instantiate():
+            printerr("COMPILE_FAIL: " + f)
+            fail_count += 1
+        else:
+            print("COMPILE_OK: " + f)
+    print("RESULT: " + str(fail_count) + " failures")
+    get_tree().quit(fail_count)
+"@
+        [System.IO.File]::WriteAllText("$t17Dir\scripts\checker.gd", $gdChecker, (New-Object System.Text.UTF8Encoding($false)))
+
+        # Buat project.godot dengan GameStateWriter sebagai autoload
+        # agar game-state-templates (yang memanggil GameStateWriter) bisa compile
+        $projGodot = "config_version=5`n`n[application]`nconfig/name=`"T17Check`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`n"
+        [System.IO.File]::WriteAllText("$t17Dir\project.godot", $projGodot, (New-Object System.Text.UTF8Encoding($false)))
+
+        # Buat main.tscn yang me-attach checker.gd
+        $mainTscn = "[gd_scene load_steps=2 format=3]`n[ext_resource type=""Script"" path=""res://scripts/checker.gd"" id=""1""]`n[node name=""Main"" type=""Node""]`nscript = ExtResource(""1"")`n"
+        [System.IO.File]::WriteAllText("$t17Dir\main.tscn", $mainTscn, (New-Object System.Text.UTF8Encoding($false)))
+
+        # Import dulu
+        $impProc = Start-Process $godotExe17 -ArgumentList "--path", "`"$t17Dir`"", "--import", "--quit-after", "2" `
+            -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+        if ($impProc) { $impProc.Handle | Out-Null; $impProc.WaitForExit(30000) | Out-Null }
+
+        # Jalankan checker vanilla
+        $vanillaLog = Join-Path $env:TEMP "kilo_t17_vanilla.txt"
+        $vanillaProc = Start-Process $godotExe17 `
+            -ArgumentList "--path", "`"$t17Dir`"", "--headless" `
+            -PassThru -NoNewWindow -RedirectStandardError $vanillaLog -ErrorAction SilentlyContinue
+        if ($vanillaProc) {
+            $vanillaProc.Handle | Out-Null
+            $vanillaProc.WaitForExit(30000) | Out-Null
+        }
+
+        # Parse hasil
+        $vanillaFails = @()
+        if (Test-Path -LiteralPath $vanillaLog) {
+            $vanillaFails = @(Get-Content $vanillaLog -ErrorAction SilentlyContinue | Where-Object { $_ -match "COMPILE_FAIL|Parse Error|Compile Error" -and $_ -notmatch "GDScript::reload" })
+            Remove-Item -LiteralPath $vanillaLog -ErrorAction SilentlyContinue
+        }
+
+        # Tambah strict mode setting dan jalankan lagi
+        $strictLog = Join-Path $env:TEMP "kilo_t17_strict.txt"
+        $projGodotStrict = $projGodot + "[gdscript]`nunsafe_method_access=2`nunsafe_property_access=2`n"
+        [System.IO.File]::WriteAllText("$t17Dir\project.godot", $projGodotStrict, (New-Object System.Text.UTF8Encoding($false)))
+
+        # Re-import dengan setting baru
+        $imp2Proc = Start-Process $godotExe17 -ArgumentList "--path", "`"$t17Dir`"", "--import", "--quit-after", "2" `
+            -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+        if ($imp2Proc) { $imp2Proc.Handle | Out-Null; $imp2Proc.WaitForExit(30000) | Out-Null }
+
+        $strictProc = Start-Process $godotExe17 `
+            -ArgumentList "--path", "`"$t17Dir`"", "--headless" `
+            -PassThru -NoNewWindow -RedirectStandardError $strictLog -ErrorAction SilentlyContinue
+        if ($strictProc) {
+            $strictProc.Handle | Out-Null
+            $strictProc.WaitForExit(30000) | Out-Null
+        }
+
+        $strictFails = @()
+        if (Test-Path -LiteralPath $strictLog) {
+            $strictFails = @(Get-Content $strictLog -ErrorAction SilentlyContinue | Where-Object { $_ -match "COMPILE_FAIL|Parse Error|Compile Error" -and $_ -notmatch "GDScript::reload" })
+            Remove-Item -LiteralPath $strictLog -ErrorAction SilentlyContinue
+        }
+
+        $totalFails = $vanillaFails.Count + $strictFails.Count
+        $detail = "vanilla_fails=$($vanillaFails.Count) strict_fails=$($strictFails.Count) templates=$($allGdFiles.Count)"
+        if ($vanillaFails.Count -gt 0) { $detail += " | vanilla: $($vanillaFails[0])" }
+        if ($strictFails.Count -gt 0)  { $detail += " | strict: $($strictFails[0])" }
+        Add-Result "compile semua .gd template (vanilla + strict)" ($totalFails -eq 0) $detail
+    } catch {
+        Add-Result "compile semua .gd template (vanilla + strict)" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t17Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."

@@ -344,12 +344,14 @@ func _detect_scenario_failures(scenario_result: Dictionary) -> Array[Dictionary]
 	if scenario_result.is_empty():
 		return results
 
-	var failed_steps: Array = scenario_result.get("steps", []).filter(
-		func(s): return s.get("status") == "fail"
-	)
-	var skipped_steps: Array = scenario_result.get("steps", []).filter(
-		func(s): return s.get("status") == "skip"
-	)
+	var all_steps: Array = scenario_result.get("steps", [])
+	var failed_steps: Array[Dictionary] = []
+	var skipped_steps: Array[Dictionary] = []
+	for _s in all_steps:
+		if not (_s is Dictionary): continue
+		var _sd := _s as Dictionary
+		if _sd.get("status") == "fail":  failed_steps.append(_sd)
+		elif _sd.get("status") == "skip": skipped_steps.append(_sd)
 
 	for step in failed_steps:
 		results.append(_make_anomaly(
@@ -367,7 +369,9 @@ func _detect_scenario_failures(scenario_result: Dictionary) -> Array[Dictionary]
 
 	# Warning untuk banyak skip
 	if skipped_steps.size() > 3:
-		var skip_types := skipped_steps.map(func(s): return s.get("type", "?"))
+		var skip_types: Array[String] = []
+		for _sk in skipped_steps:
+			skip_types.append(_sk.get("type", "?"))
 		results.append(_make_anomaly(
 			"scenario", WARNING,
 			"%d step di-skip -- mungkin butuh setup tambahan" % skipped_steps.size(),
@@ -395,9 +399,13 @@ func _detect_performance_signals(manifest: Dictionary, scenario_result: Dictiona
 
 	# Cek dari scenario result jika ada step assert_fps
 	if not scenario_result.is_empty():
-		var fps_steps: Array = scenario_result.get("steps", []).filter(
-			func(s): return s.get("type") == "assert_fps" and s.get("status") == "fail"
-		)
+		var all_fps_steps: Array = scenario_result.get("steps", [])
+		var fps_steps: Array[Dictionary] = []
+		for _fs in all_fps_steps:
+			if not (_fs is Dictionary): continue
+			var _fsd := _fs as Dictionary
+			if _fsd.get("type") == "assert_fps" and _fsd.get("status") == "fail":
+				fps_steps.append(_fsd)
 		for s in fps_steps:
 			results.append(_make_anomaly(
 				"performance", CRITICAL,
