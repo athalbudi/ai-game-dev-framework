@@ -78,9 +78,9 @@ func detect_all(manifest_path: String, scenario_result_path: String = "") -> Arr
 	anomalies.append_array(_detect_missing_seed(manifest, game_state))
 
 	# Sort: critical dulu, lalu warning, lalu info
-	anomalies.sort_custom(func(a, b):
+	anomalies.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		var order := {"critical": 0, "warning": 1, "info": 2}
-		return order.get(a.severity, 3) < order.get(b.severity, 3)
+		return order.get(a.get("severity", ""), 3) < order.get(b.get("severity", ""), 3)
 	)
 
 	return anomalies
@@ -176,7 +176,8 @@ func _detect_stale_screenshots(manifest: Dictionary) -> Array[Dictionary]:
 	for ss in screenshots:
 		if not (ss is Dictionary):
 			continue
-		var last_write: String = ss.get("last_write", "")
+		var ss_d := ss as Dictionary
+		var last_write: String = ss_d.get("last_write", "")
 		if last_write.is_empty():
 			continue
 
@@ -195,7 +196,7 @@ func _detect_stale_screenshots(manifest: Dictionary) -> Array[Dictionary]:
 
 		var age_hours := (run_time - dt) / 3600.0
 		if age_hours > 24:
-			var fname: String = ss.get("file", "unknown")
+			var fname: String = ss_d.get("file", "unknown")
 			var severity := CRITICAL if age_hours > 168 else WARNING  # >7 hari = critical
 			results.append(_make_anomaly(
 				"visual", severity,
@@ -215,9 +216,10 @@ func _detect_coverage_gaps(manifest: Dictionary) -> Array[Dictionary]:
 	if coverage == null or not (coverage is Dictionary):
 		return results
 
-	var pct: float = float(coverage.get("coverage_pct", 100))
-	var uncovered: Array = coverage.get("uncovered", [])
-	var known: int = int(coverage.get("known_screens", 0) if coverage.get("known_screens") is int else 0)
+	var coverage_d := coverage as Dictionary
+	var pct: float = float(coverage_d.get("coverage_pct", 100))
+	var uncovered: Array = coverage_d.get("uncovered", [])
+	var known: int = int(coverage_d.get("known_screens", 0) if coverage_d.get("known_screens") is int else 0)
 
 	if pct < 100 and uncovered.size() > 0:
 		results.append(_make_anomaly(
@@ -240,9 +242,10 @@ func _detect_visual_regressions(diff_report: Dictionary, manifest: Dictionary) -
 	for f in files:
 		if not (f is Dictionary):
 			continue
-		var status: String = f.get("status", "")
-		var fname: String = f.get("file", "unknown")
-		var pct: float = float(f.get("change_pct", 0))
+		var f_d := f as Dictionary
+		var status: String = f_d.get("status", "")
+		var fname: String = f_d.get("file", "unknown")
+		var pct: float = float(f_d.get("change_pct", 0))
 
 		if status == "REGRESI":
 			results.append(_make_anomaly(
@@ -283,9 +286,10 @@ func _detect_state_anomalies(game_state: Dictionary, manifest: Dictionary) -> Ar
 	# Deteksi hp = 0 tapi is_alive = true (pattern umum health bar bug)
 	var player = game_state.get("player", null)
 	if player is Dictionary:
-		var hp = player.get("hp", null)
-		var hp_max = player.get("hp_max", null)
-		var is_alive = player.get("is_alive", null)
+		var player_d := player as Dictionary
+		var hp = player_d.get("hp", null)
+		var hp_max = player_d.get("hp_max", null)
+		var is_alive = player_d.get("is_alive", null)
 
 		if hp != null and hp_max != null and float(str(hp_max)) > 0:
 			var hp_pct := float(str(hp)) / float(str(hp_max))
@@ -526,13 +530,14 @@ func _scenario_matches(scenario: Dictionary, target_norm: String, evidence: Dict
 	for step in scenario["steps"]:
 		if not (step is Dictionary):
 			continue
-		var step_type: String = step.get("type", "")
+		var step_d := step as Dictionary
+		var step_type: String = step_d.get("type", "")
 		if target_norm != "" and (step_type == "screenshot" or step_type == "assert_screenshot_exists"):
-			var step_name: String = step.get("name", "")
+			var step_name: String = step_d.get("name", "")
 			if step_name != "" and _normalize_screen_name(step_name) == target_norm:
 				return true
 		if step_type == "assert_state":
-			var key: String = step.get("key", step.get("field", ""))
+			var key: String = step_d.get("key", step_d.get("field", ""))
 			if key != "" and evidence.has(key):
 				return true
 	return false

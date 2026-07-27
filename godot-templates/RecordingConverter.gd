@@ -223,10 +223,9 @@ static func _joypad_button_name(button_index: int) -> String:
 		JOY_BUTTON_Y:             return "triangle"
 		JOY_BUTTON_LEFT_SHOULDER: return "l1"
 		JOY_BUTTON_RIGHT_SHOULDER: return "r1"
-		# JOY_BUTTON_LEFT_TRIGGER / RIGHT_TRIGGER tidak ada di Godot 4 -- trigger adalah axis
-		# (JOY_AXIS_TRIGGER_LEFT / RIGHT). Peta ke nama string saja untuk backward compat.
-		6:                        return "l2"   # legacy trigger index
-		7:                        return "r2"   # legacy trigger index
+		# Trigger di Godot 4 adalah axis (JOY_AXIS_TRIGGER_LEFT/RIGHT = 4/5), bukan button.
+		# Tidak ada konstanta JOY_BUTTON_*_TRIGGER -- cabang ini sengaja dihapus agar
+		# JOY_BUTTON_START (6) dan JOY_BUTTON_LEFT_STICK (7) terpetakan dengan benar.
 		JOY_BUTTON_LEFT_STICK:    return "l3"
 		JOY_BUTTON_RIGHT_STICK:   return "r3"
 		JOY_BUTTON_DPAD_UP:       return "dpad_up"

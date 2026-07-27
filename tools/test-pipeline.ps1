@@ -1155,7 +1155,7 @@ $kiloGameStateTemplates = Join-Path $env:USERPROFILE ".config\kilo\game-state-te
 
 if ($godotExe17 -eq "") {
     Write-T "TEST 17: SKIP -- Godot tidak ditemukan di PATH"
-    Add-Result "compile semua .gd template (vanilla + strict)" $true "SKIP -- Godot tidak tersedia"
+    Add-Result "compile semua .gd template (vanilla + strict)" $false "SKIP -- Godot tidak tersedia di PATH"
 } elseif (-not (Test-Path -LiteralPath $kiloGodotTemplates)) {
     Write-T "TEST 17: SKIP -- ~/.config/kilo/godot-templates tidak ditemukan"
     Add-Result "compile semua .gd template (vanilla + strict)" $false "godot-templates tidak tersedia di deployed"
@@ -1234,8 +1234,10 @@ func _ready() -> void:
         }
 
         # Tambah strict mode setting dan jalankan lagi
+        # Format yang benar: section [debug] dengan key gdscript/warnings/...
+        # Section [gdscript] diabaikan Godot -- menghasilkan vanilla run kedua (bug asli)
         $strictLog = Join-Path $env:TEMP "kilo_t17_strict.txt"
-        $projGodotStrict = $projGodot + "[gdscript]`nunsafe_method_access=2`nunsafe_property_access=2`n"
+        $projGodotStrict = $projGodot + "[debug]`ngdscript/warnings/unsafe_method_access=2`ngdscript/warnings/unsafe_property_access=2`n"
         [System.IO.File]::WriteAllText("$t17Dir\project.godot", $projGodotStrict, (New-Object System.Text.UTF8Encoding($false)))
 
         # Re-import dengan setting baru
@@ -1266,6 +1268,8 @@ func _ready() -> void:
         Add-Result "compile semua .gd template (vanilla + strict)" $false ("Exception: " + $_)
     } finally {
         Remove-Item -LiteralPath $t17Dir -Recurse -Force -ErrorAction SilentlyContinue
+        # Bersihkan userdata Godot yang dibuat saat --headless run
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\T17Check" -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 Write-S
