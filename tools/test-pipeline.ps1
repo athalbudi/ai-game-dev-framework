@@ -1269,6 +1269,48 @@ if (Test-Path -LiteralPath $srPs1Deployed) {
 }
 Write-S
 
+# ── TEST 19: Drift detection -- vendored templates di game validasi ──────────────
+# Verifikasi bahwa salinan ErrorTracker.gd, GameStateWriter.gd, ScenarioRunner.gd
+# di keempat game validasi identik dengan versi terbaru di framework (md5-match).
+# Test ini GAGAL jika ada game yang belum di-sync setelah fix template framework.
+# Jalankan sync.ps1 -GameProjectScriptsDir <path> untuk memperbaikinya.
+Write-T "TEST 19: drift detection -- vendored templates di game validasi"
+$fwTemplatesDir = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+$gamesBaseDir   = "C:\Users\Athallah Budiman\Documents\games"
+$vendorTemplates = @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")
+$gameVendorPaths = @{
+    "godot-open-rts"  = "source\scripts"
+    "godot-tiny-mmo"  = "source\common\framework"
+    "bread-adventure" = "src\global"
+    "jimat"           = "scripts"
+}
+$driftFound = @()
+$checkedCount = 0
+foreach ($game in $gameVendorPaths.Keys) {
+    $gameDir = Join-Path $gamesBaseDir $game
+    if (-not (Test-Path -LiteralPath $gameDir)) { continue }
+    foreach ($tmpl in $vendorTemplates) {
+        $gamePath = Join-Path $gameDir "$($gameVendorPaths[$game])\$tmpl"
+        $fwPath   = Join-Path $fwTemplatesDir $tmpl
+        if (-not (Test-Path -LiteralPath $gamePath)) { continue }
+        if (-not (Test-Path -LiteralPath $fwPath)) { continue }
+        $checkedCount++
+        $fwHash   = (Get-FileHash $fwPath   -Algorithm MD5 -ErrorAction SilentlyContinue).Hash
+        $gameHash = (Get-FileHash $gamePath -Algorithm MD5 -ErrorAction SilentlyContinue).Hash
+        if ($fwHash -ne $gameHash) {
+            $driftFound += "$game/$tmpl"
+        }
+    }
+}
+if ($checkedCount -eq 0) {
+    Add-Result "vendored templates di game validasi sinkron" $true "SKIP -- tidak ada game validasi ditemukan di $gamesBaseDir"
+} else {
+    $detail = "checked=$checkedCount drift=$($driftFound.Count)"
+    if ($driftFound.Count -gt 0) { $detail += " | drift: $($driftFound -join ', ')" }
+    Add-Result "vendored templates di game validasi sinkron" ($driftFound.Count -eq 0) $detail
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
