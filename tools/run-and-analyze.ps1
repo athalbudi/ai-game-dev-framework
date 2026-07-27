@@ -766,14 +766,23 @@ if ($phase3Status -ne "skip_no_godot" -and (Test-Path -LiteralPath $projectGodot
     }
 
     # Deteksi compile/load error dari stderr Godot -- error ini tidak muncul di scenario_result.json
-    # karena ScenarioRunner tidak berjalan sama sekali jika script game gagal di-compile.
-    # Tanpa deteksi ini: game dengan Compile Error tetap melaporkan pass jika ada scenario_result lama.
+    # karena ScenarioRunner tidak berjalan sama sekali jika script game gagal di-compile,
+    # atau berjalan tapi game gagal load resource sehingga state tidak valid.
+    # Wording bervariasi per Godot versi dan konteks -- cakup keduanya:
+    #   - GDScript compile: "Compile Error", "Failed to load script", "SCRIPT ERROR:.*Parse Error"
+    #   - Resource loader: "Cannot open file", "Failed loading resource",
+    #     "ERROR:.*Parse Error.*non-existent resource"
+    # Kecualikan GDScript::reload (hot-reload artifact, bukan genuine error) dan
+    # baris yang hanya berisi "ERROR: " tanpa konten (false positive dari Godot editor noise).
     if (Test-Path -LiteralPath $scenarioLog) {
         try {
             $scenarioLogLines = @(Get-Content $scenarioLog -ErrorAction SilentlyContinue)
             $compileErrors = @($scenarioLogLines | Where-Object {
                 $_ -match "Compile Error|Failed to load script|SCRIPT ERROR.*Parse Error" `
-                -and $_ -notmatch "GDScript::reload"
+                    -or ($_ -match "Cannot open file 'res://|Failed loading resource|ERROR:.*Parse Error.*non-existent resource" `
+                         -and $_ -notmatch "user://")
+            } | Where-Object {
+                $_ -notmatch "GDScript::reload"
             })
             if ($compileErrors.Count -gt 0 -and $phase3Status -eq "ok") {
                 Write-Warn "Terdeteksi $($compileErrors.Count) compile/load error di stderr Godot"

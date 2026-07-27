@@ -1098,15 +1098,25 @@ if (Test-Path -LiteralPath $aqPs1Deployed) {
         # eksekusi top-level script (yang akan memanggil Godot) tidak berjalan.
         # Kita set ProjectPath ke path yang tidak ada -- Write-Fail akan dipanggil
         # tapi kita catch exit dan hanya peduli pada fungsi yang sudah didefinisikan.
+        #
+        # PENTING: dot-source berbagi scope dengan pemanggil -- simpan dan pulihkan
+        # semua variabel yang namanya sama dengan param autonomous-qa.ps1 agar tidak
+        # tercemar (contoh: $GodotExe di test-pipeline.ps1 di-reset ke "" oleh param block).
+        $savedGodotExe16   = $GodotExe
+        $savedProjectPath16 = $ProjectPath
         $savedEAP16 = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         $fnAvailable = $false
         $resolvedPath = ""
         try {
-            # Jalankan dot-source di dalam try-catch -- exit 1 dari Write-Fail dilempar sebagai exception
+            # Jalankan dot-source -- exit 1 dari Write-Fail menghentikan sisa child script
+            # tapi tidak membunuh proses host; fungsi yang didefinisikan sebelum exit tetap ter-register
             . $aqPs1Deployed -ProjectPath "NONEXISTENT_PATH_T16" -MaxIterations 0 2>$null
         } catch { }
         $ErrorActionPreference = $savedEAP16
+        # Pulihkan variabel yang mungkin tercemar oleh param block dot-source
+        $GodotExe   = $savedGodotExe16
+        $ProjectPath = $savedProjectPath16
 
         # Cek apakah Resolve-GodotShotsDir sekarang tersedia di scope
         if (Get-Command Resolve-GodotShotsDir -ErrorAction SilentlyContinue) {
