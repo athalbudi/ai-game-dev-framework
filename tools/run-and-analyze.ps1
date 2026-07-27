@@ -496,6 +496,31 @@ if ($FixLoopMode -and $PatchBranch -ne "") {
         # yang menahan direktori worktree sehingga cleanup selalu gagal.
         $worktreeGodot = Join-Path $worktreeProjectPath "project.godot"
         if ($GodotExe -ne "" -and (Test-Path -LiteralPath $worktreeGodot)) {
+            # Tahap 1: Seed .godot/imported/ dari ProjectPath asli jika ada.
+            # git worktree hanya meng-checkout file yang di-track -- .godot/imported/ tidak
+            # di-track karena binary assets besar, sehingga worktree baru selalu kosong.
+            # Copy asset cache dari ProjectPath memungkinkan Godot compile script tanpa
+            # harus re-import seluruh project dari nol (yang butuh akses ke asset binary asli).
+            $srcImported  = Join-Path $ProjectPath ".godot\imported"
+            $dstGodotDir  = Join-Path $worktreeProjectPath ".godot"
+            $dstImported  = Join-Path $dstGodotDir "imported"
+            if ((Test-Path -LiteralPath $srcImported) -and -not (Test-Path -LiteralPath $dstImported)) {
+                Write-Phase "WORKTREE" "Menyalin .godot/imported/ dari ProjectPath ke worktree..."
+                try {
+                    if (-not (Test-Path -LiteralPath $dstGodotDir)) {
+                        New-Item -ItemType Directory -Path $dstGodotDir | Out-Null
+                    }
+                    Copy-Item -LiteralPath $srcImported -Destination $dstImported -Recurse -Force
+                    $copiedCount = @(Get-ChildItem -LiteralPath $dstImported -Recurse -File).Count
+                    Write-Ok "Salin .godot/imported/ selesai ($copiedCount file)"
+                } catch {
+                    Write-Warn "Gagal menyalin .godot/imported/: $_ -- lanjutkan dengan --import"
+                }
+            }
+
+            # Tahap 2: Jalankan --import untuk mensync perubahan script dari patch.
+            # Ini tetap diperlukan karena patch mungkin mengubah script GDScript yang
+            # cache-nya di .godot/imported/ perlu diperbarui.
             Write-Phase "WORKTREE" "Menjalankan --import di worktree (isi .godot/)..."
             $importProc = Start-Process -FilePath $GodotExe `
                 -ArgumentList "--path", "`"$worktreeProjectPath`"", "--import", "--quit-after", "2" `
