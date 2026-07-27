@@ -1,35 +1,39 @@
 ## Handoff — 2026-07-27
 
-Commit terakhir: `de53e6a` -- fix: TEST 6 BOM + sync ci-templates/agent/ + TEST 18 Fix Q
+Commit terakhir: `b4ecab0` -- feat: TEST 19 drift detection vendored templates + sync 12/12 ke game validasi
 
 Status: tree bersih, repo ↔ deployed sinkron, pushed ke origin/main
 
 ### Selesai di sesi ini
 
-- **Fix sync.ps1** — tambah `ci-templates/` dan `agent/` ke daftar sync.
-  Sebelumnya hanya 5 direktori; sekarang 7 direktori, 34+ file per sync.
+- **Sync vendored templates** ke 4 game validasi (12/12 OK, tanpa BOM):
+  - godot-open-rts: `source/scripts/`
+  - godot-tiny-mmo: `source/common/framework/`
+  - bread-adventure: `src/global/`
+  - jimat: `scripts/`
 
-- **Fix TEST 6 BOM** — ganti semua `Set-Content -Encoding UTF8` dengan `WriteAllText` tanpa BOM
-  di fixture Godot (golden `project.godot`, golden `main.tscn`, strict `project.godot`, strict `main.tscn`).
-  Set-Content di PS 5.1 menulis BOM (EF BB BF) → Godot `Parse Error: Expected '['` tiap run.
-  Sekarang bersih: TEST 6 tidak lagi mencetak noise parse error.
+- **TEST 19** (`test-pipeline.ps1`) — drift detection: cek md5 vendored
+  ErrorTracker/GameStateWriter/ScenarioRunner di 4 game validasi vs framework.
+  FAIL jika ada yang tertinggal. 24/24 PASS terverifikasi.
 
-- **TEST 18** (`test-pipeline.ps1`) — regression test Fix Q: verifikasi `push_warning` ada
-  di body `_evaluate_op` di deployed `ScenarioRunner.gd`. GAGAL terhadap build sebelum Fix Q.
+**Self-test: 24/24 PASS** terverifikasi commit `b4ecab0`.
 
-**Self-test: 23/23 PASS** terverifikasi commit `de53e6a`.
+### Outstanding (prioritas rendah)
 
-### Status outstanding dari semua audit (putaran 1-7)
+- Enam step type scenario tanpa cakupan template: `assert_fps`, `assert_screenshot_exists`,
+  `controller_press`, `mouse_click`, `touch_tap`, `wait_signal`
+- TEST 18 Fix Q adalah grep source-text (jujur terdokumentasi); behavioral sudah diverifikasi
+  oleh auditor lewat Godot headless
 
-Semua item kritis sudah tertutup. Tidak ada defect aktif yang diketahui.
+### Catatan penting: setelah update template framework
 
-### Catatan untuk sesi berikutnya
-
-- `sync.ps1` sekarang sync 7 direktori (tools, godot-templates, scenarios-templates,
-  game-state-templates, command, ci-templates, agent)
-- `test-pipeline.ps1` sekarang punya 23 regression test
-- Enam step type scenario masih tanpa cakupan template (`assert_fps`, `assert_screenshot_exists`,
-  `controller_press`, `mouse_click`, `touch_tap`, `wait_signal`) — low priority
+Setiap kali ada fix di `godot-templates/`, jalankan sync ke game validasi:
+```powershell
+$gamesDir = "C:\Users\Athallah Budiman\Documents\games"
+$enc = New-Object System.Text.UTF8Encoding($false)
+# ... atau gunakan sync.ps1 -GameProjectScriptsDir per game
+```
+TEST 19 akan mendeteksi drift secara otomatis di self-test.
 
 ### Catatan efisiensi token
 
