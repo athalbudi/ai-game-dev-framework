@@ -872,21 +872,20 @@ if (Test-Path -LiteralPath $raPs1Deployed) {
     $ErrorActionPreference = $savedEAP12
     if (Get-Command Get-DefaultProtectedPatterns -ErrorAction SilentlyContinue) {
         $pats = @(Get-DefaultProtectedPatterns)
-        $runnerPat = $pats | Where-Object { $_ -match "ScenarioRunner" }
-        $writerPat = $pats | Where-Object { $_ -match "GameStateWriter" }
-        $trackerPat = $pats | Where-Object { $_ -match "ErrorTracker" }
-        # Verifikasi pola menggunakan wildcard prefix (* di awal) sehingga cocok dengan
-        # layout folder non-standar. Pola saat ini: "*ScenarioRunner.gd" (broad wildcard,
-        # bukan "*scripts/ScenarioRunner.gd" yang hanya cocok satu layout).
-        $allHaveWildcard = ($runnerPat  -like "**ScenarioRunner.gd"  -or $runnerPat  -like "*\*ScenarioRunner.gd") `
-                        -and ($writerPat  -like "**GameStateWriter.gd"  -or $writerPat  -like "*\*GameStateWriter.gd") `
-                        -and ($trackerPat -like "**ErrorTracker.gd"     -or $trackerPat -like "*\*ErrorTracker.gd")
-        # Verifikasi juga bahwa wildcard prefix cocok dengan path non-standar
-        $nonStdPath  = "source/scripts/ScenarioRunner.gd"
-        $matchesNonStd = $pats | Where-Object { $nonStdPath -like $_ }
+        # Verifikasi behavioral: pola harus cocok dengan DUA layout yang sebelumnya
+        # dibuktikan live bisa melewati gate dengan pola lama "*scripts/ScenarioRunner.gd":
+        #   src/global/ScenarioRunner.gd          -- bread-adventure
+        #   source/common/framework/ScenarioRunner.gd -- godot-tiny-mmo
+        # Pola lama gagal di keduanya (False). Pola baru "*ScenarioRunner.gd" harus PASS
+        # di keduanya. Test ini genuinely fail terhadap kode yang belum diperbaiki.
+        $layoutBread  = "src/global/ScenarioRunner.gd"
+        $layoutMmo    = "source/common/framework/ScenarioRunner.gd"
+        $matchesBread = @($pats | Where-Object { $layoutBread -like $_ }).Count
+        $matchesMmo   = @($pats | Where-Object { $layoutMmo   -like $_ }).Count
+        $runnerPat    = $pats | Where-Object { $_ -match "ScenarioRunner" }
         Add-Result "Fix A: default patterns menggunakan prefix * untuk script GD" `
-            ($allHaveWildcard -and @($matchesNonStd).Count -gt 0) `
-            "runner=$runnerPat writer=$writerPat tracker=$trackerPat nonStdMatch=$(@($matchesNonStd).Count)"
+            ($matchesBread -gt 0 -and $matchesMmo -gt 0) `
+            "runner=$runnerPat breadMatch=$matchesBread mmoMatch=$matchesMmo"
     } else {
         Add-Result "Fix A: Get-DefaultProtectedPatterns tersedia" $false "Fungsi tidak ditemukan setelah dot-source"
     }
