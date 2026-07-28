@@ -610,7 +610,7 @@ for ($iter = 1; $iter -le $MaxIterations; $iter++) {
     }
 
     # HYPOTHESIZE: pilih anomali yang perlu diinvestigasi (priority: critical dulu)
-    $toInvestigate = @($criticalNew + $warningNew) | Select-Object -First 8
+    $toInvestigate = @(@($criticalNew + $warningNew) | Select-Object -First 8)
     Write-Loop $iter "HYPOTHESIZE" "$($toInvestigate.Count) anomali dipilih untuk investigasi"
     foreach ($a in $toInvestigate) {
         Write-Info "  [$($a.severity.ToUpper())] $($a.description)"

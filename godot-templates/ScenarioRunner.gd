@@ -237,10 +237,36 @@ func _exec_action(step: Dictionary) -> void:
 	_step_pass({"action": action_name})
 
 
+func _resolve_mouse_button(value) -> int:
+	# Terima integer langsung atau nama string MouseButton.
+	# Masalah yang sama dengan _resolve_joy_button: int("left") = 0, tapi MOUSE_BUTTON_LEFT = 1
+	# sehingga string "left" akan resolve ke tombol yang salah. int("right") = 0 juga — salah.
+	if value is int:
+		return value
+	var s: String = str(value).to_lower().strip_edges()
+	if s.is_valid_int():
+		return s.to_int()
+	var _mouse_names: Dictionary = {
+		"left":    MOUSE_BUTTON_LEFT,    # 1
+		"right":   MOUSE_BUTTON_RIGHT,   # 2
+		"middle":  MOUSE_BUTTON_MIDDLE,  # 3
+		"wheel_up":   MOUSE_BUTTON_WHEEL_UP,    # 4
+		"wheel_down": MOUSE_BUTTON_WHEEL_DOWN,  # 5
+		"wheel_left": MOUSE_BUTTON_WHEEL_LEFT,  # 6
+		"wheel_right":MOUSE_BUTTON_WHEEL_RIGHT, # 7
+		"xbutton1": MOUSE_BUTTON_XBUTTON1,      # 8
+		"xbutton2": MOUSE_BUTTON_XBUTTON2,      # 9
+	}
+	if _mouse_names.has(s):
+		return _mouse_names[s]
+	push_warning("ScenarioRunner: mouse_click button '%s' tidak dikenal, pakai MOUSE_BUTTON_LEFT (1)" % s)
+	return MOUSE_BUTTON_LEFT
+
+
 func _exec_mouse_click(step: Dictionary) -> void:
 	var x: float = float(step.get("x", 0))
 	var y: float = float(step.get("y", 0))
-	var button: int = int(step.get("button", MOUSE_BUTTON_LEFT))
+	var button: int = _resolve_mouse_button(step.get("button", MOUSE_BUTTON_LEFT))
 	var wait_after: int = int(step.get("wait_frames", 0))
 	var pos := Vector2(x, y)
 	var press := InputEventMouseButton.new()
@@ -280,8 +306,48 @@ func _exec_touch_tap(step: Dictionary) -> void:
 	_step_pass({"x": x, "y": y})
 
 
+func _resolve_joy_button(value) -> int:
+	# Terima integer langsung atau nama string JoyButton.
+	# GDScript int("button_a") = 0 — semua string non-numerik collapse ke 0 tanpa error,
+	# sehingga nama string harus di-resolve sebelum cast ke int.
+	if value is int:
+		return value
+	var s: String = str(value).to_lower().strip_edges()
+	# Coba parse sebagai integer literal ("0", "1", ...) dulu
+	if s.is_valid_int():
+		return s.to_int()
+	# Lookup nama ke JoyButton enum (Godot 4 global constants)
+	var _joy_names: Dictionary = {
+		"button_a": JOY_BUTTON_A,           # 0
+		"button_b": JOY_BUTTON_B,           # 1
+		"button_x": JOY_BUTTON_X,           # 2
+		"button_y": JOY_BUTTON_Y,           # 3
+		"back":     JOY_BUTTON_BACK,        # 4
+		"guide":    JOY_BUTTON_GUIDE,       # 5
+		"start":    JOY_BUTTON_START,       # 6
+		"left_stick":  JOY_BUTTON_LEFT_STICK,   # 7
+		"right_stick": JOY_BUTTON_RIGHT_STICK,  # 8
+		"left_shoulder":  JOY_BUTTON_LEFT_SHOULDER,  # 9
+		"right_shoulder": JOY_BUTTON_RIGHT_SHOULDER, # 10
+		"dpad_up":    JOY_BUTTON_DPAD_UP,    # 11
+		"dpad_down":  JOY_BUTTON_DPAD_DOWN,  # 12
+		"dpad_left":  JOY_BUTTON_DPAD_LEFT,  # 13
+		"dpad_right": JOY_BUTTON_DPAD_RIGHT, # 14
+		"misc1":  JOY_BUTTON_MISC1,          # 15
+		"paddle1": JOY_BUTTON_PADDLE1,       # 16
+		"paddle2": JOY_BUTTON_PADDLE2,       # 17
+		"paddle3": JOY_BUTTON_PADDLE3,       # 18
+		"paddle4": JOY_BUTTON_PADDLE4,       # 19
+		"touchpad": JOY_BUTTON_TOUCHPAD,     # 20
+	}
+	if _joy_names.has(s):
+		return _joy_names[s]
+	push_warning("ScenarioRunner: controller_press button '%s' tidak dikenal, pakai JOY_BUTTON_A (0)" % s)
+	return JOY_BUTTON_A
+
+
 func _exec_controller_press(step: Dictionary) -> void:
-	var button: int = int(step.get("button", JOY_BUTTON_A))
+	var button: int = _resolve_joy_button(step.get("button", JOY_BUTTON_A))
 	var duration_frames: int = int(step.get("duration_frames", 2))
 	var wait_after: int = int(step.get("wait_frames", 0))
 	var device: int = int(step.get("device", 0))

@@ -1,0 +1,135 @@
+{
+  "scenario_id": "input_methods",
+  "description": "Referensi template untuk step type input non-keyboard: mouse click, touch tap, controller press, wait_signal, assert_fps, dan assert_screenshot_exists. Gunakan sebagai contoh cara memakai step type ini — bukan sebagai scenario lengkap yang siap dijalankan tanpa modifikasi.",
+  "version": "1.0",
+  "tags": ["reference", "input", "mouse", "touch", "controller", "signal", "fps", "screenshot-check"],
+  "notes": [
+    "Template ini adalah referensi untuk 6 step type yang tidak ada di template lain.",
+    "Sesuaikan koordinat, button, action, dan signal name dengan game kamu.",
+    "mouse_click dan touch_tap menggunakan koordinat pixel relatif terhadap viewport.",
+    "controller_press menerima nama string ('button_a', 'dpad_up', dll) ATAU integer literal Godot JoyButton.",
+    "controller_press membutuhkan joypad terhubung — skip di CI headless tanpa virtual joypad.",
+    "wait_signal membutuhkan game emit ScenarioRunner.scenario_signal(name) dari kode GDScript.",
+    "assert_fps berguna untuk deteksi regresi performa — sesuaikan threshold dengan target game.",
+    "assert_screenshot_exists memverifikasi step screenshot sebelumnya berhasil disimpan ke disk."
+  ],
+  "steps": [
+    {
+      "type": "log",
+      "message": "=== INPUT METHODS REFERENCE: Contoh penggunaan step type non-keyboard ==="
+    },
+    {
+      "type": "wait_frames",
+      "frames": 60,
+      "comment": "Tunggu game selesai inisialisasi"
+    },
+    {
+      "type": "screenshot",
+      "name": "input_01_initial_state",
+      "comment": "State awal sebelum input"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Mouse Click ---"
+    },
+    {
+      "type": "mouse_click",
+      "x": 640,
+      "y": 360,
+      "button": "left",
+      "comment": "SESUAIKAN: klik kiri di koordinat pixel (640, 360) — titik tengah viewport 1280x720. Ganti dengan koordinat tombol/UI yang ingin diklik."
+    },
+    {
+      "type": "wait_frames",
+      "frames": 20
+    },
+    {
+      "type": "screenshot",
+      "name": "input_02_after_mouse_click",
+      "comment": "State setelah mouse click"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Touch Tap ---"
+    },
+    {
+      "type": "touch_tap",
+      "x": 320,
+      "y": 240,
+      "comment": "SESUAIKAN: tap di koordinat pixel (320, 240). Simulasi touch screen — cocok untuk mobile game atau game dengan touch support. Koordinat sama dengan mouse_click."
+    },
+    {
+      "type": "wait_frames",
+      "frames": 20
+    },
+    {
+      "type": "screenshot",
+      "name": "input_03_after_touch_tap"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Controller Press ---"
+    },
+    {
+      "type": "controller_press",
+      "button": "button_a",
+      "comment": "SESUAIKAN: tekan tombol controller. Nama string yang valid: button_a, button_b, button_x, button_y, dpad_up, dpad_down, dpad_left, dpad_right, left_shoulder, right_shoulder, left_stick, right_stick, start, back, guide, misc1, paddle1, paddle2, paddle3, paddle4, touchpad. Integer literal Godot JoyButton juga diterima. Membutuhkan joypad terhubung — tidak bekerja di headless CI tanpa virtual joypad."
+    },
+    {
+      "type": "wait_frames",
+      "frames": 20
+    },
+    {
+      "type": "screenshot",
+      "name": "input_04_after_controller_press"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Wait Signal ---"
+    },
+    {
+      "type": "wait_signal",
+      "signal_name": "game_ready",
+      "timeout": 10.0,
+      "comment": "SESUAIKAN: tunggu signal 'game_ready' dikirim oleh game. Game harus memanggil ScenarioRunner.scenario_signal('game_ready') dari GDScript saat event terjadi. Contoh di GDScript: ScenarioRunner.scenario_signal.emit('game_ready'). Timeout default 10 detik jika signal tidak diterima."
+    },
+    {
+      "type": "screenshot",
+      "name": "input_05_after_signal"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Assert FPS ---"
+    },
+    {
+      "type": "assert_fps",
+      "min_fps": 30,
+      "comment": "SESUAIKAN: verifikasi FPS tidak turun di bawah 30. Sesuaikan min_fps dengan target performa game (60 untuk game action, 30 untuk game casual/turn-based). Berguna untuk mendeteksi regresi performa setelah perubahan kode berat."
+    },
+    {
+      "type": "wait_frames",
+      "frames": 30,
+      "comment": "Tunggu beberapa frame agar FPS stabil sebelum assert"
+    },
+
+    {
+      "type": "log",
+      "message": "--- Assert Screenshot Exists ---"
+    },
+    {
+      "type": "assert_screenshot_exists",
+      "name": "input_01_initial_state",
+      "comment": "Verifikasi bahwa screenshot 'input_01_initial_state' yang diambil di awal scenario berhasil tersimpan ke disk. Berguna untuk memastikan step screenshot tidak diam-diam gagal tanpa error eksplisit."
+    },
+
+    {
+      "type": "log",
+      "message": "=== INPUT METHODS REFERENCE SELESAI ==="
+    }
+  ]
+}

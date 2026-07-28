@@ -427,9 +427,22 @@ function Get-DefaultProtectedPatterns {
     $patterns.Add("scenarios/*/*")
     $patterns.Add("shots.zoom.json")
     $patterns.Add("visual-diff-ignore.json")
-    $patterns.Add("*scripts/ScenarioRunner.gd")
-    $patterns.Add("*scripts/GameStateWriter.gd")
-    $patterns.Add("*scripts/ErrorTracker.gd")
+    # Pola layout-agnostic: cocok dengan nama file saja, bukan path direktori spesifik.
+    # Ini penting karena game berbeda memakai direktori berbeda:
+    #   bread-adventure: src/global/ScenarioRunner.gd
+    #   godot-tiny-mmo:  source/common/framework/ScenarioRunner.gd
+    #   godot-open-rts:  source/scripts/ScenarioRunner.gd  (hanya ini yang cocok dengan pola lama)
+    # PowerShell -like dengan "*ScenarioRunner.gd" cocok dengan path apa pun yang berakhiran nama file itu,
+    # termasuk path tanpa komponen direktori (file di root project).
+    #
+    # Catatan: pola ini secara intentional broad — ia cocok dengan file bernamakan sama di direktori
+    # manapun (termasuk addons/ atau vendor/ pihak ketiga). Ini adalah trade-off yang disengaja:
+    # false-positive lebih aman daripada false-negative (AI memodifikasi verifier-nya sendiri tanpa
+    # terdeteksi). Jika false-positive terjadi pada file pihak ketiga, override lewat -ProtectedPatterns
+    # di pemanggil (tambahkan pola yang lebih spesifik untuk mengecualikan path tertentu).
+    $patterns.Add("*ScenarioRunner.gd")
+    $patterns.Add("*GameStateWriter.gd")
+    $patterns.Add("*ErrorTracker.gd")
     return @($patterns)
 }
 
@@ -1141,3 +1154,4 @@ if ($worktreeInfo -and $worktreeInfo.success) {
 # tanpa parsing JSON untuk tahu apakah lanjut ke merge atau eskalasi ke manusia.
 if ($gateResult.violated) { exit 1 }
 if ($phase3Failed) { exit 1 }
+exit 0

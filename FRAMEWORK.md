@@ -128,6 +128,47 @@ Menyalin template universal ke `<ProjectPath>/scenarios/`. Skip jika sudah ada.
 
 ---
 
+## Mekanisme Internal Penting
+
+### Self-locating path di ErrorTracker.gd
+
+`ErrorTracker.gd` menemukan `ScenarioRunner.gd` secara otomatis tanpa path yang di-hardcode.
+Mekanismenya: `get_script() as Script` mengembalikan script object ErrorTracker itu sendiri,
+lalu `resource_path.get_base_dir()` menghasilkan direktori tempat ErrorTracker berada di disk,
+dan `path_join("ScenarioRunner.gd")` menyusun path final.
+
+```gdscript
+# ErrorTracker.gd — di-load dari direktori apa pun di project
+var _self_dir = (get_script() as Script).resource_path.get_base_dir()
+var runner_path = _self_dir.path_join("ScenarioRunner.gd")
+```
+
+Ini berarti **ErrorTracker dan ScenarioRunner harus berada di direktori yang sama**, tapi
+direktori itu bisa bernama apa saja (`scripts/`, `src/global/`, `source/common/framework/`, dll).
+Tidak perlu konfigurasi path tambahan saat memindahkan file ke layout folder non-standar.
+
+### sRGB colorspace fix di visual-diff.ps1
+
+Screenshot yang disimpan via `get_viewport().get_texture().get_image()` di Godot menggunakan
+format warna linear (non-sRGB). Saat dibandingkan dengan ImageMagick tanpa konversi colorspace,
+pixel diff bisa menghasilkan false-positive karena perbedaan interpretasi warna.
+
+`visual-diff.ps1` menangani ini dengan meneruskan flag `-colorspace sRGB` ke perintah
+ImageMagick `compare` saat menghitung pixel diff (`visual-diff.ps1:458,460`):
+
+```
+compare -metric AE -colorspace sRGB "baseline.png" "current.png" "diff.png"
+```
+
+Ini terjadi secara transparan — developer tidak perlu mengubah kode `_take_screenshot()`.
+Flag ini aktif untuk semua run `visual-diff.ps1` sejak commit `ce765ac`.
+
+Jika visual diff menghasilkan false-positive karena perbedaan colorspace antar baseline dan
+screenshot baru, pastikan ImageMagick terinstall dan kedua file dibandingkan lewat
+`visual-diff.ps1` (bukan tool diff lain yang tidak menerapkan flag ini).
+
+---
+
 ## Known Limitations — Multiplayer Game
 
 Framework di-desain untuk single-player atau single-client game. Untuk game multiplayer
@@ -237,6 +278,7 @@ var count := 0
 var name := ""
 
 # BENAR — ScenarioRunner via load() bukan class_name
+# Ganti "scripts" dengan direktori aktual di project Anda (src/global/, source/common/framework/, dll)
 var exit_code = await load("res://scripts/ScenarioRunner.gd").new().run_scenario_file(path)
 
 # BENAR — jangan trigger --shot dari _ready()
@@ -568,13 +610,20 @@ scenarios/*
 scenarios/*/*
 shots.zoom.json
 visual-diff-ignore.json
-*scripts/ScenarioRunner.gd
-*scripts/GameStateWriter.gd
-*scripts/ErrorTracker.gd
+*ScenarioRunner.gd
+*GameStateWriter.gd
+*ErrorTracker.gd
 ```
 
-Prefix `*` pada tiga script terakhir memastikan pola cocok di semua layout folder project
-(contoh: `scripts/`, `source/scripts/`, `src/global/`).
+Pola `*ScenarioRunner.gd` (tanpa komponen direktori) cocok dengan path apa pun yang berakhiran
+nama file tersebut, terlepas dari layout folder project:
+- `scripts/ScenarioRunner.gd` — layout default
+- `source/scripts/ScenarioRunner.gd` — godot-open-rts
+- `src/global/ScenarioRunner.gd` — bread-adventure
+- `source/common/framework/ScenarioRunner.gd` — godot-tiny-mmo
+
+Pola berbasis direktori seperti `*scripts/ScenarioRunner.gd` **tidak aman** karena mensyaratkan
+direktori induk bernama persis "scripts" — layout non-standar akan lolos gate tanpa terdeteksi.
 
 **Override per kasus dengan `-ProtectedPatterns`:**
 ```powershell
@@ -590,6 +639,19 @@ lubang di project dengan layout non-standar, tambahkan pola spesifik project via
 Jika gate terpicu: laporan akan berisi `overall_status: escalation_required` dan exit code 1 —
 loop berhenti dan menunggu approval manual sebelum patch diaplikasikan.
 
+### `-PatchRef` auto-wiring dari `-PatchBranch`
+
+`-PatchRef` tidak perlu ditentukan secara eksplisit. Jika `-PatchBranch` diberikan,
+`run-and-analyze.ps1` secara otomatis menyusun `PatchRef = "master..<branch>"` untuk
+dipakai sebagai dua-ref diff di gate protected-file. Ini memastikan gate membandingkan
+patch terhadap base branch yang benar tanpa membutuhkan input tambahan dari orchestrator.
+
+Output konfirmasi di log: `Gate mode: two-ref diff (master..<branch>)`.
+
+Jika `-PatchRef` ditentukan secara eksplisit, nilai tersebut dipakai langsung (override
+auto-wiring). Jika keduanya tidak ada (non-FixLoopMode), gate memakai single-ref diff
+terhadap working tree.
+
 ### Status `overall_status`
 
 | Nilai | Kondisi |
@@ -598,3 +660,34 @@ loop berhenti dan menunggu approval manual sebelum patch diaplikasikan.
 | `run_failed` | Scenario timeout, error, atau hasil `scenario_result.json` basi (file tidak diperbarui setelah run) |
 | `issues_found` | Ada critical issue dari analisis (visual regression, dll) |
 | `escalation_required` | Gate protected-file atau scope violation — butuh approval manual |
+
+---
+
+## Known Limitations — Fix-Loop Worktree (`--import` timeout)
+
+**Pre-population `.godot/imported/` tidak menghilangkan timeout `--import` di worktree.**
+
+Fix-loop menyalin seluruh direktori `.godot/imported/` dari `ProjectPath` ke worktree sebelum
+menjalankan `--import`, dengan tujuan menghindari re-import lambat di headless run. Mekanisme
+salin berhasil (terverifikasi: 770 file tersalin untuk godot-open-rts), namun `--import` di
+worktree tetap timeout pada project yang sama.
+
+**Root cause yang paling mungkin:** `git checkout` saat provisioning worktree me-reset `mtime`
+semua file ke waktu checkout. Godot menggunakan `mtime` untuk mendeteksi apakah file source
+berubah sejak cache dibuat — karena `mtime` file sumber di worktree lebih baru dari `mtime`
+file cache yang disalin, Godot menganggap semua resource perlu di-import ulang.
+
+**Konsekuensi praktis:**
+- `--import` di worktree berjalan seperti project baru, bukan memanfaatkan cache.
+- Untuk project dengan banyak resource (audio, texture, shader), ini bisa timeout 60 detik.
+- Jika timeout terjadi, framework melanjutkan tanpa `.godot/` yang lengkap dan
+  mencatat `proses Godot dibunuh, lanjutkan tanpa .godot/` di log.
+
+**Workaround saat ini:**
+Naikkan timeout `--import` lewat parameter internal (belum diekspos sebagai parameter publik).
+Untuk project yang sangat besar, pertimbangkan menjalankan editor Godot sekali di worktree
+sebelum menjalankan fix-loop, atau tambahkan `-Timeout` yang lebih besar ke `shot-harness.ps1`.
+
+**Status:** Diketahui sejak audit 2026-07-28. Perbaikan yang tepat membutuhkan
+touch `mtime` file cache setelah disalin agar lebih baru dari file sumber di worktree,
+atau melewati `--import` sama sekali untuk project yang sudah punya full cache.

@@ -30,7 +30,7 @@ Tulis kode → Jalankan harness → AI lihat hasil → AI analisis → AI lapork
 
 ### Langkah 1 — Jalankan harness pertama kali
 
-Tidak perlu setup apapun di kode game. Harness langsung berjalan.
+Harness dapat dijalankan pada project yang belum punya kode game sama sekali.
 
 ```powershell
 & "$env:USERPROFILE\.config\kilo\tools\shot-harness.ps1" -ProjectPath "<path-ke-project-godot>"
@@ -38,6 +38,11 @@ Tidak perlu setup apapun di kode game. Harness langsung berjalan.
 
 Hasilnya: `shots-manifest.json` di ShotsDir. Fase telemetry: `prototype`.
 AI sudah bisa menjalankan `/shot` dan `/analisis-shot` setelah ini.
+
+> **Catatan:** Pada project yang benar-benar kosong (tanpa handler `--shot` dan tanpa
+> `get_tree().quit()`), Godot tidak akan exit sendiri sehingga harness akan timeout dan
+> melaporkan `HANG terdeteksi`. Ini normal — fase `prototype` hanya membuktikan harness
+> dapat menjangkau project. Lanjutkan ke Langkah 2 untuk mengaktifkan screenshot penuh.
 
 ### Langkah 2 — Implementasikan --shot handler di game (Fase Developing)
 
@@ -57,6 +62,11 @@ func _shot_tour() -> void:
 
 func _take_screenshot(name: String) -> void:
     var img = get_viewport().get_texture().get_image()
+    # Pastikan folder shots ada sebelum menyimpan.
+    # Gunakan make_dir_absolute (static, tidak butuh DirAccess yang valid) — lebih aman daripada
+    # DirAccess.open("user://").make_dir("shots") karena open() bisa kembalikan null di beberapa
+    # export target sebelum user:// ter-inisialisasi penuh.
+    DirAccess.make_dir_absolute("user://shots")
     img.save_png("user://shots/%s.png" % name)
 ```
 

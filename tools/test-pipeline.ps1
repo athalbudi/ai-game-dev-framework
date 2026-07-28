@@ -875,9 +875,12 @@ if (Test-Path -LiteralPath $raPs1Deployed) {
         $runnerPat = $pats | Where-Object { $_ -match "ScenarioRunner" }
         $writerPat = $pats | Where-Object { $_ -match "GameStateWriter" }
         $trackerPat = $pats | Where-Object { $_ -match "ErrorTracker" }
-        $allHaveWildcard = ($runnerPat -like "*\*scripts/*" -or $runnerPat -like "**scripts/*") `
-                        -and ($writerPat -like "*\*scripts/*" -or $writerPat -like "**scripts/*") `
-                        -and ($trackerPat -like "*\*scripts/*" -or $trackerPat -like "**scripts/*")
+        # Verifikasi pola menggunakan wildcard prefix (* di awal) sehingga cocok dengan
+        # layout folder non-standar. Pola saat ini: "*ScenarioRunner.gd" (broad wildcard,
+        # bukan "*scripts/ScenarioRunner.gd" yang hanya cocok satu layout).
+        $allHaveWildcard = ($runnerPat  -like "**ScenarioRunner.gd"  -or $runnerPat  -like "*\*ScenarioRunner.gd") `
+                        -and ($writerPat  -like "**GameStateWriter.gd"  -or $writerPat  -like "*\*GameStateWriter.gd") `
+                        -and ($trackerPat -like "**ErrorTracker.gd"     -or $trackerPat -like "*\*ErrorTracker.gd")
         # Verifikasi juga bahwa wildcard prefix cocok dengan path non-standar
         $nonStdPath  = "source/scripts/ScenarioRunner.gd"
         $matchesNonStd = $pats | Where-Object { $nonStdPath -like $_ }

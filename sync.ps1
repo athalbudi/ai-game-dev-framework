@@ -5,11 +5,16 @@
 
 .DESCRIPTION
     Menyalin file-file berikut dari repo ke ~/.config/kilo/:
-      - tools/*.ps1                    -> ~/.config/kilo/tools/
-      - godot-templates/*.gd           -> ~/.config/kilo/godot-templates/
-      - scenarios-templates/*.json     -> ~/.config/kilo/scenarios-templates/
-      - game-state-templates/*.gd      -> ~/.config/kilo/game-state-templates/
-      - command/*.md                   -> ~/.config/kilo/command/
+      - tools/*.ps1                            -> ~/.config/kilo/tools/
+      - godot-templates/*.gd                   -> ~/.config/kilo/godot-templates/
+      - scenarios-templates/*.json             -> ~/.config/kilo/scenarios-templates/
+      - game-state-templates/*.gd              -> ~/.config/kilo/game-state-templates/
+      - command/*.md                           -> ~/.config/kilo/command/
+      - ci-templates/**/* (recursive)          -> ~/.config/kilo/ci-templates/
+      - fix-request-template.json              -> ~/.config/kilo/fix-request-template.json
+
+    Catatan: direktori agent/ tidak di-sync karena belum ada konten di repo.
+    Jika agent/ ditambahkan ke repo di masa depan, tambahkan section sync di sini.
 
     File yang tidak ada di repo tidak dihapus dari deployed (aman untuk file lokal).
 
@@ -129,21 +134,15 @@ foreach ($f in $cmdFiles) {
 }
 
 # -- Sync ci-templates/* -------------------------------------------------------
+# Gunakan -Recurse karena file CI berada di subdirektori (ci-templates/.github/workflows/*.yml)
 Write-Host "[sync] ci-templates/" -ForegroundColor DarkGray
 $ciSrc = Join-Path $repoRoot "ci-templates"
 $ciDst = Join-Path $kiloConfig "ci-templates"
-$ciFiles = @(Get-ChildItem -LiteralPath $ciSrc -File -ErrorAction SilentlyContinue)
+$ciFiles = @(Get-ChildItem -LiteralPath $ciSrc -File -Recurse -ErrorAction SilentlyContinue)
 foreach ($f in $ciFiles) {
-    Sync-File $f.FullName (Join-Path $ciDst $f.Name)
-}
-
-# -- Sync agent/* --------------------------------------------------------------
-Write-Host "[sync] agent/" -ForegroundColor DarkGray
-$agentSrc = Join-Path $repoRoot "agent"
-$agentDst = Join-Path $kiloConfig "agent"
-$agentFiles = @(Get-ChildItem -LiteralPath $agentSrc -File -ErrorAction SilentlyContinue)
-foreach ($f in $agentFiles) {
-    Sync-File $f.FullName (Join-Path $agentDst $f.Name)
+    # Pertahankan struktur subdirektori relatif terhadap ciSrc
+    $relPath = $f.FullName.Substring($ciSrc.Length).TrimStart('\', '/')
+    Sync-File $f.FullName (Join-Path $ciDst $relPath)
 }
 
 # -- Sync ke vendored scripts di game project (opsional) -----------------------
