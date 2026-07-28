@@ -1,41 +1,34 @@
-## Handoff — 2026-07-28
+## Handoff — 2026-07-29
 
-Commit terakhir: `c95f27c` -- fix: sync audit fixes + TEST 12 assertion update + vendored re-sync 4/4
+Commit terakhir: `1f35e73` -- test: fix TEST 12 assertion -- genuinely fail-against-unfixed
 
 Status: tree bersih, repo ↔ deployed sinkron
 
 ### Selesai di sesi ini
 
-Eksekusi rekomendasi auditor secara penuh:
+Dua sesi berturut-turut menyelesaikan semua poin dari laporan auditor:
 
-1. **Sync ke deployed** — `sync.ps1` dijalankan, 38 file ter-copy ke `~/.config/kilo`.
-   Semua fixes dari sesi koreksi sebelumnya (gate wildcard, crash autonomous-qa.ps1,
-   exit 0, resolver joy/mouse button, input_methods.json) kini operasional di deployed.
+**Sesi pertama (commit c95f27c):**
+- Sync 38 file ke `~/.config/kilo` — gate wildcard, crash fix autonomous-qa, exit 0,
+  resolver joy/mouse button, input_methods.json kini operasional di deployed
+- Re-sync ScenarioRunner.gd ke 4 game validasi (godot-open-rts, jimat, bread-adventure,
+  godot-tiny-mmo) — TEST 19 drift tertutup
+- TEST 12 assertion diupdate (tapi masih cacat — lihat sesi kedua)
 
-2. **Re-sync ScenarioRunner.gd ke semua 4 game validasi** — godot-open-rts, jimat,
-   bread-adventure, godot-tiny-mmo semuanya sudah di-sync dari `godot-templates/ScenarioRunner.gd`.
-   TEST 19 drift menutup.
+**Sesi kedua (commit 1f35e73):**
+- Auditor membuktikan TEST 12 assertion pertama masih vacuous: `**X` di PowerShell identik
+  dengan `*X`, dan `$nonStdPath = "source/scripts/..."` sudah cocok dengan pola lama yang
+  rusak sekalipun — tidak pernah genuinely fail-against-unfixed.
+- Assertion diganti dengan dua layout yang TERBUKTI gagal di pola lama:
+  - `src/global/ScenarioRunner.gd` (bread-adventure)
+  - `source/common/framework/ScenarioRunner.gd` (godot-tiny-mmo)
+- Diverifikasi secara eksplisit:
+  - OLD `*scripts/ScenarioRunner.gd` → breadMatch=0 mmoMatch=0 PASS=False ✓
+  - NEW `*ScenarioRunner.gd`         → breadMatch=1 mmoMatch=1 PASS=True  ✓
 
-3. **TEST 12 Fix A assertion diupdate** — assertion `$allHaveWildcard` di `test-pipeline.ps1`
-   menggunakan pola lama `*\*scripts/*` yang tidak cocok dengan pola baru `*ScenarioRunner.gd`.
-   Difix agar cek `**ScenarioRunner.gd` dan `*\*ScenarioRunner.gd` (demikian juga untuk
-   GameStateWriter dan ErrorTracker). `nonStdMatch=1` sudah benar sebelumnya — yang gagal
-   hanya format assertion.
+**Self-test: 24/24 PASS** terverifikasi commit `1f35e73`.
 
-**Self-test: 24/24 PASS** terverifikasi commit `c95f27c`.
-
-### Isi commit c95f27c
-
-- `godot-templates/ScenarioRunner.gd` — `_resolve_joy_button` (21 nama) + `_resolve_mouse_button` (9 nama)
-- `tools/run-and-analyze.ps1` — gate wildcard `*ScenarioRunner.gd` layout-agnostic + `exit 0` eksplisit
-- `tools/autonomous-qa.ps1` — crash fix PropertyNotFoundException
-- `tools/test-pipeline.ps1` — TEST 12 assertion update
-- `sync.ps1` — komentar pola wildcard diupdate
-- `scenarios-templates/input_methods.json` — file baru (template 6 step type baru)
-- `FRAMEWORK.md` — seksi mekanisme internal (self-locating path, sRGB fix)
-- `QUICKSTART.md` — catatan HANG normal di prototype, DirAccess.make_dir_absolute
-
-### Outstanding (prioritas rendah, tidak berubah dari sesi sebelumnya)
+### Outstanding (prioritas rendah, tidak berubah)
 
 - Enam step type scenario (`assert_fps`, `assert_screenshot_exists`, `controller_press`,
   `mouse_click`, `touch_tap`, `wait_signal`) — `input_methods.json` sudah ada sebagai template,
@@ -50,9 +43,16 @@ Lokasi default: `C:\Users\Athallah Budiman\Documents\games\`
 Game paths: `godot-open-rts/source/scripts/`, `godot-tiny-mmo/source/common/framework/`,
 `bread-adventure/src/global/`, `jimat/scripts/`
 
+### Aturan regression test (dari AGENTS.md — diperkuat oleh sesi ini)
+
+Test baru harus diobservasi GAGAL terhadap kode yang belum diperbaiki sebelum dianggap valid.
+Sesi ini membuktikan dua kali bahwa angka hijau naik tanpa membuktikan apa-apa (TEST 12 v1
+dan v2 — keduanya PASS tapi v1 tidak bermakna). Verifikasi dengan pola lama/stripped wajib
+dilakukan sebelum commit.
+
 ### Catatan setelah update template framework
 
 Setiap kali ada fix di `godot-templates/`, jalankan:
 1. `sync.ps1` — deploy ke `~/.config/kilo`
-2. Copy manual ScenarioRunner.gd ke 4 game validasi (atau jalankan re-sync script)
+2. Copy ScenarioRunner.gd ke 4 game validasi
 3. Self-test `24/24 PASS` sebelum commit
