@@ -39,7 +39,7 @@ Dua sesi berturut-turut menyelesaikan semua poin dari laporan auditor:
 ### Catatan penting: TEST 19 adalah syarat tegas
 
 TEST 19 FAIL di mesin tanpa keempat game validasi kecuali `KILO_GAMES_DIR` di-set.
-Lokasi default: `C:\Users\Athallah Budiman\Documents\games\`
+Lokasi default: `%USERPROFILE%\Documents\games\` (override dengan env `KILO_GAMES_DIR`)
 Game paths: `godot-open-rts/source/scripts/`, `godot-tiny-mmo/source/common/framework/`,
 `bread-adventure/src/global/`, `jimat/scripts/`
 

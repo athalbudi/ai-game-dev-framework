@@ -661,9 +661,15 @@ Write-S
 # 3. Remove-FixLoopWorktree membersihkan dengan benar
 # Menggunakan repo framework itu sendiri sebagai target (selalu ada .git)
 Write-T "TEST 9: Invoke-FixLoopWorktree -- worktree provisioning (Tahap 2)"
-if ($GodotExe -ne "" -and (Test-Path -LiteralPath "C:\Users\Athallah Budiman\Documents\ai-game-dev-framework\.git")) {
+# Repo diturunkan dari lokasi script ini (tools/ -> root repo), BUKAN path absolut.
+# Path absolut milik satu mesin membuat test ini diam-diam ter-skip di mesin lain --
+# dan ikut membocorkan struktur direktori maintainer ke repo publik.
+$repoRootSelf = ""
+$resolvedSelf = Resolve-Path (Join-Path $PSScriptRoot "..") -ErrorAction SilentlyContinue
+if ($resolvedSelf) { $repoRootSelf = $resolvedSelf.Path }
+if ($GodotExe -ne "" -and $repoRootSelf -ne "" -and (Test-Path -LiteralPath (Join-Path $repoRootSelf ".git"))) {
     $runAnalyzePs1 = Join-Path $env:USERPROFILE ".config\kilo\tools\run-and-analyze.ps1"
-    $testRepoPath  = "C:\Users\Athallah Budiman\Documents\ai-game-dev-framework"
+    $testRepoPath  = $repoRootSelf
     $testBranch    = "test-worktree-pipeline-$(Get-Date -Format 'yyyyMMddHHmmss')"
     $testBase      = Join-Path $env:TEMP "kilo-worktree-test"
     $null = New-Item -ItemType Directory -Path $testBase -Force
@@ -710,9 +716,9 @@ Write-S
 # mengarahkan SEMUA fase (INIT, OBSERVE, RUN, ANALYZE) ke worktree, bukan ProjectPath asli.
 # Ini adalah integration test yang menangkap bug "variabel dihitung tapi tidak dipakai".
 Write-T "TEST 10: -FixLoopMode integration -- INIT menunjukkan worktree path"
-if ($GodotExe -ne "" -and (Test-Path -LiteralPath "C:\Users\Athallah Budiman\Documents\ai-game-dev-framework\.git")) {
+if ($GodotExe -ne "" -and $repoRootSelf -ne "" -and (Test-Path -LiteralPath (Join-Path $repoRootSelf ".git"))) {
     $runAnalyzePs1Deployed = Join-Path $env:USERPROFILE ".config\kilo\tools\run-and-analyze.ps1"
-    $intTestRepoPath = "C:\Users\Athallah Budiman\Documents\ai-game-dev-framework"
+    $intTestRepoPath = $repoRootSelf
     $intTestBranch   = "test-fixloop-integration-$(Get-Date -Format 'HHmmss')"
     $intTestBase     = Join-Path $env:TEMP "kilo-fixloop-integration"
     $null = New-Item -ItemType Directory -Path $intTestBase -Force
@@ -1271,10 +1277,13 @@ Write-S
 # SKIP (dihitung FAIL) jika direktori games tidak ditemukan -- BUKAN PASS.
 Write-T "TEST 19: drift detection -- vendored templates di game validasi"
 $fwTemplatesDir = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+# Tanpa KILO_GAMES_DIR, coba lokasi konvensional relatif terhadap home pengguna yang
+# sedang menjalankan test. Tidak ada path absolut milik satu mesin di sini -- kalau
+# tidak ketemu, TEST 19 melapor SKIP-sebagai-FAIL (lihat catatan di bawah).
 $gamesBaseDir   = if ($env:KILO_GAMES_DIR -and (Test-Path -LiteralPath $env:KILO_GAMES_DIR)) {
                       $env:KILO_GAMES_DIR
                   } else {
-                      "C:\Users\Athallah Budiman\Documents\games"
+                      Join-Path $env:USERPROFILE "Documents\games"
                   }
 $vendorTemplates = @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")
 $gameVendorPaths = @{
