@@ -899,16 +899,44 @@ Write-S
 # Verifikasi bahwa $phase3Status "stale_result" di-set ketika scenario_result.json
 # tidak diperbarui setelah run (mtime < ts_run). Test ini GAGAL terhadap build lama
 # yang membaca hasil tanpa membandingkan mtime.
+# Fixture project Godot minimal yang VALID -- punya run/main_scene.
+#
+# Fase RUN meluncurkan Godot tanpa --headless (disengaja: scenario butuh render untuk
+# screenshot). Project tanpa run/main_scene membuat Godot memunculkan dialog modal
+# "Can't run project: no main scene defined" di layar pengguna yang menjalankan suite.
+#
+# Catatan akurat soal apa yang fixture ini perbaiki dan tidak:
+#   diperbaiki      -- dialog modal tidak lagi muncul, karena project-nya valid
+#   TIDAK berubah   -- Godot tetap dihentikan oleh -Timeout 1 saat startup; main.gd
+#                      kemungkinan besar belum sempat jalan. Itu memang disengaja:
+#                      TEST 14 justru menguji jalur timeout, dan menaikkan timeout
+#                      hanya memperlambat suite tanpa menguji apa pun yang baru.
+function New-GodotQuitFixture {
+    param([string]$Dir, [string]$ProjectName)
+    $noBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText((Join-Path $Dir "project.godot"),
+        "config_version=5`n`n[application]`nconfig/name=`"$ProjectName`"`nrun/main_scene=`"res://main.tscn`"`n",
+        $noBom)
+    [System.IO.File]::WriteAllText((Join-Path $Dir "main.gd"),
+        "extends Node`n`nfunc _ready() -> void:`n`tget_tree().quit()`n",
+        $noBom)
+    [System.IO.File]::WriteAllText((Join-Path $Dir "main.tscn"),
+        "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n",
+        $noBom)
+}
+
 Write-T "TEST 13: Fix B -- guard stale scenario_result.json"
 if (Test-Path -LiteralPath $raPs1Deployed) {
     $t13Dir = Join-Path $env:TEMP "kilo_t13_$(Get-Date -Format 'HHmmss')"
     try {
         $null = New-Item -ItemType Directory -Path $t13Dir -Force
-        # project.godot minimal agar fase RUN aktif (tanpa main scene -- Godot exit cepat)
-        [System.IO.File]::WriteAllText(
-            "$t13Dir\project.godot",
-            "[application]`nconfig/name=`"T13`"`n",
-            [System.Text.Encoding]::UTF8)
+        # Fixture WAJIB punya main scene. Tanpa run/main_scene, Godot tidak "exit cepat"
+        # seperti dugaan versi sebelumnya -- ia memunculkan dialog modal "no main scene
+        # defined" di layar pengguna dan menggantung sampai timeout. Itu mengotori sesi
+        # siapa pun yang menjalankan suite, dan membuat test lulus lewat timeout, bukan
+        # lewat jalur yang sebenarnya diuji.
+        # Main scene di sini langsung quit di _ready(), jadi Godot keluar bersih dan cepat.
+        New-GodotQuitFixture -Dir $t13Dir -ProjectName "T13"
 
         # ShotsDir standar Godot untuk project "T13"
         $t13ShotsDir = "$env:APPDATA\Godot\app_userdata\T13\shots"
@@ -958,8 +986,11 @@ if (Test-Path -LiteralPath $raPs1Deployed) {
     $t14Dir = Join-Path $env:TEMP "kilo_t14_$(Get-Date -Format 'HHmmss')"
     try {
         $null = New-Item -ItemType Directory -Path $t14Dir -Force
-        # Tulis project.godot minimal agar fase RUN aktif
-        Set-Content (Join-Path $t14Dir "project.godot") '[application]`nconfig/name="T14"' -Encoding UTF8
+        # Versi sebelumnya memakai kutip TUNGGAL, sehingga `n tertulis harfiah dan
+        # project.godot jadi satu baris rusak -- test tetap lulus, tapi karena kebetulan.
+        # Sama seperti TEST 13, fixture butuh main scene agar Godot tidak memunculkan
+        # dialog modal dan menggantung.
+        New-GodotQuitFixture -Dir $t14Dir -ProjectName "T14"
         $reportPath = Join-Path $t14Dir "report.json"
         $savedEAP14 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
         # -Timeout 1 memastikan scenario timeout sebelum menghasilkan hasil baru
