@@ -40,6 +40,30 @@ Ini mendeteksi Godot/ImageMagick, menyalin `tools/`, `godot-templates/`, dan tem
 ke `~/.config/kilo`, lalu memverifikasi hasilnya. Cukup dijalankan sekali per mesin --
 jalankan ulang kapan saja repo ini di-update untuk sync ulang.
 
+> **Opsional — agar framework dikenali dari project game manapun:**
+>
+> ```powershell
+> & ".\setup.ps1" -InstallAgentRules
+> ```
+>
+> Tanpa ini, AI agent hanya mengenali framework saat bekerja di dalam repo framework.
+> Dengan ini, agent juga mengenalinya saat Anda membuka project game Anda sendiri.
+>
+> Flag ini **opt-in** karena menulis ke direktori config pribadi Anda. Yang disentuh
+> (hanya yang direktorinya sudah ada):
+>
+> | File | Cara |
+> |---|---|
+> | `~/.kilocode/rules/gamedev-framework.md` | file terpisah |
+> | `~/.claude/CLAUDE.md` | blok bertanda `BEGIN`/`END` |
+>
+> Isi di luar penanda tidak pernah disentuh, dan menjalankan ulang bersifat idempoten
+> (tidak menumpuk blok). Cabut kapan saja:
+>
+> ```powershell
+> & ".\setup.ps1" -UninstallAgentRules
+> ```
+
 ### Langkah 1 — Jalankan harness pertama kali
 
 Harness dapat dijalankan pada project yang belum punya kode game sama sekali.

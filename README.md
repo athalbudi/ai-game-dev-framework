@@ -82,6 +82,15 @@ Tempatkan di `.kilo/command/` di project game:
 Mendeteksi Godot/ImageMagick dan menyalin `tools/`, `godot-templates/`, dan template lain
 ke `~/.config/kilo`. Lihat `QUICKSTART.md` untuk detail lengkap.
 
+Opsional, agar framework dikenali dari project game manapun (bukan hanya dari repo ini):
+
+```powershell
+& ".\setup.ps1" -InstallAgentRules
+```
+
+Opt-in karena menulis ke `~/.kilocode/rules/` dan `~/.claude/CLAUDE.md` — memakai blok
+bertanda, idempoten, dan bisa dicabut dengan `-UninstallAgentRules`.
+
 ### 1. Setup screenshot harness (Godot)
 
 ```gdscript
