@@ -1534,6 +1534,160 @@ exit 0
 }
 Write-S
 
+# ── TEST 25: -InstallAgentRules -- idempoten, non-invasif, bisa dicabut ──────────
+# Empat invariant, semuanya behavioral:
+#   (a) tanpa flag  -> config agent TIDAK disentuh sama sekali (opt-in benar opt-in)
+#   (b) install     -> file Kilo dibuat, blok bertanda masuk ke CLAUDE.md
+#   (c) idempoten   -> install 2x menghasilkan file IDENTIK (hash sama, BEGIN tetap 1)
+#   (d) uninstall   -> jejak kita hilang, teks pengguna di luar penanda tetap utuh
+#
+# (c) dan (d) yang membuat test ini bernilai -- keduanya GAGAL terhadap implementasi naif:
+# append tanpa penanda menghasilkan blok ganda di run kedua, dan tulis-timpa akan
+# menghancurkan catatan pribadi pengguna di CLAUDE.md.
+#
+# $env:USERPROFILE di-override ke temp, jadi ~/.kilocode dan ~/.claude milik user
+# yang menjalankan test ini TIDAK PERNAH tersentuh.
+Write-T "TEST 25: -InstallAgentRules idempoten, non-invasif, dan bisa dicabut"
+if ($setupSrc -eq "" -or -not (Test-Path -LiteralPath $setupSrc)) {
+    Add-Result "aturan agent global: install/idempoten/uninstall" $false "setup.ps1 tidak ditemukan (test ini hanya jalan dari repo)"
+} else {
+    $t25Home  = Join-Path $env:TEMP "kilo_t25_$(Get-Date -Format 'HHmmss')"
+    $origUP25 = $env:USERPROFILE
+    $userText = "# Catatan pribadi pengguna`n`nBaris ini tidak boleh hilang."
+    try {
+        $null = New-Item -ItemType Directory -Path (Join-Path $t25Home ".kilocode\rules") -Force
+        $null = New-Item -ItemType Directory -Path (Join-Path $t25Home ".claude") -Force
+        $claudeMd  = Join-Path $t25Home ".claude\CLAUDE.md"
+        $kiloRule  = Join-Path $t25Home ".kilocode\rules\gamedev-framework.md"
+        Set-Content -LiteralPath $claudeMd -Value $userText -Encoding UTF8
+
+        $env:USERPROFILE = $t25Home
+
+        # (a) tanpa flag -- tidak boleh menyentuh apa pun
+        & $setupSrc -SkipHealthCheck *>&1 | Out-Null
+        $untouched = (-not (Test-Path -LiteralPath $kiloRule)) -and
+                     ((Get-Content -LiteralPath $claudeMd -Raw) -notmatch "ai-game-dev-framework")
+
+        # (b) install
+        & $setupSrc -InstallAgentRules -SkipHealthCheck *>&1 | Out-Null
+        # Cek ISI, bukan cuma keberadaan: bug yang menulis file kosong lolos dari Test-Path.
+        $installedKilo = (Test-Path -LiteralPath $kiloRule) -and
+                         ((Get-Content -LiteralPath $kiloRule -Raw) -match "project\.godot")
+        $hash1  = (Get-FileHash -LiteralPath $claudeMd -Algorithm MD5).Hash
+        $begin1 = ([regex]::Matches((Get-Content -LiteralPath $claudeMd -Raw), 'BEGIN ai-game-dev-framework')).Count
+
+        # (c) install lagi -- harus identik
+        & $setupSrc -InstallAgentRules -SkipHealthCheck *>&1 | Out-Null
+        $hash2  = (Get-FileHash -LiteralPath $claudeMd -Algorithm MD5).Hash
+        $begin2 = ([regex]::Matches((Get-Content -LiteralPath $claudeMd -Raw), 'BEGIN ai-game-dev-framework')).Count
+        $idempotent = ($hash1 -eq $hash2) -and ($begin1 -eq 1) -and ($begin2 -eq 1)
+
+        # (d) uninstall -- jejak hilang, teks pengguna utuh
+        & $setupSrc -UninstallAgentRules *>&1 | Out-Null
+        $afterText     = (Get-Content -LiteralPath $claudeMd -Raw)
+        $kiloGone      = -not (Test-Path -LiteralPath $kiloRule)
+        $blockGone     = $afterText -notmatch "ai-game-dev-framework"
+        $userTextKept  = $afterText -match "Baris ini tidak boleh hilang"
+
+        Add-Result "aturan agent global: install/idempoten/uninstall" `
+            ($untouched -and $installedKilo -and $idempotent -and $kiloGone -and $blockGone -and $userTextKept) `
+            ("tanpa_flag_bersih=$untouched install_kilo=$installedKilo idempoten=$idempotent " +
+             "(BEGIN $begin1->$begin2, hash_sama=$($hash1 -eq $hash2)) " +
+             "uninstall_kilo=$kiloGone blok_hilang=$blockGone teks_user_utuh=$userTextKept")
+    } catch {
+        Add-Result "aturan agent global: install/idempoten/uninstall" $false ("Exception: " + $_)
+    } finally {
+        $env:USERPROFILE = $origUP25
+        Remove-Item -LiteralPath $t25Home -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
+# ── TEST 26: -InstallAgentRules pada konfigurasi 0 dan 1 agent ───────────────────
+# TEST 25 hanya menguji mesin yang punya KEDUA agent. Itu melewatkan bug nyata: di PS 5.1
+# array yang di-return fungsi ter-unroll -- 0 elemen jadi $null, 1 elemen jadi objek tunggal --
+# sehingga .Count melempar PropertyNotFoundException. Konfigurasi satu-agent justru yang
+# paling umum di dunia nyata, jadi harus diuji eksplisit.
+Write-T "TEST 26: -InstallAgentRules tidak crash pada konfigurasi 0/1 agent"
+if ($setupSrc -eq "" -or -not (Test-Path -LiteralPath $setupSrc)) {
+    Add-Result "aturan agent: konfigurasi 0/1 agent" $false "setup.ps1 tidak ditemukan"
+} else {
+    $origUP26 = $env:USERPROFILE
+    $probs26  = @()
+    try {
+        foreach ($cfg in @("none", "kilo-only", "claude-only")) {
+            $h26 = Join-Path $env:TEMP "kilo_t26_${cfg}_$(Get-Date -Format 'HHmmssfff')"
+            $null = New-Item -ItemType Directory -Path $h26 -Force
+            if ($cfg -eq "kilo-only")   { $null = New-Item -ItemType Directory -Path (Join-Path $h26 ".kilocode\rules") -Force }
+            if ($cfg -eq "claude-only") { $null = New-Item -ItemType Directory -Path (Join-Path $h26 ".claude") -Force }
+            try {
+                $env:USERPROFILE = $h26
+                $out26 = & $setupSrc -InstallAgentRules -SkipHealthCheck *>&1 | Out-String
+                $ec26  = $LASTEXITCODE
+            } finally { $env:USERPROFILE = $origUP26 }
+
+            if ($out26 -match "cannot be found") { $probs26 += "$cfg=CRASH" }
+            if ($ec26 -ne 0)                      { $probs26 += "$cfg=exit$ec26" }
+            # Klaim sukses palsu: tanpa agent terdeteksi, jangan bilang "terpasang"
+            if ($cfg -eq "none" -and ($out26 -match "file aturan diperbarui")) { $probs26 += "none=klaim-sukses-palsu" }
+            if ($cfg -eq "kilo-only" -and -not (Test-Path -LiteralPath (Join-Path $h26 ".kilocode\rules\gamedev-framework.md"))) {
+                $probs26 += "kilo-only=tidak-terpasang"
+            }
+            if ($cfg -eq "claude-only" -and -not (Test-Path -LiteralPath (Join-Path $h26 ".claude\CLAUDE.md"))) {
+                $probs26 += "claude-only=tidak-terpasang"
+            }
+            Remove-Item -LiteralPath $h26 -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Add-Result "aturan agent: konfigurasi 0/1 agent" ($probs26.Count -eq 0) `
+            $(if ($probs26.Count -eq 0) { "none/kilo-only/claude-only semua bersih" } else { ($probs26 -join ", ") })
+    } catch {
+        Add-Result "aturan agent: konfigurasi 0/1 agent" $false ("Exception: " + $_)
+    } finally {
+        $env:USERPROFILE = $origUP26
+    }
+}
+Write-S
+
+# ── TEST 27: penanda BEGIN/END rusak harus DITOLAK, bukan ditebak ────────────────
+# Kalau END hilang (mis. pengguna edit manual), memasangkan BEGIN pertama dengan END milik
+# blok lain akan melahap teks di antaranya. Terbukti menghapus catatan pengguna secara diam-diam
+# pada implementasi yang tidak memvalidasi penanda.
+Write-T "TEST 27: penanda BEGIN/END tidak berpasangan ditolak tanpa mengubah file"
+if ($setupSrc -eq "" -or -not (Test-Path -LiteralPath $setupSrc)) {
+    Add-Result "aturan agent: penanda rusak ditolak" $false "setup.ps1 tidak ditemukan"
+} else {
+    $h27      = Join-Path $env:TEMP "kilo_t27_$(Get-Date -Format 'HHmmss')"
+    $origUP27 = $env:USERPROFILE
+    try {
+        $null = New-Item -ItemType Directory -Path (Join-Path $h27 ".claude") -Force
+        $cm27 = Join-Path $h27 ".claude\CLAUDE.md"
+        # BEGIN yatim tanpa END, dengan teks pengguna SESUDAHNYA -- itu yang berisiko dilahap
+        $orphan = "# Catatan A`n`n<!-- BEGIN ai-game-dev-framework (dikelola setup.ps1 -- jangan edit manual) -->`n`n# Catatan B yang tidak boleh hilang"
+        Set-Content -LiteralPath $cm27 -Value $orphan -Encoding UTF8
+        $hashBefore = (Get-FileHash -LiteralPath $cm27 -Algorithm MD5).Hash
+
+        try {
+            $env:USERPROFILE = $h27
+            & $setupSrc -InstallAgentRules -SkipHealthCheck *>&1 | Out-Null
+            $ec27a = $LASTEXITCODE
+            & $setupSrc -InstallAgentRules -SkipHealthCheck *>&1 | Out-Null
+        } finally { $env:USERPROFILE = $origUP27 }
+
+        $hashAfter = (Get-FileHash -LiteralPath $cm27 -Algorithm MD5).Hash
+        $textKept  = (Get-Content -LiteralPath $cm27 -Raw) -match "Catatan B yang tidak boleh hilang"
+
+        Add-Result "aturan agent: penanda rusak ditolak" `
+            (($ec27a -eq 1) -and ($hashBefore -eq $hashAfter) -and $textKept) `
+            "exit=$ec27a (harus 1) file_utuh=$($hashBefore -eq $hashAfter) teks_user_utuh=$textKept"
+    } catch {
+        Add-Result "aturan agent: penanda rusak ditolak" $false ("Exception: " + $_)
+    } finally {
+        $env:USERPROFILE = $origUP27
+        Remove-Item -LiteralPath $h27 -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
