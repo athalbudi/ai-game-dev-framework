@@ -75,3 +75,76 @@ function Resolve-ImageMagick {
 
     return ""
 }
+
+# Memetakan user:// milik project Godot ke path nyata di disk.
+#
+# Nama folder TIDAK boleh ditebak dari nama direktori project -- Godot memakai
+# config/name dari project.godot, dan itu sering berbeda jauh. Contoh nyata dari
+# game validasi: direktori "godot-open-rts" -> config/name "Open RTS", direktori
+# "bread-adventure" -> "Bread Adventure Open". Menebak dari nama folder hanya
+# kebetulan benar kalau keduanya sama.
+#
+# Dua bentuk lokasi:
+#   config/use_custom_user_dir=true  -> %APPDATA%\<custom_user_dir_name>\shots
+#   selain itu                       -> %APPDATA%\Godot\app_userdata\<config/name>\shots
+#
+# Mengembalikan hashtable supaya pemanggil yang ingin memberi tahu user (mis.
+# "custom user dir terdeteksi") tidak perlu membaca ulang project.godot sendiri.
+function Get-GodotUserDirInfo {
+    param([string] $ProjectPath)
+
+    $info = [ordered]@{
+        ProjectName   = ""
+        UsesCustomDir = $false
+        CustomDirName = ""
+        SafeName      = ""
+        Sanitized     = $false
+        ShotsDir      = ""
+    }
+
+    $projectGodot = Join-Path $ProjectPath "project.godot"
+    if (Test-Path -LiteralPath $projectGodot) {
+        try {
+            $content = Get-Content -LiteralPath $projectGodot -Raw
+            if ($content -match 'config/name="([^"]+)"') {
+                $info.ProjectName   = $Matches[1]
+                $info.UsesCustomDir = [bool]($content -match 'config/use_custom_user_dir=true')
+                if ($info.UsesCustomDir -and $content -match 'config/custom_user_dir_name="([^"]+)"') {
+                    $info.CustomDirName = $Matches[1]
+                }
+
+                if ($info.UsesCustomDir -and $info.CustomDirName -ne "") {
+                    $rawName    = $info.CustomDirName
+                    $safe       = $rawName -replace '[\\/:*?"<>|]', '_'
+                    $candidates = @("$env:APPDATA\$safe\shots")
+                } else {
+                    $rawName    = $info.ProjectName
+                    $safe       = $rawName -replace '[\\/:*?"<>|]', '_'
+                    # Varian huruf kecil 'godot' ikut dicek: sebagian instalasi/OS
+                    # menghasilkan casing berbeda untuk direktori ini.
+                    $candidates = @(
+                        "$env:APPDATA\Godot\app_userdata\$safe\shots",
+                        "$env:APPDATA\godot\app_userdata\$safe\shots"
+                    )
+                }
+                $info.SafeName  = $safe
+                $info.Sanitized = ($safe -ne $rawName)
+
+                foreach ($c in $candidates) {
+                    if (Test-Path -LiteralPath $c) { $info.ShotsDir = $c; break }
+                }
+                if ($info.ShotsDir -eq "") { $info.ShotsDir = $candidates[0] }
+            }
+        } catch { }
+    }
+
+    # Tanpa project.godot yang bisa dibaca (atau tanpa config/name), jatuh ke
+    # <ProjectPath>\shots -- project non-Godot atau layout kustom.
+    if ($info.ShotsDir -eq "") { $info.ShotsDir = Join-Path $ProjectPath "shots" }
+    return $info
+}
+
+function Resolve-GodotShotsDir {
+    param([string] $ProjectPath)
+    return (Get-GodotUserDirInfo -ProjectPath $ProjectPath).ShotsDir
+}

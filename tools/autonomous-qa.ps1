@@ -99,42 +99,10 @@ function Write-Info  { param($msg) Write-Host "[aq]      $msg" -ForegroundColor 
 function Write-Sep   {
     Write-Host "[aq] ─────────────────────────────────────────────" -ForegroundColor DarkGray }
 
-# Resolve ShotsDir dari project.godot -- mendukung custom_user_dir_name.
-# Diekspor sebagai fungsi agar bisa diuji via dot-source tanpa menjalankan loop penuh.
-function Resolve-GodotShotsDir {
-    param([string] $ProjectPath)
-    $shotsDir     = ""
-    $projectGodot = Join-Path $ProjectPath "project.godot"
-    if (Test-Path -LiteralPath $projectGodot) {
-        try {
-            $content = Get-Content -LiteralPath $projectGodot -Raw
-            if ($content -match 'config/name="([^"]+)"') {
-                $appName = $Matches[1]
-                $useCustomDir  = $content -match 'config/use_custom_user_dir=true'
-                $customDirName = ""
-                if ($useCustomDir -and $content -match 'config/custom_user_dir_name="([^"]+)"') {
-                    $customDirName = $Matches[1]
-                }
-                if ($useCustomDir -and $customDirName -ne "") {
-                    $safeName   = $customDirName -replace '[\\/:*?"<>|]', '_'
-                    $candidates = @("$env:APPDATA\$safeName\shots")
-                } else {
-                    $safeName   = $appName -replace '[\\/:*?"<>|]', '_'
-                    $candidates = @(
-                        "$env:APPDATA\Godot\app_userdata\$safeName\shots",
-                        "$env:APPDATA\godot\app_userdata\$safeName\shots"
-                    )
-                }
-                foreach ($c in $candidates) {
-                    if (Test-Path -LiteralPath $c) { $shotsDir = $c; break }
-                }
-                if ($shotsDir -eq "") { $shotsDir = $candidates[0] }
-            }
-        } catch { }
-    }
-    if ($shotsDir -eq "") { $shotsDir = Join-Path $ProjectPath "shots" }
-    return $shotsDir
-}
+# Resolve-GodotShotsDir kini berada di _common.ps1 (di-dot-source di atas) supaya
+# semua tool memakai pemetaan user:// yang sama. Sebelumnya logika ini diduplikasi di
+# empat tempat dan salah satunya (feedback-bridge.ps1) menebak nama folder dari nama
+# direktori project -- hanya benar kalau kebetulan sama dengan config/name.
 
 # ── 1. Resolve ProjectPath ─────────────────────────────────────────────────────
 if ($ProjectPath -eq "") { $ProjectPath = (Get-Location).Path }

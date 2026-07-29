@@ -24,6 +24,14 @@ param(
 Set-StrictMode -Off
 $ErrorActionPreference = "Stop"
 
+$commonPs1 = Join-Path $PSScriptRoot "_common.ps1"
+if (-not (Test-Path -LiteralPath $commonPs1)) {
+    Write-Host "[bridge] FAIL _common.ps1 tidak ditemukan di $PSScriptRoot" -ForegroundColor Red
+    Write-Host "[bridge]      Instalasi tidak lengkap. Jalankan setup.ps1 dari root repo framework." -ForegroundColor Red
+    exit 1
+}
+. $commonPs1
+
 function Write-Bridge { param($msg) Write-Host "[bridge] $msg" -ForegroundColor Cyan }
 function Write-Hit    { param($msg) Write-Host "  + $msg" -ForegroundColor Green }
 function Write-Gap    { param($msg) Write-Host "  ! $msg" -ForegroundColor Yellow }
@@ -94,8 +102,11 @@ if ($index.PSObject.Properties.Name -contains "shots_dir" -and $index.shots_dir 
 if ($shotsDir -eq "") {
     $manifestPath = Join-Path $ProjectPath "shots-manifest.json"
     if (-not (Test-Path $manifestPath)) {
-        $projectName = (Split-Path $ProjectPath -Leaf).ToUpper()
-        $godotShots  = "$env:APPDATA\Godot\app_userdata\$projectName\shots"
+        # Dulu: (Split-Path $ProjectPath -Leaf).ToUpper() -- menebak nama folder user://
+        # dari nama direktori project. Itu hanya benar kalau keduanya kebetulan sama;
+        # dari 4 game validasi hanya 1 yang cocok, dan project dengan
+        # use_custom_user_dir=true tidak pernah ketemu sama sekali.
+        $godotShots = Resolve-GodotShotsDir -ProjectPath $ProjectPath
         if (Test-Path "$godotShots\shots-manifest.json") {
             $manifestPath = "$godotShots\shots-manifest.json"
         }
@@ -111,8 +122,7 @@ if ($shotsDir -eq "") {
     }
 }
 if ($shotsDir -eq "") {
-    $projectName = (Split-Path $ProjectPath -Leaf).ToUpper()
-    $fallback    = "$env:APPDATA\Godot\app_userdata\$projectName\shots"
+    $fallback = Resolve-GodotShotsDir -ProjectPath $ProjectPath
     if (Test-Path $fallback) {
         $shotsDir = $fallback
         Write-Bridge ("ShotsDir: " + $shotsDir + " (fallback)")
