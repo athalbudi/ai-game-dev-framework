@@ -1767,6 +1767,55 @@ exit 1
 }
 Write-S
 
+# ── TEST 30: pemetaan user:// memakai config/name, BUKAN nama direktori ──────────
+# Nama folder user:// milik Godot berasal dari config/name di project.godot, dan itu
+# sering berbeda jauh dari nama direktori project. Contoh nyata dari game validasi:
+# direktori "godot-open-rts" -> config/name "Open RTS". Implementasi lama di
+# feedback-bridge.ps1 menebak dari nama direktori ((Split-Path -Leaf).ToUpper()),
+# sehingga hanya benar kalau keduanya kebetulan sama -- 1 dari 4 game validasi.
+#
+# Test ini sengaja memakai nama direktori yang BERBEDA dari config/name, plus satu
+# kasus use_custom_user_dir. Implementasi berbasis nama direktori gagal di keduanya.
+Write-T "TEST 30: user:// diturunkan dari config/name, bukan nama direktori project"
+$t30Base  = Join-Path $env:TEMP "kilo_t30_$(Get-Date -Format 'HHmmss')"
+$t30Fails = @()
+try {
+    # Kasus A: nama direktori 'my-game-repo' vs config/name 'Fancy Game Name'
+    $t30A = Join-Path $t30Base "my-game-repo"
+    $null = New-Item -ItemType Directory -Path $t30A -Force
+    [System.IO.File]::WriteAllText((Join-Path $t30A "project.godot"),
+        "[application]`nconfig/name=`"Fancy Game Name`"`n",
+        (New-Object System.Text.UTF8Encoding($false)))
+    $gotA = Resolve-GodotShotsDir -ProjectPath $t30A
+    if ($gotA -notmatch [regex]::Escape("app_userdata\Fancy Game Name\shots")) {
+        $t30Fails += "A: '$gotA' tidak memakai config/name"
+    }
+    if ($gotA -match "my-game-repo|MY-GAME-REPO") { $t30Fails += "A: masih memakai nama direktori" }
+
+    # Kasus B: use_custom_user_dir -> TIDAK di bawah app_userdata sama sekali
+    $t30B = Join-Path $t30Base "another-repo"
+    $null = New-Item -ItemType Directory -Path $t30B -Force
+    [System.IO.File]::WriteAllText((Join-Path $t30B "project.godot"),
+        "[application]`nconfig/name=`"Ignored Name`"`nconfig/use_custom_user_dir=true`nconfig/custom_user_dir_name=`"kilo_t30_custom`"`n",
+        (New-Object System.Text.UTF8Encoding($false)))
+    $gotB = Resolve-GodotShotsDir -ProjectPath $t30B
+    if ($gotB -notmatch "kilo_t30_custom") { $t30Fails += "B: '$gotB' mengabaikan custom_user_dir_name" }
+    if ($gotB -match "app_userdata")       { $t30Fails += "B: custom dir tidak boleh di bawah app_userdata" }
+
+    # Kasus C: tanpa project.godot -> fallback ke <ProjectPath>\shots
+    $t30C = Join-Path $t30Base "not-a-godot-project"
+    $null = New-Item -ItemType Directory -Path $t30C -Force
+    $gotC = Resolve-GodotShotsDir -ProjectPath $t30C
+    if ($gotC -ne (Join-Path $t30C "shots")) { $t30Fails += "C: fallback salah -> '$gotC'" }
+} catch {
+    $t30Fails += "exception: $_"
+} finally {
+    Remove-Item -LiteralPath $t30Base -Recurse -Force -ErrorAction SilentlyContinue
+}
+Add-Result "user:// dari config/name (bukan nama direktori)" ($t30Fails.Count -eq 0) `
+    $(if ($t30Fails.Count -eq 0) { "config/name, custom_user_dir, dan fallback non-Godot semuanya benar" } else { ($t30Fails -join " | ") })
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
