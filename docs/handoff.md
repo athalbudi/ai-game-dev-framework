@@ -1,6 +1,11 @@
 ## Handoff — 2026-07-29
 
-Status: tree bersih, repo ↔ deployed sinkron, **36/36 PASS**
+Status: tree bersih, repo ↔ deployed sinkron, **36/36 PASS**, sudah di-push ke publik.
+
+Framework kini bernama **Saksi** — https://github.com/athalbudi/saksi (MIT).
+Nama tampilan sudah diganti; identifier fungsional (`~/.config/kilo`, penanda blok,
+`gamedev-framework.md`, `.kilo/command/`, `KILO_GAMES_DIR`) sengaja TIDAK diubah.
+Alasannya di `FRAMEWORK.md` bagian "Catatan penamaan — JANGAN dirapikan".
 
 ### Selesai di sesi ini
 
@@ -43,10 +48,32 @@ Semuanya luput dari suite dan hanya muncul saat menjalankan alur pengguna sunggu
 Pola berulang: konvensi baru diterapkan di kode baru, salinan lama tertinggal — dan fixture
 yang meniru lingkungan sendiri menyembunyikan bug.
 
+### Audit mendalam terakhir (4 bug, semuanya lolos dari suite hijau)
+
+1. `-InitProject` mengonversi CRLF→LF seluruh `project.godot` pengguna — git diff jadi
+   menampilkan semua baris berubah. EOL kini dideteksi dan dipertahankan.
+2. Blok penanda di `CLAUDE.md` menghasilkan line ending campur.
+3. `doctor.ps1` bisa **lulus vakum**: hanya mencari tanda gagal di stderr, sehingga Godot
+   yang gagal start dilaporkan "11 template bersih". Kini butuh bukti positif (`RESULT`
+   tercetak + jumlah COMPILE_OK menutupi semua template).
+4. Deteksi Godot melewatkan versi selain 4.7 — glob hanya `*win64_console.exe` di `C:\Godot`.
+   Kini pencarian version-agnostic di 4 lokasi, build `_console` tetap didahulukan.
+
+Tiga dugaan diperiksa dan ternyata BUKAN bug (jangan diaudit ulang): path berbracket,
+exit code kosong pada `-InitProject`, dan CRLF di blob repo — yang ketiga adalah kesalahan
+pengukuran (`grep -c $'\r'` mencocokkan pola kosong). Verifikasi byte-level: CR=0.
+
 ### Belum selesai
 
 - Aturan agent belum dipasang ke config asli maintainer (`-InstallAgentRules` belum dijalankan)
-- Kebijakan bump `VERSION` belum ada (masih `0.1.0`)
+- Kebijakan bump `VERSION` belum ada (masih `0.1.0`) — repo sudah publik, jadi ini momen
+  wajar untuk memutuskan angka itu berarti apa
+- Enam step type (`mouse_click`, `touch_tap`, `controller_press`, `wait_signal`, `assert_fps`,
+  `assert_screenshot_exists`) SUDAH terimplementasi di `ScenarioRunner.gd`, tapi **nol test
+  menjalankannya**. Template `input_methods.json` sudah publik, jadi orang akan menyalinnya
+  dan berasumsi semuanya bekerja. Ini celah cakupan terbesar yang tersisa.
+- `docs/token-efficiency.md` ada secara lokal tapi di-gitignore (berisi kuota/pengukuran
+  pribadi) — tidak akan terlihat di clone baru
 - Compile-check terduplikasi di `tools/doctor.ps1` dan TEST 17 — ubah satu, harus ubah keduanya
 - Enam step type scenario (`assert_fps`, `assert_screenshot_exists`, `controller_press`,
   `mouse_click`, `touch_tap`, `wait_signal`) punya template di `scenarios-templates/input_methods.json`
