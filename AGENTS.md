@@ -61,31 +61,44 @@ Tentukan skenario yang paling sesuai dan ikuti urutannya.
 
 Sebelum validasi visual, cek ketersediaan harness di project dengan urutan:
 
-1. Cek `.kilo/command/` — ada command screenshot? (contoh: `/shot`, `/analisis-shot`, `/screenshot`)
-2. Cek `.kilo/agent/` — ada agent visual QA? (contoh: `visual-qa`, `visual-qa-web`)
+1. Cek direktori command milik AI tool yang sedang dipakai — ada command screenshot?
+   (contoh: `.kilo/command/`, `.claude/commands/`; nama command biasanya `/shot`, `/analisis-shot`)
+2. Cek `~/.config/kilo/tools/shot-harness.ps1` — harness framework ini, berlaku untuk
+   project Godot manapun meski project belum punya command khusus
 3. Cek kode project — ada flag atau script screenshot? (contoh: `--shot`, `--screenshot`)
 4. Cek `package.json` — ada script screenshot? (contoh: `playwright`, `cypress`, `screenshot`)
 
 Jika harness tersedia, **jalankan harness terlebih dahulu** sebelum membaca screenshot.
 Jika tidak ada harness, gunakan tool screenshot yang tersedia (Playwright, Cypress, dll).
 
-### Wajib delegasi ke agent visual QA
+### Cara membaca screenshot dengan benar
 
-Jika project punya agent visual QA (contoh: `visual-qa`, `visual-qa-web` di `.kilo/agent/`),
-**JANGAN lakukan analisis visual sendiri** — delegasikan seluruhnya ke agent tersebut via `task` tool.
+Akar aturan ini bukan soal AI tool tertentu, melainkan satu fakta teknis:
+**membaca PNG lewat tool baca-file biasa (`Read`) menghasilkan attachment yang tidak selalu
+ter-deliver ke model.** Analisis visual yang dibuat di atas gambar yang mungkin tidak pernah
+benar-benar terlihat tidak bisa dipertanggungjawabkan. Aturan di bawah menjaga itu.
 
-Main agent TIDAK boleh membaca file PNG sendiri untuk tujuan analisis visual. Alasannya:
-- Agent visual QA punya prosedur batch yang terkontrol (maks 6 gambar per panggilan)
-- Agent visual QA menggunakan `filesystem_read_media_file` yang benar, bukan `Read`
-- Agent visual QA membaca semua gambar terlebih dahulu sebelum menulis analisis
-- Main agent membaca PNG lewat `Read` menghasilkan attachment yang tidak selalu ter-deliver ke model,
-  sehingga analisis visual yang dihasilkan main agent tidak bisa dipertanggungjawabkan
+**Jika tersedia sub-agent visual QA** (contoh: `visual-qa`, `visual-qa-web` di `.kilo/agent/`,
+atau agent setara di AI tool lain):
 
-Contoh delegasi yang benar:
+**JANGAN lakukan analisis visual sendiri** — delegasikan seluruhnya. Sub-agent punya prosedur
+batch terkontrol (maks 6 gambar per panggilan), memakai pembaca media yang benar, dan membaca
+semua gambar dulu sebelum menulis analisis.
+
 ```
 task(visual-qa): Jalankan harness screenshot dan analisis semua layar game untuk update terbaru.
 Laporkan temuan visual lengkap dengan format standar (✅ ⚠️ ❌).
 ```
+
+**Jika TIDAK tersedia sub-agent visual QA**, batasan yang sama tetap berlaku — kerjakan sendiri
+dengan disiplin berikut:
+
+1. Gunakan tool pembaca media/gambar yang sesuai, **bukan** tool baca-file teks biasa
+2. Maksimal 6 gambar per batch
+3. Baca **semua** gambar dulu, baru menulis analisis — jangan menganalisis sambil membaca
+4. Kalau ada gambar yang gagal ter-deliver, **katakan itu ke user** dan jangan menyimpulkan
+   apa pun tentang gambar tersebut. Lebih baik melaporkan "tidak bisa diverifikasi" daripada
+   menghasilkan analisis yang tidak berdasar.
 
 ### Fallback jika validasi visual gagal
 
@@ -105,7 +118,8 @@ Laporkan temuan visual lengkap dengan format standar (✅ ⚠️ ❌).
 
 Ketika AI selesai mengimplementasikan perubahan yang menyentuh UI atau tampilan:
 - Otomatis jalankan validasi visual — ini bagian dari definition of done
-- Gunakan agent visual QA jika tersedia di project
+- Ikuti "Cara membaca screenshot dengan benar" di atas: delegasikan ke sub-agent visual QA
+  jika ada, kalau tidak ada kerjakan sendiri dengan disiplin batch yang sama
 
 ---
 
