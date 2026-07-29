@@ -64,6 +64,26 @@ jalankan ulang kapan saja repo ini di-update untuk sync ulang.
 > & ".\setup.ps1" -UninstallAgentRules
 > ```
 
+### Langkah 0b — Integrasikan project game (opsional, mempercepat Langkah 1-3)
+
+```powershell
+& ".\setup.ps1" -InitProject "C:\path\ke\project-game"
+```
+
+Menyalin `ErrorTracker.gd` / `GameStateWriter.gd` / `ScenarioRunner.gd` ke project,
+menyalin template scenario dan command AI, lalu mendaftarkan autoload di `project.godot`.
+
+> `project.godot` adalah file milik Anda — dan file pertama yang dibaca Godot. Karena itu
+> penyuntingannya defensif: dibuat backup `project.godot.bak`, perubahan ditampilkan lebih
+> dulu, menjalankan ulang tidak menduplikasi entri, dan kalau ada nama autoload yang sudah
+> Anda pakai untuk file lain, prosesnya **berhenti tanpa mengubah apa pun**.
+>
+> Tambahkan `-DryRun` untuk melihat rencananya saja. Pakai `-ProjectScriptsDir "src/global"`
+> kalau ingin file `.gd` diletakkan di sub-direktori tertentu.
+
+Setelah ini, satu langkah tetap manual: handler `_shot_tour()` di Langkah 2 — itu kode game
+yang hanya Anda tahu isinya.
+
 ### Langkah 1 — Jalankan harness pertama kali
 
 Harness dapat dijalankan pada project yang belum punya kode game sama sekali.
