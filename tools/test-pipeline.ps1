@@ -1688,6 +1688,85 @@ if ($setupSrc -eq "" -or -not (Test-Path -LiteralPath $setupSrc)) {
 }
 Write-S
 
+# ── TEST 28: tool mengembalikan exit 0 pada jalur SUKSES ─────────────────────────
+# Tanpa 'exit 0' eksplisit, script PowerShell berakhir tanpa menyetel exit code dan
+# $LASTEXITCODE di pemanggil berisi nilai sisa perintah sebelumnya. Pemanggil jadi tidak
+# bisa membedakan sukses dari gagal. Test ini sengaja menyetel $LASTEXITCODE ke nilai
+# non-nol dulu -- kalau tool tidak menyetelnya sendiri, nilai sisa itu yang terbaca.
+Write-T "TEST 28: tool menyetel exit 0 pada jalur sukses"
+$t28Fails = @()
+try {
+    # schema-migration terhadap manifest yang valid: jalur sukses, tanpa Godot, cepat.
+    $t28Dir = Join-Path $env:TEMP "kilo_t28_$(Get-Date -Format 'HHmmss')"
+    $null = New-Item -ItemType Directory -Path $t28Dir -Force
+    $t28Manifest = Join-Path $t28Dir "shots-manifest.json"
+    @{ schema_version = "1.1"; generated_at = "2026-01-01 00:00:00"; shots_dir = $t28Dir;
+       png_count = 0; screenshots = @() } | ConvertTo-Json -Depth 4 |
+        Set-Content -LiteralPath $t28Manifest -Encoding UTF8
+
+    $global:LASTEXITCODE = 99          # nilai sisa yang harus ditimpa oleh tool
+    & $migPs1 -ManifestPath $t28Manifest *>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { $t28Fails += "schema-migration=$LASTEXITCODE" }
+
+    Remove-Item -LiteralPath $t28Dir -Recurse -Force -ErrorAction SilentlyContinue
+} catch {
+    $t28Fails += "exception: $_"
+}
+Add-Result "tool menyetel exit 0 pada jalur sukses" ($t28Fails.Count -eq 0) `
+    $(if ($t28Fails.Count -eq 0) { "schema-migration mengembalikan 0 (bukan sisa 99)" } else { ($t28Fails -join ", ") })
+Write-S
+
+# ── TEST 29: kegagalan harness TERDETEKSI oleh run-and-analyze ───────────────────
+# 'exit 1' di script yang dipanggil dengan & tidak melempar exception, jadi try/catch
+# saja tidak pernah aktif dan harness yang gagal tercatat phase1="ok" di laporan JSON.
+# Test ini memakai stub harness yang selalu exit 1, di ~/.config/kilo palsu.
+Write-T "TEST 29: run-and-analyze mendeteksi harness yang gagal (bukan mencatatnya 'ok')"
+$t29Base  = Join-Path $env:TEMP "kilo_t29_$(Get-Date -Format 'HHmmss')"
+$origUP29 = $env:USERPROFILE
+try {
+    $t29Home = Join-Path $t29Base "home"
+    $t29Proj = Join-Path $t29Base "proj"
+    $t29Kilo = Join-Path $t29Home ".config\kilo\tools"
+    $null = New-Item -ItemType Directory -Path $t29Kilo -Force
+    $null = New-Item -ItemType Directory -Path $t29Proj -Force
+    # Project Godot minimal supaya fase OBSERVE benar-benar dijalankan
+    Set-Content -LiteralPath (Join-Path $t29Proj "project.godot") -Value "config_version=5" -Encoding UTF8
+
+    # Stub harness: selalu gagal, TANPA melempar exception -- persis pola yang lolos dulu
+    Set-Content -LiteralPath (Join-Path $t29Kilo "shot-harness.ps1") -Encoding UTF8 -Value @'
+[CmdletBinding()]
+param([string]$ProjectPath = "", [int]$Timeout = 0, [string]$GodotExe = "")
+Write-Host "[shot] FAIL stub sengaja gagal"
+exit 1
+'@
+    Copy-Item (Join-Path $PSScriptRoot "_common.ps1") $t29Kilo -Force -ErrorAction SilentlyContinue
+
+    $t29Report    = Join-Path $t29Base "report.json"
+    # Pakai salinan run-and-analyze yang ter-deploy sungguhan (path dihitung dari USERPROFILE
+    # ASLI, sebelum di-override) -- yang diuji adalah tool nyata, sementara stub harness
+    # berada di kilo palsu yang akan di-resolve run-and-analyze saat runtime.
+    $t29Tool = Join-Path $origUP29 ".config\kilo\tools\run-and-analyze.ps1"
+    try {
+        $env:USERPROFILE = $t29Home
+        & $t29Tool -ProjectPath $t29Proj -OutputReport $t29Report -SkipHarness:$false *>&1 | Out-Null
+    } finally { $env:USERPROFILE = $origUP29 }
+
+    if (-not (Test-Path -LiteralPath $t29Report)) {
+        Add-Result "run-and-analyze mendeteksi harness gagal" $false "laporan tidak dihasilkan: $t29Report"
+    } else {
+        $rep29    = Get-Content -LiteralPath $t29Report -Raw | ConvertFrom-Json
+        $phase1   = if ($rep29.PSObject.Properties["phases"]) { $rep29.phases.observe } else { "" }
+        Add-Result "run-and-analyze mendeteksi harness gagal" ($phase1 -ne "ok") `
+            "phase observe='$phase1' (tidak boleh 'ok' saat harness exit 1)"
+    }
+} catch {
+    Add-Result "run-and-analyze mendeteksi harness gagal" $false ("Exception: " + $_)
+} finally {
+    $env:USERPROFILE = $origUP29
+    Remove-Item -LiteralPath $t29Base -Recurse -Force -ErrorAction SilentlyContinue
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
