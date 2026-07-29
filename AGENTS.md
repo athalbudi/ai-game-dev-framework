@@ -4,6 +4,30 @@ Berlaku di semua project. Project-level AGENTS.md dapat meng-override bagian ini
 
 ---
 
+## Aturan Proaktif: Bootstrap Framework
+
+Sebelum menjalankan aturan lain di file ini, pastikan framework sudah ter-bootstrap di mesin ini.
+
+1. Cek apakah `~/.config/kilo/version.json` ada.
+2. Jika ADA: lanjut seperti biasa. (Isi file itu juga mencatat `repo_path` — lokasi repo
+   framework di mesin ini — berguna kalau perlu sync ulang.)
+3. Jika TIDAK ada: framework belum ter-bootstrap. Jalankan `setup.ps1` dari root repo framework:
+
+   ```powershell
+   & "<path-repo-framework>\setup.ps1"
+   ```
+
+   **Jangan asumsikan `.\setup.ps1` ada di direktori kerja saat ini.** Aturan ini berlaku di
+   semua project — saat bekerja di project game, repo framework ada di tempat lain. Cari dulu
+   (mis. lokasi clone yang biasa dipakai user); kalau tidak ketemu, TANYA user di mana repo
+   framework berada. Jangan menebak, dan jangan membuat ulang isi `~/.config/kilo` secara manual.
+
+   Laporkan hasilnya ke user sebelum lanjut ke task aslinya.
+
+Detail langkah bootstrap ada di `setup.ps1` sendiri -- jangan duplikasi logikanya di sini.
+
+---
+
 ## Aturan Proaktif: Analisis Project
 
 Tentukan skenario yang paling sesuai dan ikuti urutannya.

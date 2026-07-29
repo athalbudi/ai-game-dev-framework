@@ -28,6 +28,18 @@ Tulis kode → Jalankan harness → AI lihat hasil → AI analisis → AI lapork
 > .godot/
 > ```
 
+### Langkah 0 — Bootstrap framework (sekali saja per mesin)
+
+Sebelum langkah manapun di bawah, pasang framework ke `~/.config/kilo`:
+
+```powershell
+& ".\setup.ps1"
+```
+
+Ini mendeteksi Godot/ImageMagick, menyalin `tools/`, `godot-templates/`, dan template lain
+ke `~/.config/kilo`, lalu memverifikasi hasilnya. Cukup dijalankan sekali per mesin --
+jalankan ulang kapan saja repo ini di-update untuk sync ulang.
+
 ### Langkah 1 — Jalankan harness pertama kali
 
 Harness dapat dijalankan pada project yang belum punya kode game sama sekali.

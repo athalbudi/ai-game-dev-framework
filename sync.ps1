@@ -12,6 +12,7 @@
       - command/*.md                           -> ~/.config/kilo/command/
       - ci-templates/**/* (recursive)          -> ~/.config/kilo/ci-templates/
       - fix-request-template.json              -> ~/.config/kilo/fix-request-template.json
+      - VERSION                                -> ~/.config/kilo/VERSION
 
     Catatan: direktori agent/ tidak di-sync karena belum ada konten di repo.
     Jika agent/ ditambahkan ke repo di masa depan, tambahkan section sync di sini.
@@ -169,6 +170,12 @@ if ($script:PSBoundParameters.ContainsKey('GameProjectScriptsDir') -and $GamePro
 $frTemplate = Join-Path $repoRoot "fix-request-template.json"
 if (Test-Path -LiteralPath $frTemplate) {
     Sync-File $frTemplate (Join-Path $kiloConfig "fix-request-template.json")
+}
+
+# -- Sync VERSION ke root kilo config -------------------------------------------
+$versionFile = Join-Path $repoRoot "VERSION"
+if (Test-Path -LiteralPath $versionFile) {
+    Sync-File $versionFile (Join-Path $kiloConfig "VERSION")
 }
 
 # -- Summary -------------------------------------------------------------------

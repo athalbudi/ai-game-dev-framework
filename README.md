@@ -73,6 +73,15 @@ Tempatkan di `.kilo/command/` di project game:
 
 ## Quick Start
 
+### 0. Bootstrap framework (sekali saja per mesin)
+
+```powershell
+& ".\setup.ps1"
+```
+
+Mendeteksi Godot/ImageMagick dan menyalin `tools/`, `godot-templates/`, dan template lain
+ke `~/.config/kilo`. Lihat `QUICKSTART.md` untuk detail lengkap.
+
 ### 1. Setup screenshot harness (Godot)
 
 ```gdscript
