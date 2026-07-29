@@ -37,22 +37,17 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$commonPs1 = Join-Path $PSScriptRoot "_common.ps1"
+if (-not (Test-Path -LiteralPath $commonPs1)) {
+    Write-Host "[test] FAIL _common.ps1 tidak ditemukan di $PSScriptRoot" -ForegroundColor Red
+    Write-Host "[test]      Instalasi tidak lengkap. Jalankan setup.ps1 dari root repo framework." -ForegroundColor Red
+    exit 1
+}
+. $commonPs1
+
 # Auto-detect Godot executable jika tidak diset secara eksplisit
 if ($GodotExe -eq "") {
-    $candidates = @(
-        "C:\Godot\godot.exe",
-        "C:\Program Files\Godot\godot.exe",
-        "C:\Program Files (x86)\Godot\godot.exe",
-        "$env:LOCALAPPDATA\Programs\Godot\godot.exe"
-    )
-    foreach ($c in $candidates) {
-        if (Test-Path -LiteralPath $c) { $GodotExe = $c; break }
-    }
-    # Fallback: cek PATH
-    if ($GodotExe -eq "") {
-        $found = Get-Command "godot.exe" -ErrorAction SilentlyContinue
-        if ($found) { $GodotExe = $found.Source }
-    }
+    $GodotExe = Resolve-GodotExecutable
 }
 
 $kiloTools = Join-Path $env:USERPROFILE ".config\kilo\tools"
@@ -1113,11 +1108,7 @@ Write-S
 # Test ini GAGAL terhadap build lama di mana InputRecorder.gd dan RecordingConverter.gd
 # mempunyai return null / JOY_BUTTON konstanta yang tidak ada di Godot 4.
 Write-T "TEST 17: compile semua .gd template di Godot vanilla dan strict mode"
-$godotExe17 = ""
-foreach ($g in @("godot","godot4","godot.exe","godot4.exe")) {
-    $found = Get-Command $g -ErrorAction SilentlyContinue
-    if ($found) { $godotExe17 = $found.Source; break }
-}
+$godotExe17 = Resolve-GodotExecutable
 $kiloGodotTemplates     = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
 $kiloGameStateTemplates = Join-Path $env:USERPROFILE ".config\kilo\game-state-templates"
 
@@ -1318,6 +1309,228 @@ if ($checkedCount -eq 0) {
     $detail = "checked=$checkedCount drift=$($driftFound.Count)"
     if ($driftFound.Count -gt 0) { $detail += " | drift: $($driftFound -join ', ')" }
     Add-Result "vendored templates di game validasi sinkron" ($driftFound.Count -eq 0) $detail
+}
+Write-S
+
+# ══ LAYER 0 (bootstrap) ═══════════════════════════════════════════════════════════
+# TEST 20-23 menguji setup.ps1 / doctor.ps1 / _common.ps1.
+#
+# Semua test di bawah TIDAK PERNAH menyentuh ~/.config/kilo milik user. Isolasi dilakukan
+# dengan meng-override $env:USERPROFILE ke direktori temp sebelum memanggil script anak --
+# setup.ps1, sync.ps1, dan doctor.ps1 semuanya menurunkan lokasi kilo dari env var itu.
+$kiloDeployedRoot = Join-Path $env:USERPROFILE ".config\kilo"
+
+# Helper: bangun salinan KiloRoot minimal di temp (tools + template) untuk diuji doctor.
+function New-DoctorFixture {
+    param([string]$Dest)
+    $null = New-Item -ItemType Directory -Path (Join-Path $Dest "tools") -Force
+    Copy-Item (Join-Path $kiloDeployedRoot "tools\*.ps1") (Join-Path $Dest "tools") -Force
+    foreach ($d in @("godot-templates", "game-state-templates")) {
+        $src = Join-Path $kiloDeployedRoot $d
+        if (Test-Path -LiteralPath $src) {
+            $null = New-Item -ItemType Directory -Path (Join-Path $Dest $d) -Force
+            Copy-Item (Join-Path $src "*.gd") (Join-Path $Dest $d) -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# ── TEST 20: doctor.ps1 harus MEMBEDAKAN instalasi sehat vs template .gd rusak ────
+# Test ini gagal terhadap doctor.ps1 tanpa compile-check: keduanya akan exit 0, sehingga
+# assertion "bersih=0 DAN rusak=1" tidak terpenuhi. Bukan sekadar "exit 0 berarti lulus".
+Write-T "TEST 20: doctor.ps1 membedakan instalasi sehat vs template .gd rusak"
+$doctorDeployed = Join-Path $kiloDeployedRoot "tools\doctor.ps1"
+if (-not (Test-Path -LiteralPath $doctorDeployed)) {
+    Add-Result "doctor.ps1 mendeteksi template .gd rusak" $false "doctor.ps1 tidak tersedia di deployed"
+} elseif ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "doctor.ps1 mendeteksi template .gd rusak" $false "SKIP -- Godot tidak tersedia (compile-check tidak bisa diuji)"
+} else {
+    $t20Dir = Join-Path $env:TEMP "kilo_t20_$(Get-Date -Format 'HHmmss')"
+    try {
+        New-DoctorFixture -Dest $t20Dir
+        & (Join-Path $t20Dir "tools\doctor.ps1") -KiloRoot $t20Dir -GodotExe $GodotExe *>&1 | Out-Null
+        $exitClean = $LASTEXITCODE
+
+        Add-Content -LiteralPath (Join-Path $t20Dir "godot-templates\ScenarioRunner.gd") -Value "`nfunc _t20_broken( :"
+        & (Join-Path $t20Dir "tools\doctor.ps1") -KiloRoot $t20Dir -GodotExe $GodotExe *>&1 | Out-Null
+        $exitBroken = $LASTEXITCODE
+
+        Add-Result "doctor.ps1 mendeteksi template .gd rusak" `
+            (($exitClean -eq 0) -and ($exitBroken -eq 1)) `
+            "bersih=$exitClean (harus 0), rusak=$exitBroken (harus 1)"
+    } catch {
+        Add-Result "doctor.ps1 mendeteksi template .gd rusak" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t20Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
+# ── TEST 21: doctor.ps1 mem-parse SEMUA tool, bukan shot-harness saja ─────────────
+# Test ini gagal terhadap doctor.ps1 lama yang hanya ParseFile(shot-harness.ps1):
+# syntax error di visual-diff.ps1 akan lolos dan exit 0. Tidak butuh Godot.
+Write-T "TEST 21: doctor.ps1 mendeteksi syntax error di tool selain shot-harness"
+if (-not (Test-Path -LiteralPath $doctorDeployed)) {
+    Add-Result "doctor.ps1 mem-parse semua tools/*.ps1" $false "doctor.ps1 tidak tersedia di deployed"
+} else {
+    $t21Dir = Join-Path $env:TEMP "kilo_t21_$(Get-Date -Format 'HHmmss')"
+    try {
+        New-DoctorFixture -Dest $t21Dir
+        # Rusakkan visual-diff.ps1 (BUKAN shot-harness.ps1) dengan syntax error nyata
+        Add-Content -LiteralPath (Join-Path $t21Dir "tools\visual-diff.ps1") -Value "`nfunction _t21_broken {"
+        & (Join-Path $t21Dir "tools\doctor.ps1") -KiloRoot $t21Dir -GodotExe "Z:\nonexistent\godot.exe" *>&1 | Out-Null
+        $exit21 = $LASTEXITCODE
+        Add-Result "doctor.ps1 mem-parse semua tools/*.ps1" ($exit21 -eq 1) `
+            "exit=$exit21 (harus 1 -- syntax error di visual-diff.ps1 wajib terdeteksi)"
+    } catch {
+        Add-Result "doctor.ps1 mem-parse semua tools/*.ps1" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t21Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
+# ── TEST 22: guard _common.ps1 -- pesan actionable, bukan CommandNotFoundException ─
+# Test ini gagal terhadap versi tanpa guard: dot-source langsung melempar
+# CommandNotFoundException, exit code tidak di-set, dan pesannya tidak menyebut setup.ps1.
+Write-T "TEST 22: tool memberi pesan actionable saat _common.ps1 hilang"
+if (-not (Test-Path -LiteralPath $doctorDeployed)) {
+    Add-Result "guard _common.ps1 hilang" $false "doctor.ps1 tidak tersedia di deployed"
+} else {
+    $t22Dir = Join-Path $env:TEMP "kilo_t22_$(Get-Date -Format 'HHmmss')"
+    try {
+        New-DoctorFixture -Dest $t22Dir
+        Remove-Item -LiteralPath (Join-Path $t22Dir "tools\_common.ps1") -Force
+        # *>&1 (bukan 2>&1): pesan guard ditulis lewat Write-Host, yang masuk information
+        # stream -- 2>&1 hanya menggabungkan stderr sehingga teksnya tidak akan tertangkap.
+        $out22  = & (Join-Path $t22Dir "tools\doctor.ps1") -KiloRoot $t22Dir *>&1 | Out-String
+        $exit22 = $LASTEXITCODE
+        $mentionsCommon = $out22 -match "_common\.ps1"
+        $mentionsSetup  = $out22 -match "setup\.ps1"
+        Add-Result "guard _common.ps1 hilang" `
+            (($exit22 -eq 1) -and $mentionsCommon -and $mentionsSetup) `
+            "exit=$exit22 (harus 1) sebut_common=$mentionsCommon sebut_setup=$mentionsSetup"
+    } catch {
+        Add-Result "guard _common.ps1 hilang" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t22Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
+# ── TEST 23: setup.ps1 -- gate pra-sync memblokir sync DAN tidak meninggalkan stamp ─
+# Dua invariant sekaligus:
+#   (a) repo rusak  -> sync.ps1 TIDAK PERNAH dipanggil (tools/ tidak terbentuk di kilo)
+#   (b) bootstrap gagal -> version.json TIDAK ada (hook AGENTS.md tidak boleh menyimpulkan
+#       "sudah ter-bootstrap" di atas instalasi yang gagal)
+# Test ini gagal terhadap setup.ps1 yang menulis version.json sebelum verifikasi, dan juga
+# terhadap versi tanpa gate pra-sync. $env:USERPROFILE di-override agar kilo user tidak tersentuh.
+Write-T "TEST 23: setup.ps1 gate pra-sync memblokir sync dan tidak menulis version.json"
+$repoRootForT23 = Resolve-Path (Join-Path $PSScriptRoot "..") -ErrorAction SilentlyContinue
+$setupSrc       = if ($repoRootForT23) { Join-Path $repoRootForT23.Path "setup.ps1" } else { "" }
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "setup.ps1 gate pra-sync fail-closed" $false "SKIP -- Godot tidak tersedia"
+} elseif ($setupSrc -eq "" -or -not (Test-Path -LiteralPath $setupSrc)) {
+    Add-Result "setup.ps1 gate pra-sync fail-closed" $false "setup.ps1 tidak ditemukan (test ini hanya jalan dari repo, bukan dari deployed)"
+} else {
+    $t23Base = Join-Path $env:TEMP "kilo_t23_$(Get-Date -Format 'HHmmss')"
+    $fakeRepo = Join-Path $t23Base "repo"
+    $fakeHome = Join-Path $t23Base "home"
+    $origUserProfile = $env:USERPROFILE
+    try {
+        $null = New-Item -ItemType Directory -Path $fakeHome -Force
+        New-DoctorFixture -Dest $fakeRepo
+        Copy-Item $setupSrc (Join-Path $fakeRepo "setup.ps1") -Force
+        Copy-Item (Join-Path $repoRootForT23.Path "sync.ps1") (Join-Path $fakeRepo "sync.ps1") -Force
+        Set-Content -LiteralPath (Join-Path $fakeRepo "VERSION") -Value "0.0.0-test" -Encoding UTF8
+
+        # Rusakkan template DI REPO PALSU -- healthcheck pra-sync harus menangkapnya
+        Add-Content -LiteralPath (Join-Path $fakeRepo "godot-templates\ScenarioRunner.gd") -Value "`nfunc _t23_broken( :"
+
+        $env:USERPROFILE = $fakeHome
+        & (Join-Path $fakeRepo "setup.ps1") -GodotExe $GodotExe *>&1 | Out-Null
+        $exit23 = $LASTEXITCODE
+
+        $fakeKilo    = Join-Path $fakeHome ".config\kilo"
+        $syncHappened = Test-Path -LiteralPath (Join-Path $fakeKilo "tools\shot-harness.ps1")
+        $stampExists  = Test-Path -LiteralPath (Join-Path $fakeKilo "version.json")
+
+        Add-Result "setup.ps1 gate pra-sync fail-closed" `
+            (($exit23 -eq 1) -and (-not $syncHappened) -and (-not $stampExists)) `
+            "exit=$exit23 (harus 1) sync_terjadi=$syncHappened (harus False) version.json=$stampExists (harus False)"
+    } catch {
+        Add-Result "setup.ps1 gate pra-sync fail-closed" $false ("Exception: " + $_)
+    } finally {
+        $env:USERPROFILE = $origUserProfile
+        Remove-Item -LiteralPath $t23Base -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
+# ── TEST 24: setup.ps1 -- healthcheck PASCA-sync gagal => version.json TIDAK ditulis ─
+# TEST 23 tidak mencakup invariant ini: di sana gate pra-sync sudah menghentikan alur
+# sebelum version.json sempat ditulis, sehingga versi setup.ps1 dengan urutan lama pun
+# tetap lolos. Test ini secara khusus menargetkan URUTAN langkah 8 (verifikasi) vs 9 (stamp).
+#
+# Untuk memaksa kegagalan yang HANYA muncul pasca-sync, sync.ps1 di repo palsu diganti stub
+# yang men-deploy template rusak. Repo palsu sendiri sehat, jadi gate pra-sync lolos --
+# persis kondisi "sync melapor sukses tapi hasil deploy rusak".
+#
+# Terhadap setup.ps1 dengan urutan LAMA (stamp ditulis sebelum verifikasi), version.json
+# akan tertinggal di disk dan assertion ini GAGAL.
+Write-T "TEST 24: setup.ps1 tidak menulis version.json saat healthcheck pasca-sync gagal"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "setup.ps1 tidak meninggalkan stamp saat verifikasi gagal" $false "SKIP -- Godot tidak tersedia"
+} elseif ($setupSrc -eq "" -or -not (Test-Path -LiteralPath $setupSrc)) {
+    Add-Result "setup.ps1 tidak meninggalkan stamp saat verifikasi gagal" $false "setup.ps1 tidak ditemukan (test ini hanya jalan dari repo)"
+} else {
+    $t24Base  = Join-Path $env:TEMP "kilo_t24_$(Get-Date -Format 'HHmmss')"
+    $r24      = Join-Path $t24Base "repo"
+    $h24      = Join-Path $t24Base "home"
+    $origUP24 = $env:USERPROFILE
+    try {
+        $null = New-Item -ItemType Directory -Path $h24 -Force
+        New-DoctorFixture -Dest $r24          # repo palsu SEHAT -> gate pra-sync lolos
+        Copy-Item $setupSrc (Join-Path $r24 "setup.ps1") -Force
+        Set-Content -LiteralPath (Join-Path $r24 "VERSION") -Value "0.0.0-test" -Encoding UTF8
+
+        # Stub sync.ps1: deploy apa adanya, lalu rusakkan satu template DI TUJUAN.
+        $stubSync = @'
+[CmdletBinding()]
+param([switch] $DryRun, [string] $GameProjectScriptsDir = "")
+$dst = Join-Path $env:USERPROFILE ".config\kilo"
+$null = New-Item -ItemType Directory -Path (Join-Path $dst "tools") -Force
+Copy-Item (Join-Path $PSScriptRoot "tools\*.ps1") (Join-Path $dst "tools") -Force
+foreach ($d in @("godot-templates","game-state-templates")) {
+    $s = Join-Path $PSScriptRoot $d
+    if (Test-Path -LiteralPath $s) {
+        $null = New-Item -ItemType Directory -Path (Join-Path $dst $d) -Force
+        Copy-Item (Join-Path $s "*.gd") (Join-Path $dst $d) -Force -ErrorAction SilentlyContinue
+    }
+}
+Add-Content -LiteralPath (Join-Path $dst "godot-templates\ScenarioRunner.gd") -Value "`nfunc _t24_broken( :"
+exit 0
+'@
+        Set-Content -LiteralPath (Join-Path $r24 "sync.ps1") -Value $stubSync -Encoding UTF8
+
+        $env:USERPROFILE = $h24
+        & (Join-Path $r24 "setup.ps1") -GodotExe $GodotExe *>&1 | Out-Null
+        $exit24 = $LASTEXITCODE
+
+        $kilo24       = Join-Path $h24 ".config\kilo"
+        $deployHappened = Test-Path -LiteralPath (Join-Path $kilo24 "tools\doctor.ps1")
+        $stamp24      = Test-Path -LiteralPath (Join-Path $kilo24 "version.json")
+
+        # deployHappened harus True -- membuktikan alur benar-benar sampai pasca-sync,
+        # bukan gagal lebih awal karena sebab lain (yang akan membuat test lolos palsu).
+        Add-Result "setup.ps1 tidak meninggalkan stamp saat verifikasi gagal" `
+            (($exit24 -eq 1) -and $deployHappened -and (-not $stamp24)) `
+            "exit=$exit24 (harus 1) sync_jalan=$deployHappened (harus True) version.json=$stamp24 (harus False)"
+    } catch {
+        Add-Result "setup.ps1 tidak meninggalkan stamp saat verifikasi gagal" $false ("Exception: " + $_)
+    } finally {
+        $env:USERPROFILE = $origUP24
+        Remove-Item -LiteralPath $t24Base -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 Write-S
 
