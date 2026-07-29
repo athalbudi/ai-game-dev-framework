@@ -1,4 +1,4 @@
-# AI-Assisted Game Development Framework
+# Saksi — Framework QA Game
 
 Framework QA/screenshot/scenario-testing untuk project Godot.
 Terpasang di `~/.config/kilo`.

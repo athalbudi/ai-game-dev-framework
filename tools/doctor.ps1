@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Healthcheck ringan untuk instalasi AI-Assisted Game Development Framework.
+    Healthcheck ringan untuk instalasi Saksi.
     Dipakai oleh setup.ps1 sebelum dan sesudah sync -- juga bisa dijalankan manual.
 
 .DESCRIPTION

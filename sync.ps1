@@ -87,7 +87,7 @@ function Sync-File {
 
 Write-Host ""
 Write-Host "[sync] ================================================" -ForegroundColor Cyan
-Write-Host ("[sync]  AI-Game-Dev-Framework -> ~/.config/kilo" + $(if ($DryRun) { "  [DRY RUN]" } else { "" })) -ForegroundColor Cyan
+Write-Host ("[sync]  Saksi -> ~/.config/kilo" + $(if ($DryRun) { "  [DRY RUN]" } else { "" })) -ForegroundColor Cyan
 Write-Host "[sync] ================================================" -ForegroundColor Cyan
 
 # -- Sync tools/*.ps1 ----------------------------------------------------------

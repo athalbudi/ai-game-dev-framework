@@ -1,4 +1,11 @@
-# AI-Assisted Game Development Framework
+# Saksi
+
+*Saksi* is Indonesian for **witness** — the one who observes what actually happened and
+testifies to it. That is the whole idea.
+
+AI-assisted QA and verification for Godot games.
+
+---
 
 **An AI agent cannot verify what it cannot see.**
 

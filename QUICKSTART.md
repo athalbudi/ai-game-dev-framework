@@ -1,4 +1,4 @@
-# AI-Assisted Game Development Framework — Quick Start
+# Saksi — Quick Start
 
 Framework universal untuk AI-assisted game development dan QA di Godot.
 Berlaku untuk semua project game baru — tidak bergantung pada game, genre, atau struktur folder tertentu.

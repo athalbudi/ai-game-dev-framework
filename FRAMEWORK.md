@@ -1,8 +1,33 @@
-﻿# AI-Assisted Game Development Framework
+﻿# Saksi — Arsitektur Framework
 
-Framework universal untuk AI-assisted game development dan QA.
-Dirancang untuk digunakan di semua project game baru, dari prototype hingga produksi.
-Tidak terikat pada game tertentu, engine tertentu, atau struktur folder tertentu.
+*Saksi* — yang menyaksikan apa yang benar-benar terjadi, lalu memberi kesaksian yang bisa
+diperiksa. Nama ini menggambarkan prinsip yang mengikat seluruh kode di sini: bukti di atas
+klaim.
+
+Framework QA untuk game Godot yang dikerjakan bersama AI. Dirancang untuk dipakai dari
+prototype hingga produksi, tidak terikat pada game tertentu atau struktur folder tertentu.
+
+---
+
+## Catatan penamaan — JANGAN dirapikan
+
+Framework ini bernama **Saksi**, tapi sejumlah identifier masih memakai nama lama.
+Itu **disengaja**, bukan sisa refactor yang terlewat:
+
+| Identifier | Tetap | Alasan |
+|---|---|---|
+| `~/.config/kilo` | ya | Mengubahnya merusak setiap instalasi yang sudah ada di mesin pengguna |
+| `<!-- BEGIN ai-game-dev-framework -->` | ya | Penanda blok di `CLAUDE.md` pengguna. Mengubahnya membuat `-InstallAgentRules` menambah blok KEDUA dan `-UninstallAgentRules` tidak menemukan blok lama |
+| `agent-rules/gamedev-framework.md` | ya | Nama file yang di-deploy ke `~/.kilocode/rules/`. Berubah = file lama tertinggal saat uninstall |
+| `.kilo/command/` | ya | Lokasi yang sudah dipakai project game yang ada |
+| `KILO_GAMES_DIR` | ya | Env var yang mungkin sudah di-set di mesin/CI |
+
+Aturannya sederhana: **nama tampilan boleh berubah, identifier fungsional tidak.**
+Identifier fungsional adalah apa pun yang dibaca kembali dari disk atau environment untuk
+mencocokkan sesuatu yang ditulis oleh versi sebelumnya.
+
+Kalau suatu saat identifier ini benar-benar perlu diganti, itu butuh jalur migrasi yang
+membaca nama lama, memindahkannya, lalu menuliskan nama baru — bukan sekadar find-and-replace.
 
 ---
 

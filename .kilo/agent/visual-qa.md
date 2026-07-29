@@ -1,6 +1,6 @@
 # Agent: visual-qa
 
-Agen analisis visual QA untuk game yang menggunakan AI-Assisted Game Development Framework.
+Agen analisis visual QA untuk game yang menggunakan Saksi.
 
 ## Tugas
 

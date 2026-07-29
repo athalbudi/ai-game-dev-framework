@@ -286,7 +286,7 @@ function Invoke-BulkMigration {
 }
 
 # ── Entry point ────────────────────────────────────────────────────────────────
-Write-Mig "Schema Migration Handler -- AI-Assisted Game Development Framework"
+Write-Mig "Schema Migration Handler -- Saksi"
 Write-Mig "Target schema: $CURRENT_SCHEMA"
 if ($DryRun) { Write-Mig "Mode: DRY RUN" }
 

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Self-test pipeline untuk AI-Assisted Game Development Framework.
+    Self-test pipeline untuk Saksi.
     Menjalankan tool utama terhadap fixture minimal dan memverifikasi hasilnya.
 
 .DESCRIPTION

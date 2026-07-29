@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Bootstrap satu-langkah untuk AI-Assisted Game Development Framework.
+    Bootstrap satu-langkah untuk Saksi -- framework QA game berbantuan AI.
     Jalankan ini sekali di awal (dari root repo) sebelum mulai memakai framework --
     baik oleh manusia maupun AI coding agent (Claude Code, Kilo Code, dll) yang
     membaca AGENTS.md.
@@ -516,7 +516,7 @@ $totalSteps = if ($InstallAgentRules) { 10 } else { 9 }
 
 Write-Host ""
 Write-Host "[setup] ================================================" -ForegroundColor Cyan
-Write-Host "[setup]  AI-Game-Dev-Framework -- Bootstrap" -ForegroundColor Cyan
+Write-Host "[setup]  Saksi -- Bootstrap" -ForegroundColor Cyan
 Write-Host "[setup] ================================================" -ForegroundColor Cyan
 
 # -- 1. Cek versi PowerShell -----------------------------------------------------
