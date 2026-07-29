@@ -58,6 +58,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$commonPs1 = Join-Path $PSScriptRoot "_common.ps1"
+if (-not (Test-Path -LiteralPath $commonPs1)) {
+    Write-Host "[aq] FAIL _common.ps1 tidak ditemukan di $PSScriptRoot" -ForegroundColor Red
+    Write-Host "[aq]      Instalasi tidak lengkap. Jalankan setup.ps1 dari root repo framework." -ForegroundColor Red
+    exit 1
+}
+. $commonPs1
+
 $kiloConfig = Join-Path $env:USERPROFILE ".config\kilo"
 $harnessPs1 = Join-Path $kiloConfig "tools\shot-harness.ps1"
 $diffPs1    = Join-Path $kiloConfig "tools\visual-diff.ps1"
@@ -141,10 +149,7 @@ if (-not (Test-Path -LiteralPath $OutputDir)) { New-Item -ItemType Directory -Pa
 
 # ── 3. Resolve Godot executable ────────────────────────────────────────────────
 if ($GodotExe -eq "") {
-    foreach ($g in @("godot","godot4","godot.exe","godot4.exe")) {
-        $found = Get-Command $g -ErrorAction SilentlyContinue
-        if ($found) { $GodotExe = $found.Source; break }
-    }
+    $GodotExe = Resolve-GodotExecutable
     if ($GodotExe -eq "") {
         Write-Warn "Godot tidak ditemukan di PATH — fase RUN akan di-skip"
         Write-Warn "Gunakan -GodotExe untuk specify path"

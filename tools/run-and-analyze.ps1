@@ -102,6 +102,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$commonPs1 = Join-Path $PSScriptRoot "_common.ps1"
+if (-not (Test-Path -LiteralPath $commonPs1)) {
+    Write-Host "[run-analyze] FAIL _common.ps1 tidak ditemukan di $PSScriptRoot" -ForegroundColor Red
+    Write-Host "[run-analyze]      Instalasi tidak lengkap. Jalankan setup.ps1 dari root repo framework." -ForegroundColor Red
+    exit 1
+}
+. $commonPs1
+
 # ── Output helpers ─────────────────────────────────────────────────────────────
 function Write-Phase { param($phase, $msg)
     Write-Host "[run-analyze] $phase  $msg" -ForegroundColor Cyan }
@@ -471,11 +479,7 @@ if (-not (Test-Path -LiteralPath $ProjectPath -PathType Container)) {
 
 # ── 1a. Resolve Godot executable (perlu sebelum worktree --import) ─────────────
 if ($GodotExe -eq "") {
-    $godotCandidates = @("godot", "godot4", "godot.exe", "godot4.exe")
-    foreach ($g in $godotCandidates) {
-        $found = Get-Command $g -ErrorAction SilentlyContinue
-        if ($found) { $GodotExe = $found.Source; break }
-    }
+    $GodotExe = Resolve-GodotExecutable
     if ($GodotExe -eq "") {
         Write-Warn "Godot executable tidak ditemukan — fase RUN dan worktree --import akan di-skip"
         Write-Warn "Gunakan -GodotExe untuk specify path, atau pastikan godot ada di PATH"

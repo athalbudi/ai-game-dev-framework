@@ -100,6 +100,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$commonPs1 = Join-Path $PSScriptRoot "_common.ps1"
+if (-not (Test-Path -LiteralPath $commonPs1)) {
+    Write-Host "[shot] FAIL _common.ps1 tidak ditemukan di $PSScriptRoot" -ForegroundColor Red
+    Write-Host "[shot]      Instalasi tidak lengkap. Jalankan setup.ps1 dari root repo framework." -ForegroundColor Red
+    exit 1
+}
+. $commonPs1
+
 # -- Warna output ---------------------------------------------------------------
 function Write-Step { param($msg) Write-Host "[shot] $msg"      -ForegroundColor Cyan   }
 function Write-Ok   { param($msg) Write-Host "[shot] OK  $msg"  -ForegroundColor Green  }
@@ -164,26 +172,7 @@ Write-Step "Output shots: $ShotsDir"
 if (-not $NoRun) {
     if ($GodotExe -eq "") {
         Write-Step "Mencari Godot executable..."
-        $candidates = @(
-            "C:\Godot\Godot_v4.7-stable_win64_console.exe",
-            "C:\Godot\Godot_v4.7-stable_win64.exe",
-            "C:\Program Files\Godot\Godot_v4.7-stable_win64_console.exe",
-            "C:\Program Files\Godot\Godot.exe"
-        )
-        # Cari versi apapun di C:\Godot\ - ambil terbaru
-        if (Test-Path "C:\Godot") {
-            $found = Get-ChildItem "C:\Godot" -Filter "*win64_console.exe" -ErrorAction SilentlyContinue |
-                     Sort-Object Name -Descending | Select-Object -First 1
-            if ($found) { $candidates = @($found.FullName) + $candidates }
-        }
-        foreach ($c in $candidates) {
-            if (Test-Path -LiteralPath $c) { $GodotExe = $c; break }
-        }
-        # Fallback: cari di PATH
-        if ($GodotExe -eq "") {
-            $fromPath = Get-Command "godot" -ErrorAction SilentlyContinue
-            if ($fromPath) { $GodotExe = $fromPath.Source }
-        }
+        $GodotExe = Resolve-GodotExecutable
         if ($GodotExe -eq "") {
             Write-Fail "Godot executable tidak ditemukan. Tentukan path via -GodotExe."
         }

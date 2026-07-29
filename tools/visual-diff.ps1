@@ -83,6 +83,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$commonPs1 = Join-Path $PSScriptRoot "_common.ps1"
+if (-not (Test-Path -LiteralPath $commonPs1)) {
+    Write-Host "[diff] FAIL _common.ps1 tidak ditemukan di $PSScriptRoot" -ForegroundColor Red
+    Write-Host "[diff]      Instalasi tidak lengkap. Jalankan setup.ps1 dari root repo framework." -ForegroundColor Red
+    exit 1
+}
+. $commonPs1
+
 function Write-Step { param($msg) Write-Host "[diff] $msg"         -ForegroundColor Cyan   }
 function Write-Ok   { param($msg) Write-Host "[diff] OK  $msg"     -ForegroundColor Green  }
 function Write-Warn { param($msg) Write-Host "[diff] WARN $msg"    -ForegroundColor Yellow }
@@ -286,39 +294,19 @@ function New-MaskedCopy {
 
 # -- 3. Deteksi ImageMagick ----------------------------------------------------
 $useImageMagick = $false
+$imWasExplicit  = ($ImageMagick -ne "")
+$ImageMagick    = Resolve-ImageMagick -ImageMagick $ImageMagick
 
 if ($ImageMagick -ne "") {
     if (Test-Path -LiteralPath $ImageMagick) {
         $useImageMagick = $true
-        Write-Ok "ImageMagick dari parameter: $ImageMagick"
-    } else {
-        Write-Warn "ImageMagick path tidak valid, fallback ke hash comparison"
-    }
-} else {
-    $imCandidates = @("magick", "compare")
-    foreach ($c in $imCandidates) {
-        $found = Get-Command $c -ErrorAction SilentlyContinue
-        if ($found -and $found.Source -ne "") {
-            $ImageMagick = $found.Source
-            $useImageMagick = $true
+        if ($imWasExplicit) {
+            Write-Ok "ImageMagick dari parameter: $ImageMagick"
+        } else {
             Write-Ok "ImageMagick ditemukan: $ImageMagick"
-            break
         }
-    }
-    if (-not $useImageMagick) {
-        $globPaths = @(
-            "C:\Program Files\ImageMagick-7*\magick.exe",
-            "C:\Program Files\ImageMagick-6*\compare.exe"
-        )
-        foreach ($g in $globPaths) {
-            $found = Get-Item $g -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($found) {
-                $ImageMagick = $found.FullName
-                $useImageMagick = $true
-                Write-Ok "ImageMagick ditemukan: $ImageMagick"
-                break
-            }
-        }
+    } elseif ($imWasExplicit) {
+        Write-Warn "ImageMagick path tidak valid, fallback ke hash comparison"
     }
 }
 
