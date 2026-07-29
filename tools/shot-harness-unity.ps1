@@ -274,3 +274,6 @@ Write-Host "  Fase        : $telemetryPhase"                      -ForegroundCol
 Write-Host "  Manifest    : $manifestPath"                        -ForegroundColor White
 Write-Host "  Elapsed     : $elapsed detik"                       -ForegroundColor Gray
 Write-Host "---------------------------------------------------" -ForegroundColor Cyan
+
+# Exit sukses eksplisit -- lihat catatan yang sama di shot-harness.ps1.
+exit 0

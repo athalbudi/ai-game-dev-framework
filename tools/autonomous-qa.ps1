@@ -552,11 +552,24 @@ if (-not $SkipInitialHarness) {
             Timeout     = $Timeout
         }
         if ($GodotExe -ne "") { $harnessCallArgs["GodotExe"] = $GodotExe }
+        # try/catch saja TIDAK cukup: 'exit 1' di dalam script yang dipanggil dengan &
+        # tidak melempar exception, jadi catch tidak pernah aktif dan kegagalan harness
+        # lolos sebagai "selesai". Exit code harus diperiksa eksplisit.
+        # $LASTEXITCODE di-set dulu supaya tidak membaca nilai sisa perintah sebelumnya
+        # (dan supaya tidak melempar VariableIsUndefined di bawah StrictMode).
+        $harnessExit = 0
         try {
+            $global:LASTEXITCODE = 0
             & $harnessPs1 @harnessCallArgs
-            Write-Ok "Harness selesai"
+            $harnessExit = $LASTEXITCODE
         } catch {
-            Write-Warn "Harness error: $_ — lanjut dengan manifest yang ada"
+            Write-Warn "Harness error: $_"
+            $harnessExit = 1
+        }
+        if ($harnessExit -eq 0) {
+            Write-Ok "Harness selesai"
+        } else {
+            Write-Warn "Harness gagal (exit $harnessExit) — lanjut dengan manifest yang ada"
         }
     } else {
         Write-Warn "shot-harness.ps1 tidak ditemukan, skip OBSERVE"
@@ -701,3 +714,6 @@ if ($unresolved.Count -gt 0) {
 
 Write-Host "[aq] ═══════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host "[aq] Laporan detail: $reportPath" -ForegroundColor Gray
+
+# Exit sukses eksplisit -- lihat catatan yang sama di shot-harness.ps1.
+exit 0

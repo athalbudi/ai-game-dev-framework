@@ -672,12 +672,23 @@ if (-not $SkipHarness) {
     }
     if ($GodotExe -ne "") { $harnessCallArgs["GodotExe"] = $GodotExe }
 
+    # 'exit 1' di script yang dipanggil dengan & tidak melempar exception, jadi catch
+    # tidak pernah aktif. Tanpa cek exit code, harness yang GAGAL tetap tercatat
+    # phase1Status = "ok" dan ikut ke laporan JSON sebagai sukses.
+    $harnessExit = 0
     try {
+        $global:LASTEXITCODE = 0
         & $harnessPs1 @harnessCallArgs
+        $harnessExit = $LASTEXITCODE
+    } catch {
+        Write-Warn "Harness error: $_"
+        $harnessExit = 1
+    }
+    if ($harnessExit -eq 0) {
         $phase1Status = "ok"
         Write-Ok "Harness selesai"
-    } catch {
-        Write-Warn "Harness error: $_ — lanjut dengan manifest yang ada"
+    } else {
+        Write-Warn "Harness gagal (exit $harnessExit) — lanjut dengan manifest yang ada"
         $phase1Status = "warn"
     }
 } else {

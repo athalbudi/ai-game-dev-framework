@@ -403,3 +403,6 @@ if ($allShots.Count -gt 0) {
 }
 
 Write-Host "========================================================" -ForegroundColor DarkGray
+
+# Exit sukses eksplisit -- lihat catatan yang sama di shot-harness.ps1.
+exit 0

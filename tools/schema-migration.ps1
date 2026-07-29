@@ -297,3 +297,6 @@ if ($ShotsDir -ne "" -and $ManifestPath -eq "") {
     $path = Resolve-ManifestPath -shotsDir $ShotsDir -manifestPath $ManifestPath
     Invoke-Migration -manifestPath $path
 }
+
+# Exit sukses eksplisit -- lihat catatan yang sama di shot-harness.ps1.
+exit 0

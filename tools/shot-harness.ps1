@@ -1381,3 +1381,8 @@ foreach ($f in $allPng) {
     Write-Host "  $($f.Name.PadRight(35)) $size KB" -ForegroundColor Gray
 }
 Write-Host "---------------------------------------------------" -ForegroundColor Cyan
+
+# Exit sukses eksplisit. Tanpa ini script berakhir tanpa menyetel exit code, sehingga
+# $LASTEXITCODE di pemanggil berisi nilai sisa dari perintah sebelumnya -- pemanggil
+# tidak punya cara membedakan sukses dari gagal. Jalur gagal memakai Write-Fail (exit 1).
+exit 0
