@@ -1,58 +1,62 @@
 ## Handoff — 2026-07-29
 
-Commit terakhir: `1f35e73` -- test: fix TEST 12 assertion -- genuinely fail-against-unfixed
-
-Status: tree bersih, repo ↔ deployed sinkron
+Status: tree bersih, repo ↔ deployed sinkron, **36/36 PASS**
 
 ### Selesai di sesi ini
 
-Dua sesi berturut-turut menyelesaikan semua poin dari laporan auditor:
+**Layer 0 — bootstrap** (`setup.ps1`, `tools/doctor.ps1`, `VERSION`, `tools/_common.ps1`)
 
-**Sesi pertama (commit c95f27c):**
-- Sync 38 file ke `~/.config/kilo` — gate wildcard, crash fix autonomous-qa, exit 0,
-  resolver joy/mouse button, input_methods.json kini operasional di deployed
-- Re-sync ScenarioRunner.gd ke 4 game validasi (godot-open-rts, jimat, bread-adventure,
-  godot-tiny-mmo) — TEST 19 drift tertutup
-- TEST 12 assertion diupdate (tapi masih cacat — lihat sesi kedua)
+Sebelumnya tidak ada dokumentasi yang menyebut `sync.ps1` sama sekali — pengguna yang clone
+dari GitHub tidak punya cara tahu langkah itu harus dijalankan. `setup.ps1` menjalankan
+9 langkah: cek PowerShell, unblock `.ps1`, deteksi Godot/ImageMagick, healthcheck pra-sync,
+sync, healthcheck pasca-sync, lalu tulis `version.json`.
 
-**Sesi kedua (commit 1f35e73):**
-- Auditor membuktikan TEST 12 assertion pertama masih vacuous: `**X` di PowerShell identik
-  dengan `*X`, dan `$nonStdPath = "source/scripts/..."` sudah cocok dengan pola lama yang
-  rusak sekalipun — tidak pernah genuinely fail-against-unfixed.
-- Assertion diganti dengan dua layout yang TERBUKTI gagal di pola lama:
-  - `src/global/ScenarioRunner.gd` (bread-adventure)
-  - `source/common/framework/ScenarioRunner.gd` (godot-tiny-mmo)
-- Diverifikasi secara eksplisit:
-  - OLD `*scripts/ScenarioRunner.gd` → breadMatch=0 mmoMatch=0 PASS=False ✓
-  - NEW `*ScenarioRunner.gd`         → breadMatch=1 mmoMatch=1 PASS=True  ✓
+Urutan verifikasi-sebelum-stamp disengaja: `version.json` adalah sinyal yang dibaca hook
+`AGENTS.md`. Kalau ditulis sebelum verifikasi, instalasi gagal meninggalkan stamp menyesatkan.
 
-**Self-test: 24/24 PASS** terverifikasi commit `1f35e73`.
+**Layer 1 — distribusi aturan agent** (`agent-rules/`, `setup.ps1 -InstallAgentRules`)
 
-### Outstanding (prioritas rendah, tidak berubah)
+Opt-in, menulis penunjuk pendek ke `~/.kilocode/rules/` dan `~/.claude/CLAUDE.md`
+(blok bertanda BEGIN/END, idempoten, bisa dicabut). Yang dipasang bukan salinan `AGENTS.md`
+melainkan penunjuk ~20 baris yang diam kalau tidak ada `project.godot`.
 
+**`-InitProject`** — integrasi project game, dengan patch `project.godot` defensif:
+backup, preview, idempoten, dan berhenti total saat nama autoload bentrok.
+
+### Bug yang ditemukan lewat pengujian jalur nyata
+
+Semuanya luput dari suite dan hanya muncul saat menjalankan alur pengguna sungguhan:
+
+1. **`exit 0` hilang di 5 tool** — `$LASTEXITCODE` berisi nilai sisa setelah run sukses.
+   Ditemukan saat dogfood clone-segar → setup → harness pada game nyata.
+2. **`try/catch` yang tidak pernah aktif** di `autonomous-qa.ps1` dan `run-and-analyze.ps1` —
+   `exit 1` dari script yang dipanggil dengan `&` tidak melempar exception, jadi harness
+   yang gagal tercatat `phase1 = "ok"` di laporan JSON.
+3. **`user://` ditebak dari nama direktori** di `feedback-bridge.ps1` — benar hanya di 1 dari
+   4 game validasi, dan itu pun kebetulan. Logika ini terduplikasi di 4 tempat; 3 benar,
+   1 tertinggal.
+4. **Crash pada konfigurasi satu-agent** — PS 5.1 meng-unroll array yang di-return fungsi.
+5. **Data loss** saat penanda BEGIN/END tidak berpasangan.
+6. **Path absolut mesin maintainer** di `test-pipeline.ps1` — membuat TEST 9/10 diam-diam
+   ter-skip di mesin lain sambil tetap melapor hijau.
+
+Pola berulang: konvensi baru diterapkan di kode baru, salinan lama tertinggal — dan fixture
+yang meniru lingkungan sendiri menyembunyikan bug.
+
+### Belum selesai
+
+- Aturan agent belum dipasang ke config asli maintainer (`-InstallAgentRules` belum dijalankan)
+- Kebijakan bump `VERSION` belum ada (masih `0.1.0`)
+- Compile-check terduplikasi di `tools/doctor.ps1` dan TEST 17 — ubah satu, harus ubah keduanya
 - Enam step type scenario (`assert_fps`, `assert_screenshot_exists`, `controller_press`,
-  `mouse_click`, `touch_tap`, `wait_signal`) — `input_methods.json` sudah ada sebagai template,
-  implementasi behavioral di ScenarioRunner belum ada (pre-existing gap)
-- godot-tiny-mmo scenario file memakai `comment`/`wait`/`value` yang tidak dikenal ScenarioRunner
-  (bug pre-existing, bukan regresi)
+  `mouse_click`, `touch_tap`, `wait_signal`) punya template di `scenarios-templates/input_methods.json`
+  tapi implementasi behavioral di `ScenarioRunner.gd` belum ada (gap pre-existing)
 
-### Catatan penting: TEST 19 adalah syarat tegas
+### Catatan: TEST 19 adalah syarat tegas
 
 TEST 19 FAIL di mesin tanpa keempat game validasi kecuali `KILO_GAMES_DIR` di-set.
-Lokasi default: `%USERPROFILE%\Documents\games\` (override dengan env `KILO_GAMES_DIR`)
-Game paths: `godot-open-rts/source/scripts/`, `godot-tiny-mmo/source/common/framework/`,
-`bread-adventure/src/global/`, `jimat/scripts/`
+Default: `%USERPROFILE%\Documents\games\`. SKIP dihitung FAIL — lebih jujur daripada PASS palsu.
 
-### Aturan regression test (dari AGENTS.md — diperkuat oleh sesi ini)
+### File yang perlu dibaca di sesi berikutnya
 
-Test baru harus diobservasi GAGAL terhadap kode yang belum diperbaiki sebelum dianggap valid.
-Sesi ini membuktikan dua kali bahwa angka hijau naik tanpa membuktikan apa-apa (TEST 12 v1
-dan v2 — keduanya PASS tapi v1 tidak bermakna). Verifikasi dengan pola lama/stripped wajib
-dilakukan sebelum commit.
-
-### Catatan setelah update template framework
-
-Setiap kali ada fix di `godot-templates/`, jalankan:
-1. `sync.ps1` — deploy ke `~/.config/kilo`
-2. Copy ScenarioRunner.gd ke 4 game validasi
-3. Self-test `24/24 PASS` sebelum commit
+`setup.ps1`, `tools/_common.ps1`, `tools/doctor.ps1`, `AGENTS.md`, dan `git log --oneline -15`.

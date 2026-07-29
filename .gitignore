@@ -30,3 +30,11 @@ $RECYCLE.BIN/
 .idea/
 *.suo
 *.user
+
+# Catatan internal maintainer -- terikat akun/mesin, bukan bagian distribusi
+docs/token-efficiency.md
+
+# Config lokal AI tool (berisi path absolut mesin / dependency lokal)
+# Catatan: .kilo/ (tanpa "code") BUKAN ini -- itu konten framework yang memang didistribusi.
+.claude/
+.kilocode/

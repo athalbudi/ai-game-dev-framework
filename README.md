@@ -37,6 +37,9 @@ Dirancang untuk membantu developer yang membuat game baru dari nol, tanpa bergan
 | `tools/autonomous-qa.ps1` | Loop QA otonom: observe → analyze → report |
 | `tools/run-and-analyze.ps1` | Jalankan game dan analisis output |
 | `tools/schema-migration.ps1` | Migrasi schema manifest antar versi |
+| `tools/doctor.ps1` | Healthcheck instalasi framework |
+| `tools/test-pipeline.ps1` | Self-test regresi framework (36 test) |
+| `tools/_common.ps1` | Fungsi bersama: deteksi Godot/ImageMagick, pemetaan `user://` |
 
 ### Godot Templates
 
@@ -90,6 +93,17 @@ Opsional, agar framework dikenali dari project game manapun (bukan hanya dari re
 
 Opt-in karena menulis ke `~/.kilocode/rules/` dan `~/.claude/CLAUDE.md` — memakai blok
 bertanda, idempoten, dan bisa dicabut dengan `-UninstallAgentRules`.
+
+Untuk mengintegrasikan sebuah project game (salin template `.gd`, scenario, command AI,
+dan daftarkan autoload di `project.godot`):
+
+```powershell
+& ".\setup.ps1" -InitProject "C:\path\ke\project-game"
+```
+
+`project.godot` disunting secara defensif: backup dibuat, perubahan ditampilkan lebih dulu,
+idempoten, dan berhenti tanpa mengubah apa pun kalau ada nama autoload yang bentrok.
+Tambahkan `-DryRun` untuk melihat rencananya saja.
 
 ### 1. Setup screenshot harness (Godot)
 
