@@ -1816,6 +1816,77 @@ Add-Result "user:// dari config/name (bukan nama direktori)" ($t30Fails.Count -e
     $(if ($t30Fails.Count -eq 0) { "config/name, custom_user_dir, dan fallback non-Godot semuanya benar" } else { ($t30Fails -join " | ") })
 Write-S
 
+# ── TEST 31: -InitProject menyunting project.godot secara defensif ───────────────
+# project.godot adalah file milik developer DAN file pertama yang dibaca Godot -- kalau
+# rusak, project tidak bisa dibuka sama sekali. Empat invariant:
+#   (a) entri autoload milik developer dan section lain TIDAK boleh hilang
+#   (b) idempoten -- jalan kedua kali tidak menduplikasi entri
+#   (c) nama autoload bentrok -> BERHENTI, file tidak berubah, dan tidak ada file
+#       apa pun yang disalin (berhenti sebelum menulis, bukan setengah jalan)
+#   (d) tanpa section [autoload] -> section dibuat, isi lama tetap utuh
+Write-T "TEST 31: -InitProject menyunting project.godot secara defensif"
+$t31Base  = Join-Path $env:TEMP "kilo_t31_$(Get-Date -Format 'HHmmss')"
+$t31Fails = @()
+if ($setupSrc -eq "" -or -not (Test-Path -LiteralPath $setupSrc)) {
+    Add-Result "-InitProject menyunting project.godot dengan aman" $false "setup.ps1 tidak ditemukan"
+} else {
+    try {
+        # (a)+(b) project dengan autoload milik developer
+        $p1 = Join-Path $t31Base "keep"
+        $null = New-Item -ItemType Directory -Path $p1 -Force
+        [System.IO.File]::WriteAllText((Join-Path $p1 "project.godot"),
+            "config_version=5`n`n[application]`nconfig/name=`"Keep`"`n`n[autoload]`n`nMyThing=`"*res://scripts/my_thing.gd`"`n`n[display]`n`nwindow/size/viewport_width=640`n",
+            (New-Object System.Text.UTF8Encoding($false)))
+        & $setupSrc -InitProject $p1 *>&1 | Out-Null
+        $after1 = Get-Content -LiteralPath (Join-Path $p1 "project.godot") -Raw
+        if ($after1 -notmatch 'MyThing=')        { $t31Fails += "a: autoload developer hilang" }
+        if ($after1 -notmatch '\[display\]')      { $t31Fails += "a: section [display] hilang" }
+        if ($after1 -notmatch 'ErrorTracker=')    { $t31Fails += "a: ErrorTracker tidak ditambahkan" }
+        if (-not (Test-Path -LiteralPath (Join-Path $p1 "project.godot.bak"))) { $t31Fails += "a: tidak ada backup" }
+
+        # (b) idempotensi -- jalan kedua tidak boleh menduplikasi
+        & $setupSrc -InitProject $p1 *>&1 | Out-Null
+        $after2 = Get-Content -LiteralPath (Join-Path $p1 "project.godot") -Raw
+        $nET = ([regex]::Matches($after2, 'ErrorTracker=')).Count
+        if ($nET -ne 1) { $t31Fails += "b: ErrorTracker muncul $nET kali (harus 1)" }
+
+        # (c) bentrok -> berhenti total
+        $p2 = Join-Path $t31Base "conflict"
+        $null = New-Item -ItemType Directory -Path $p2 -Force
+        [System.IO.File]::WriteAllText((Join-Path $p2 "project.godot"),
+            "config_version=5`n`n[application]`nconfig/name=`"Conflict`"`n`n[autoload]`n`nErrorTracker=`"*res://addons/mine/my_tracker.gd`"`n",
+            (New-Object System.Text.UTF8Encoding($false)))
+        $hashBefore = (Get-FileHash -LiteralPath (Join-Path $p2 "project.godot") -Algorithm MD5).Hash
+        & $setupSrc -InitProject $p2 *>&1 | Out-Null
+        $ecConflict = $LASTEXITCODE
+        $hashAfter  = (Get-FileHash -LiteralPath (Join-Path $p2 "project.godot") -Algorithm MD5).Hash
+        if ($ecConflict -ne 1)           { $t31Fails += "c: exit=$ecConflict (harus 1)" }
+        if ($hashBefore -ne $hashAfter)  { $t31Fails += "c: project.godot berubah padahal bentrok" }
+        if (Test-Path -LiteralPath (Join-Path $p2 "scripts\ErrorTracker.gd")) {
+            $t31Fails += "c: file .gd tersalin padahal harus berhenti sebelum menulis"
+        }
+
+        # (d) tanpa [autoload] sama sekali
+        $p3 = Join-Path $t31Base "nosection"
+        $null = New-Item -ItemType Directory -Path $p3 -Force
+        [System.IO.File]::WriteAllText((Join-Path $p3 "project.godot"),
+            "config_version=5`n`n[application]`nconfig/name=`"NoSection`"`n`n[rendering]`n`nrenderer/rendering_method=`"mobile`"`n",
+            (New-Object System.Text.UTF8Encoding($false)))
+        & $setupSrc -InitProject $p3 *>&1 | Out-Null
+        $after3 = Get-Content -LiteralPath (Join-Path $p3 "project.godot") -Raw
+        if ($after3 -notmatch '\[autoload\]')  { $t31Fails += "d: section [autoload] tidak dibuat" }
+        if ($after3 -notmatch '\[rendering\]') { $t31Fails += "d: section [rendering] hilang" }
+        if ($after3 -notmatch 'GameStateWriter=') { $t31Fails += "d: autoload tidak ditambahkan" }
+    } catch {
+        $t31Fails += "exception: $_"
+    } finally {
+        Remove-Item -LiteralPath $t31Base -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Add-Result "-InitProject menyunting project.godot dengan aman" ($t31Fails.Count -eq 0) `
+        $(if ($t31Fails.Count -eq 0) { "isi lama terjaga, idempoten, bentrok ditolak, section dibuat saat absen" } else { ($t31Fails -join " | ") })
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
