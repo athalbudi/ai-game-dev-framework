@@ -49,10 +49,28 @@
     Lewati healthcheck pra-sync dan pasca-sync. Untuk pengguna lanjutan yang hanya ingin
     sync cepat -- TIDAK direkomendasikan untuk setup pertama kali.
 
+.PARAMETER InstallAgentRules
+    Pasang aturan agent global supaya framework ini dikenali dari project game manapun,
+    bukan hanya dari dalam repo ini. OPT-IN -- default TIDAK aktif, karena menulis ke
+    direktori config pribadi pengguna harus jadi keputusan sadar.
+
+    Yang disentuh (hanya yang direktorinya sudah ada -- tidak pernah membuat direktori
+    agent yang tidak dipakai pengguna):
+      - ~/.kilocode/rules/gamedev-framework.md   (file terpisah, aditif)
+      - ~/.claude/CLAUDE.md                       (blok bertanda BEGIN/END)
+
+    Isi di luar penanda tidak pernah disentuh, dan menjalankan ulang bersifat idempoten.
+
+.PARAMETER UninstallAgentRules
+    Cabut kembali apa yang dipasang -InstallAgentRules, lalu keluar tanpa menjalankan
+    bootstrap. Teks pengguna di luar penanda tetap utuh.
+
 .EXAMPLE
     & ".\setup.ps1"
     & ".\setup.ps1" -DryRun
     & ".\setup.ps1" -Full
+    & ".\setup.ps1" -InstallAgentRules
+    & ".\setup.ps1" -UninstallAgentRules
 #>
 
 [CmdletBinding()]
@@ -62,7 +80,9 @@ param(
     [string] $GameProjectScriptsDir = "",
     [switch] $DryRun,
     [switch] $Full,
-    [switch] $SkipHealthCheck
+    [switch] $SkipHealthCheck,
+    [switch] $InstallAgentRules,
+    [switch] $UninstallAgentRules
 )
 
 Set-StrictMode -Version Latest
@@ -84,7 +104,181 @@ function Write-Ok   { param($msg) Write-Host "[setup] OK   $msg" -ForegroundColo
 function Write-Warn { param($msg) Write-Host "[setup] WARN $msg" -ForegroundColor Yellow }
 function Write-Bad  { param($msg) Write-Host "[setup] FAIL $msg" -ForegroundColor Red    }
 
-$totalSteps = 9
+# ── Aturan agent global ────────────────────────────────────────────────────────
+# Penanda dipakai untuk menyisipkan ke file yang DIMILIKI pengguna (mis. ~/.claude/CLAUDE.md).
+# Tanpa penanda, satu-satunya cara update adalah menimpa seluruh file -- yang berarti
+# menghancurkan isi pribadi pengguna. Dengan penanda, kita hanya menyentuh blok kita sendiri.
+$agentMarkBegin = "<!-- BEGIN ai-game-dev-framework (dikelola setup.ps1 -- jangan edit manual) -->"
+$agentMarkEnd   = "<!-- END ai-game-dev-framework -->"
+
+function Read-TextFileOrEmpty {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return "" }
+    return [System.IO.File]::ReadAllText($Path)
+}
+
+function Write-TextFileNoBom {
+    param([string]$Path, [string]$Content)
+    $dir = Split-Path $Path -Parent
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    [System.IO.File]::WriteAllText($Path, $Content, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+# Sisipkan/perbarui blok bertanda. Memakai IndexOf + Substring, BUKAN -replace regex:
+# isi aturan bisa mengandung '$' yang akan ditafsirkan sebagai grup pengganti oleh -replace.
+function Set-MarkedBlock {
+    param([string]$Content, [string]$Block)
+    $iB = $Content.IndexOf($agentMarkBegin)
+    $iE = $Content.IndexOf($agentMarkEnd)
+    if ($iB -ge 0 -and $iE -gt $iB) {
+        $before = $Content.Substring(0, $iB)
+        $after  = $Content.Substring($iE + $agentMarkEnd.Length)
+        return ($before + $Block + $after)
+    }
+    if ($Content.Trim() -eq "") { return ($Block + "`n") }
+    return ($Content.TrimEnd() + "`n`n" + $Block + "`n")
+}
+
+function Remove-MarkedBlock {
+    param([string]$Content)
+    $iB = $Content.IndexOf($agentMarkBegin)
+    $iE = $Content.IndexOf($agentMarkEnd)
+    if ($iB -lt 0 -or $iE -le $iB) { return $Content }   # tidak ada blok kita -- jangan sentuh
+    $before = $Content.Substring(0, $iB)
+    $after  = $Content.Substring($iE + $agentMarkEnd.Length)
+    $joined = ($before.TrimEnd() + "`n" + $after.TrimStart()).Trim()
+    if ($joined -eq "") { return "" }
+    return ($joined + "`n")
+}
+
+# Status penanda di sebuah file. "malformed" = BEGIN/END tidak berpasangan (mis. pengguna
+# tak sengaja menghapus salah satunya saat edit manual). Dalam kondisi itu kita TIDAK BOLEH
+# menebak batas blok: IndexOf(BEGIN) yang pertama dipasangkan dengan END milik blok lain
+# akan melahap teks pengguna di antaranya.
+function Get-MarkerState {
+    param([string]$Content)
+    $nB = ([regex]::Matches($Content, [regex]::Escape($agentMarkBegin))).Count
+    $nE = ([regex]::Matches($Content, [regex]::Escape($agentMarkEnd))).Count
+    if ($nB -eq 0 -and $nE -eq 0) { return "none" }
+    if ($nB -eq 1 -and $nE -eq 1 -and ($Content.IndexOf($agentMarkEnd) -gt $Content.IndexOf($agentMarkBegin))) {
+        return "ok"
+    }
+    return "malformed"
+}
+
+function Get-AgentTargets {
+    # Hanya laporkan agent yang direktori config-nya SUDAH ada. Membuat ~/.claude atau
+    # ~/.kilocode untuk pengguna yang tidak memakainya cuma menaruh sampah di home mereka.
+    $home_ = $env:USERPROFILE
+    $t = @()
+    $kilocodeDir = Join-Path $home_ ".kilocode"
+    if (Test-Path -LiteralPath $kilocodeDir) {
+        $t += [pscustomobject]@{
+            Name = "Kilo Code"
+            Path = (Join-Path $kilocodeDir "rules\gamedev-framework.md")
+            Mode = "file"
+        }
+    }
+    $claudeDir = Join-Path $home_ ".claude"
+    if (Test-Path -LiteralPath $claudeDir) {
+        $t += [pscustomobject]@{
+            Name = "Claude Code"
+            Path = (Join-Path $claudeDir "CLAUDE.md")
+            Mode = "block"
+        }
+    }
+    return @($t)
+}
+
+function Install-AgentRules {
+    param([string]$RulesSourcePath)
+    if (-not (Test-Path -LiteralPath $RulesSourcePath)) {
+        Write-Bad "File aturan tidak ditemukan: $RulesSourcePath"
+        return @{ Installed = 0; Failed = 1 }
+    }
+    $rules   = ([System.IO.File]::ReadAllText($RulesSourcePath)).Trim()
+    $block   = $agentMarkBegin + "`n" + $rules + "`n" + $agentMarkEnd
+    # @(...) di sisi pemanggil WAJIB: di PS 5.1 array yang di-return fungsi ter-unroll --
+    # 0 elemen jadi $null dan 1 elemen jadi objek tunggal, sehingga .Count melempar
+    # PropertyNotFoundException di bawah StrictMode. Konfigurasi satu-agent adalah kasus
+    # paling umum di dunia nyata, jadi jalur ini harus benar.
+    $targets = @(Get-AgentTargets)
+    if ($targets.Count -eq 0) {
+        Write-Warn "Tidak ada direktori config agent terdeteksi (~/.kilocode atau ~/.claude)"
+        Write-Warn "Pasang manual: salin isi $RulesSourcePath ke file aturan global agent Anda"
+        return @{ Installed = 0; Failed = 0 }
+    }
+    $installed = 0
+    $failed    = 0
+    foreach ($t in $targets) {
+        if ($t.Mode -eq "file") {
+            # Direktori rules Kilo memang multi-file -- file sendiri, tidak perlu penanda.
+            Write-TextFileNoBom -Path $t.Path -Content ($rules + "`n")
+            Write-Ok ("$($t.Name): " + $t.Path)
+            $installed++
+            continue
+        }
+        $existing = Read-TextFileOrEmpty -Path $t.Path
+        if ((Get-MarkerState -Content $existing) -eq "malformed") {
+            Write-Bad ("$($t.Name): penanda BEGIN/END tidak berpasangan di " + $t.Path)
+            Write-Bad "      File TIDAK diubah. Rapikan manual dulu -- sisakan tepat satu pasang"
+            Write-Bad "      BEGIN/END, atau hapus keduanya -- lalu jalankan lagi."
+            Write-Bad "      Menebak batas blok di sini berisiko menghapus catatan pribadi Anda."
+            $failed++
+            continue
+        }
+        Write-TextFileNoBom -Path $t.Path -Content (Set-MarkedBlock -Content $existing -Block $block)
+        Write-Ok ("$($t.Name): " + $t.Path)
+        $installed++
+    }
+    return @{ Installed = $installed; Failed = $failed }
+}
+
+function Uninstall-AgentRules {
+    $targets = @(Get-AgentTargets)   # lihat catatan unrolling di Install-AgentRules
+    $touched = 0
+    foreach ($t in $targets) {
+        if (-not (Test-Path -LiteralPath $t.Path)) { continue }
+        if ($t.Mode -eq "file") {
+            Remove-Item -LiteralPath $t.Path -Force
+            Write-Ok ("dihapus: " + $t.Path)
+            $touched++
+        } else {
+            $existing = Read-TextFileOrEmpty -Path $t.Path
+            if ((Get-MarkerState -Content $existing) -eq "malformed") {
+                Write-Bad ("penanda tidak berpasangan di " + $t.Path + " -- file tidak diubah")
+                Write-Bad "      Hapus blok framework secara manual agar aman."
+                continue
+            }
+            $stripped = Remove-MarkedBlock -Content $existing
+            if ($stripped -ne $existing) {
+                Write-TextFileNoBom -Path $t.Path -Content $stripped
+                Write-Ok ("blok dicabut, isi lain dipertahankan: " + $t.Path)
+                $touched++
+            }
+        }
+    }
+    if ($touched -eq 0) { Write-Warn "Tidak ada aturan agent terpasang yang ditemukan" }
+    return $touched
+}
+
+# -- Mode uninstall: berdiri sendiri, tidak menjalankan bootstrap ----------------
+if ($UninstallAgentRules) {
+    Write-Host ""
+    if ($InstallAgentRules) {
+        Write-Bad "-InstallAgentRules dan -UninstallAgentRules diberikan bersamaan -- maksudnya ambigu"
+        Write-Bad "Jalankan salah satu saja."
+        exit 1
+    }
+    Write-Host "[setup] Mencabut aturan agent global..." -ForegroundColor Cyan
+    $null = Uninstall-AgentRules
+    Write-Host ""
+    exit 0
+}
+
+$totalSteps = if ($InstallAgentRules) { 10 } else { 9 }
 
 Write-Host ""
 Write-Host "[setup] ================================================" -ForegroundColor Cyan
@@ -179,6 +373,9 @@ if ($LASTEXITCODE -ne 0) {
 
 if ($DryRun) {
     Write-Host ""
+    if ($InstallAgentRules) {
+        Write-Warn "-InstallAgentRules dilewati karena -DryRun aktif (tidak ada file config yang ditulis)"
+    }
     Write-Host "[setup] ================================================" -ForegroundColor Cyan
     Write-Host "[setup]  DRY RUN selesai -- tidak ada perubahan yang ditulis" -ForegroundColor Cyan
     Write-Host "[setup] ================================================" -ForegroundColor Cyan
@@ -229,7 +426,11 @@ try {
     $commitOut = git rev-parse --short HEAD 2>$null
     if ($LASTEXITCODE -eq 0 -and $commitOut) {
         $gitCommit = $commitOut.Trim()
-        $statusOut = git status --porcelain 2>$null
+        # --untracked-files=no disengaja: "dirty" di sini berarti "ada modifikasi lokal
+        # pada file framework yang bisa hilang saat sync ulang". File untracked yang tidak
+        # berhubungan (mis. direktori config editor) bukan itu, dan kalau ikut dihitung
+        # stamp akan selamanya melaporkan dirty=true walau semua sudah ter-commit.
+        $statusOut = git status --porcelain --untracked-files=no 2>$null
         $gitDirty  = [bool]($statusOut -and ($statusOut.Trim() -ne ""))
     } else {
         Write-Warn "Tidak bisa membaca git commit -- bukan git checkout atau git tidak tersedia"
@@ -256,6 +457,23 @@ $versionInfo = [ordered]@{
 $versionJsonPath = Join-Path $kiloConfig "version.json"
 $versionInfo | ConvertTo-Json | Set-Content -LiteralPath $versionJsonPath -Encoding UTF8
 Write-Ok "Ditulis: $versionJsonPath"
+
+# -- 10. (opsional) Pasang aturan agent global -----------------------------------
+if ($InstallAgentRules) {
+    Write-Step 10 $totalSteps "Pasang aturan agent global (opt-in)"
+    $rulesSrc  = Join-Path $repoRoot "agent-rules\gamedev-framework.md"
+    $ruleStats = Install-AgentRules -RulesSourcePath $rulesSrc
+    if ($ruleStats.Failed -gt 0) {
+        Write-Bad "$($ruleStats.Failed) target gagal -- lihat pesan di atas"
+        exit 1
+    }
+    # Jangan klaim "terpasang" kalau tidak ada satu file pun yang ditulis.
+    if ($ruleStats.Installed -eq 0) {
+        Write-Warn "Tidak ada aturan agent yang dipasang (tidak ada agent terdeteksi di mesin ini)"
+    } else {
+        Write-Ok "$($ruleStats.Installed) file aturan diperbarui -- cabut dengan: setup.ps1 -UninstallAgentRules"
+    }
+}
 
 Write-Host ""
 if (-not $godotFound) {

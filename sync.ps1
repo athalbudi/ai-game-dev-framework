@@ -13,6 +13,7 @@
       - ci-templates/**/* (recursive)          -> ~/.config/kilo/ci-templates/
       - fix-request-template.json              -> ~/.config/kilo/fix-request-template.json
       - VERSION                                -> ~/.config/kilo/VERSION
+      - AGENTS.md                              -> ~/.config/kilo/AGENTS.md
 
     Catatan: direktori agent/ tidak di-sync karena belum ada konten di repo.
     Jika agent/ ditambahkan ke repo di masa depan, tambahkan section sync di sini.
@@ -176,6 +177,15 @@ if (Test-Path -LiteralPath $frTemplate) {
 $versionFile = Join-Path $repoRoot "VERSION"
 if (Test-Path -LiteralPath $versionFile) {
     Sync-File $versionFile (Join-Path $kiloConfig "VERSION")
+}
+
+# -- Sync AGENTS.md ke root kilo config -----------------------------------------
+# Aturan agent global (lihat agent-rules/) menunjuk ke ~/.config/kilo/AGENTS.md sebagai
+# lokasi aturan lengkap. Lokasi itu harus stabil -- menunjuk ke repo tidak bisa diandalkan
+# karena repo bisa dipindah, di-rename, atau tidak ada sama sekali di mesin pengguna lain.
+$agentsFile = Join-Path $repoRoot "AGENTS.md"
+if (Test-Path -LiteralPath $agentsFile) {
+    Sync-File $agentsFile (Join-Path $kiloConfig "AGENTS.md")
 }
 
 # -- Summary -------------------------------------------------------------------
