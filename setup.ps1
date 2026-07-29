@@ -149,8 +149,18 @@ function Write-TextFileNoBom {
 
 # Sisipkan/perbarui blok bertanda. Memakai IndexOf + Substring, BUKAN -replace regex:
 # isi aturan bisa mengandung '$' yang akan ditafsirkan sebagai grup pengganti oleh -replace.
+# Samakan line ending sebuah teks dengan konvensi file tujuan. Tanpa ini, blok kita
+# yang ber-LF disisipkan ke CLAUDE.md pengguna yang ber-CRLF dan menghasilkan file
+# campur -- mengganggu editor dan membuat git diff berisik di file yang mereka kelola.
+function ConvertTo-Eol {
+    param([string]$Text, [string]$Eol)
+    $normalized = $Text -replace "`r`n", "`n"
+    if ($Eol -eq "`n") { return $normalized }
+    return ($normalized -replace "`n", $Eol)
+}
+
 function Set-MarkedBlock {
-    param([string]$Content, [string]$Block)
+    param([string]$Content, [string]$Block, [string]$Eol = "`n")
     $iB = $Content.IndexOf($agentMarkBegin)
     $iE = $Content.IndexOf($agentMarkEnd)
     if ($iB -ge 0 -and $iE -gt $iB) {
@@ -158,8 +168,8 @@ function Set-MarkedBlock {
         $after  = $Content.Substring($iE + $agentMarkEnd.Length)
         return ($before + $Block + $after)
     }
-    if ($Content.Trim() -eq "") { return ($Block + "`n") }
-    return ($Content.TrimEnd() + "`n`n" + $Block + "`n")
+    if ($Content.Trim() -eq "") { return ($Block + $Eol) }
+    return ($Content.TrimEnd() + $Eol + $Eol + $Block + $Eol)
 }
 
 function Remove-MarkedBlock {
@@ -242,6 +252,8 @@ function Install-AgentRules {
             continue
         }
         $existing = Read-TextFileOrEmpty -Path $t.Path
+        # Ikuti konvensi EOL file tujuan, bukan memaksakan milik kita.
+        $eolTarget = if ($existing -match "`r`n") { "`r`n" } else { "`n" }
         if ((Get-MarkerState -Content $existing) -eq "malformed") {
             Write-Bad ("$($t.Name): penanda BEGIN/END tidak berpasangan di " + $t.Path)
             Write-Bad "      File TIDAK diubah. Rapikan manual dulu -- sisakan tepat satu pasang"
@@ -250,7 +262,8 @@ function Install-AgentRules {
             $failed++
             continue
         }
-        Write-TextFileNoBom -Path $t.Path -Content (Set-MarkedBlock -Content $existing -Block $block)
+        $blockEol = ConvertTo-Eol -Text $block -Eol $eolTarget
+        Write-TextFileNoBom -Path $t.Path -Content (Set-MarkedBlock -Content $existing -Block $blockEol -Eol $eolTarget)
         Write-Ok ("$($t.Name): " + $t.Path)
         $installed++
     }
@@ -347,8 +360,14 @@ function Invoke-InitProject {
         Write-Bad "Bukan project Godot -- project.godot tidak ada di: $ProjectPath"; return 1
     }
 
-    $lines   = [System.IO.File]::ReadAllLines($projectGodot)
-    $entries = Get-AutoloadEntries -Lines $lines
+    # Pertahankan line ending asli. ReadAllLines membuang EOL, jadi tanpa deteksi ini
+    # file CRLF akan ditulis ulang sebagai LF seluruhnya -- git diff menampilkan SEMUA
+    # baris berubah, bukan dua baris yang benar-benar ditambahkan. Itu membatalkan
+    # seluruh alasan penyuntingan ini dibuat minimal.
+    $rawGodot = [System.IO.File]::ReadAllText($projectGodot)
+    $eol      = if ($rawGodot -match "`r`n") { "`r`n" } else { "`n" }
+    $lines    = [System.IO.File]::ReadAllLines($projectGodot)
+    $entries  = Get-AutoloadEntries -Lines $lines
 
     # Tentukan lokasi file .gd. Kalau autoload framework sudah terdaftar, ikuti lokasi
     # itu -- supaya menjalankan ulang tidak memindahkan file yang sudah dipakai project.
@@ -467,7 +486,7 @@ function Invoke-InitProject {
                 if ($i -eq $sectionEnd) { foreach ($a in $toAdd) { $newLines.Add($a) } }
             }
         }
-        Write-TextFileNoBom -Path $projectGodot -Content (($newLines -join "`n") + "`n")
+        Write-TextFileNoBom -Path $projectGodot -Content (($newLines -join $eol) + $eol)
         Write-Ok "project.godot diperbarui ($($toAdd.Count) autoload ditambahkan)"
     }
 

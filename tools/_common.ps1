@@ -35,12 +35,34 @@ function Resolve-GodotExecutable {
         "$env:LOCALAPPDATA\Programs\Godot\godot.exe"
     )
 
-    # Cari versi apapun di C:\Godot\ -- ambil terbaru, coba lebih dulu dari daftar statis
-    if (Test-Path "C:\Godot") {
-        $found = Get-ChildItem "C:\Godot" -Filter "*win64_console.exe" -ErrorAction SilentlyContinue |
-                 Sort-Object Name -Descending | Select-Object -First 1
-        if ($found) { $candidates = @($found.FullName) + $candidates }
+    # Pencarian version-agnostic di lokasi instalasi umum, didahulukan atas daftar statis.
+    #
+    # Daftar statis di atas menyebut 4.7 secara eksplisit. Tanpa pencarian ini, pengguna
+    # dengan Godot 4.3/4.4/4.5 yang namanya berversi -- dan tidak ada di PATH -- tidak akan
+    # terdeteksi sama sekali. Nama file Godot memang selalu memuat nomor versi, jadi daftar
+    # statis tidak akan pernah cukup.
+    #
+    # Build "_console" didahulukan dengan sengaja: shot-harness membaca stdout Godot, dan
+    # build non-console di Windows tidak menyediakannya.
+    $searchDirs = @(
+        "C:\Godot",
+        "C:\Program Files\Godot",
+        "C:\Program Files (x86)\Godot",
+        "$env:LOCALAPPDATA\Programs\Godot"
+    )
+    $globbed = @()
+    foreach ($dir in $searchDirs) {
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        $exes = @(Get-ChildItem -LiteralPath $dir -Filter "*.exe" -File -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -like "*odot*" })
+        if ($exes.Count -eq 0) { continue }
+        # Nama diurut menurun supaya versi tertinggi menang (v4.7 > v4.4 > v4.3)
+        $console = @($exes | Where-Object { $_.Name -like "*console*" } | Sort-Object Name -Descending)
+        $plain   = @($exes | Where-Object { $_.Name -notlike "*console*" } | Sort-Object Name -Descending)
+        $globbed += @($console | ForEach-Object { $_.FullName })
+        $globbed += @($plain   | ForEach-Object { $_.FullName })
     }
+    if ($globbed.Count -gt 0) { $candidates = $globbed + $candidates }
 
     foreach ($c in $candidates) {
         if (Test-Path -LiteralPath $c) { return $c }

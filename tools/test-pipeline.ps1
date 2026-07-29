@@ -1394,9 +1394,18 @@ if (-not (Test-Path -LiteralPath $doctorDeployed)) {
         & (Join-Path $t20Dir "tools\doctor.ps1") -KiloRoot $t20Dir -GodotExe $GodotExe *>&1 | Out-Null
         $exitBroken = $LASTEXITCODE
 
+        # Kasus ketiga: Godot yang gagal menjalankan checker sama sekali. Tanpa bukti
+        # POSITIF bahwa checker berjalan, doctor hanya melihat "tidak ada tanda gagal"
+        # di stderr dan melaporkan seluruh template bersih -- padahal nol yang diperiksa.
+        # Godot palsu di bawah langsung exit 0 tanpa mencetak apa pun.
+        $fakeGodot = Join-Path $t20Dir "fake-godot.cmd"
+        Set-Content -LiteralPath $fakeGodot -Value "@echo off`r`nexit /b 0" -Encoding ASCII
+        & (Join-Path $t20Dir "tools\doctor.ps1") -KiloRoot $t20Dir -GodotExe $fakeGodot *>&1 | Out-Null
+        $exitNoProof = $LASTEXITCODE
+
         Add-Result "doctor.ps1 mendeteksi template .gd rusak" `
-            (($exitClean -eq 0) -and ($exitBroken -eq 1)) `
-            "bersih=$exitClean (harus 0), rusak=$exitBroken (harus 1)"
+            (($exitClean -eq 0) -and ($exitBroken -eq 1) -and ($exitNoProof -eq 1)) `
+            "bersih=$exitClean (0), rusak=$exitBroken (1), checker-tak-jalan=$exitNoProof (1)"
     } catch {
         Add-Result "doctor.ps1 mendeteksi template .gd rusak" $false ("Exception: " + $_)
     } finally {

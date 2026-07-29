@@ -216,8 +216,10 @@ func _ready() -> void:
             # Nama unik per-proses: dua doctor.ps1 yang jalan bersamaan (mis. suite regresi
             # yang memanggilnya beberapa kali, atau CI paralel) tidak boleh saling menimpa log.
             $checkLog = Join-Path $env:TEMP "kilo_doctor_check_$PID.txt"
+            $checkOut = Join-Path $env:TEMP "kilo_doctor_out_$PID.txt"
             $proc = Start-Process $GodotExe -ArgumentList "--path", "`"$checkDir`"", "--headless" `
-                -PassThru -NoNewWindow -RedirectStandardError $checkLog -ErrorAction SilentlyContinue
+                -PassThru -NoNewWindow -RedirectStandardError $checkLog -RedirectStandardOutput $checkOut `
+                -ErrorAction SilentlyContinue
             if ($proc) { $proc.Handle | Out-Null; $proc.WaitForExit(30000) | Out-Null }
 
             $fails = @()
@@ -228,7 +230,32 @@ func _ready() -> void:
                 Remove-Item -LiteralPath $checkLog -ErrorAction SilentlyContinue
             }
 
-            if ($fails.Count -eq 0) {
+            # Bukti POSITIF bahwa checker benar-benar berjalan, bukan sekadar "tidak ada
+            # tanda gagal". Kalau Godot gagal start -- versi salah, project rusak, GPU
+            # bermasalah -- stderr bisa saja tidak memuat pola kegagalan sama sekali, dan
+            # cek ini akan melaporkan "11 template bersih" tanpa pernah memeriksa apa pun.
+            # Itu pola "SKIP dihitung PASS" yang framework ini tolak di tempat lain.
+            $ranProof   = $false
+            $resultLine = ""
+            if (Test-Path -LiteralPath $checkOut) {
+                $outLines   = @(Get-Content $checkOut -ErrorAction SilentlyContinue)
+                $resultLine = ($outLines | Where-Object { $_ -match "^RESULT:\s*(\d+)\s+failures" } | Select-Object -First 1)
+                $okCount    = @($outLines | Where-Object { $_ -match "^COMPILE_OK:" }).Count
+                # Checker dianggap benar-benar jalan hanya jika ia sempat mencetak RESULT
+                # DAN jumlah OK + gagal menutupi seluruh template yang seharusnya diperiksa.
+                if ($resultLine -and $resultLine -match "^RESULT:\s*(\d+)") {
+                    $reportedFails = [int]$Matches[1]
+                    $ranProof = (($okCount + $reportedFails) -ge $allGdFiles.Count)
+                }
+                Remove-Item -LiteralPath $checkOut -ErrorAction SilentlyContinue
+            }
+
+            if (-not $ranProof) {
+                Write-Bad "Compile check tidak selesai -- Godot tidak mencetak hasil untuk semua $($allGdFiles.Count) template"
+                Write-Bad "      Ini BUKAN 'lulus': tidak ada bukti template pernah diperiksa."
+                Write-Bad "      Kemungkinan Godot gagal start. Jalankan manual untuk melihat sebabnya."
+                $criticalFail = $true
+            } elseif ($fails.Count -eq 0) {
                 Write-Ok "$($allGdFiles.Count) template .gd compile bersih (strict unsafe_method_access=2)"
             } else {
                 Write-Bad "Template gagal compile: $($fails[0])"
