@@ -1936,6 +1936,103 @@ if ($setupSrc -eq "" -or -not (Test-Path -LiteralPath $setupSrc)) {
 }
 Write-S
 
+# ── TEST 32: wait_signal benar-benar MENUNGGU, dua arah ──────────────────────────
+# Versi lama memanggil _step_pass() seketika tanpa await, dan dispatcher-nya juga tidak
+# meng-await step ini. Akibatnya wait_signal SELALU pass meski signal tidak pernah dikirim,
+# dan field "timeout" yang dijanjikan scenarios-templates/input_methods.json diabaikan.
+# Terukur pada build lama: scenario menunggu signal tak-pernah-dikirim dengan timeout 3s
+# selesai dalam 0,229 detik dan melaporkan PASS. Itu false-verify -- scenario yang memakai
+# wait_signal untuk sinkronisasi berlari mendahului game lalu melapor sinkronisasi berhasil.
+#
+# Diuji DUA ARAH dengan sengaja: hanya menguji arah timeout akan meloloskan regresi
+# "selalu gagal", yang sama buruknya.
+Write-T "TEST 32: wait_signal menunggu -- timeout FAIL, signal diterima PASS"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "wait_signal menunggu (timeout fail / diterima pass)" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t32Dir  = Join-Path $env:TEMP "kilo_t32_$(Get-Date -Format 'HHmmss')"
+    $t32Fails = @()
+    try {
+        $null = New-Item -ItemType Directory -Path "$t32Dir\scripts"   -Force
+        $null = New-Item -ItemType Directory -Path "$t32Dir\scenarios" -Force
+        $noBom32 = New-Object System.Text.UTF8Encoding($false)
+        # Template dari lokasi DEPLOYED -- yang diuji adalah apa yang benar-benar dipakai
+        # pengguna, bukan salinan repo.
+        $t32Templates = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        foreach ($tmpl in @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")) {
+            $src = Join-Path $t32Templates $tmpl
+            if (-not (Test-Path -LiteralPath $src)) { continue }
+            $rawT = [System.IO.File]::ReadAllBytes($src)
+            $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF -and $rawT[1] -eq 0xBB -and $rawT[2] -eq 0xBF) { 3 } else { 0 }
+            [System.IO.File]::WriteAllText("$t32Dir\scripts\$tmpl",
+                [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom32)
+        }
+        [System.IO.File]::WriteAllText("$t32Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"KiloT32`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom32)
+        [System.IO.File]::WriteAllText("$t32Dir\main.tscn",
+            "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom32)
+        [System.IO.File]::WriteAllText("$t32Dir\scenarios\sig.json",
+            '{"scenario_id":"t32","steps":[{"type":"wait_signal","signal_name":"t32_ready","timeout":3.0}]}', $noBom32)
+
+        $t32Shots  = "$env:APPDATA\Godot\app_userdata\KiloT32\shots"
+        $t32Result = Join-Path $t32Shots "scenario_result.json"
+
+        # main.gd tanpa emit -- ErrorTracker membuat ScenarioRunner pada waktu yang tidak
+        # dijamin, jadi varian emit di bawah HARUS polling, bukan menebak delay.
+        $mainNoEmit = "extends Node`n`nfunc _ready() -> void:`n`tpass`n"
+        $mainEmit   = @'
+extends Node
+
+func _ready() -> void:
+	var sr: Node = null
+	for i in 200:
+		for c in get_tree().root.get_children():
+			if c.has_method("emit_scenario_signal"):
+				sr = c
+				break
+		if sr != null:
+			break
+		await get_tree().process_frame
+	if sr == null:
+		return
+	await get_tree().create_timer(0.5).timeout
+	sr.call("emit_scenario_signal", "t32_ready")
+'@
+        $null = Start-Process $GodotExe -ArgumentList "--path", "`"$t32Dir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+
+        foreach ($case in @(
+            @{ Name = "timeout";  Main = $mainNoEmit; WantStatus = "fail"; WantFail = 1 },
+            @{ Name = "diterima"; Main = $mainEmit;   WantStatus = "pass"; WantFail = 0 }
+        )) {
+            [System.IO.File]::WriteAllText("$t32Dir\main.gd", $case.Main, $noBom32)
+            Remove-Item -LiteralPath $t32Result -Force -ErrorAction SilentlyContinue
+            $pr = Start-Process $GodotExe -ArgumentList "--path", "`"$t32Dir`"", "--", "--scenario", "res://scenarios/sig.json" `
+                -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+            if ($pr) { $pr.Handle | Out-Null; $pr.WaitForExit(45000) | Out-Null; if (-not $pr.HasExited) { $pr.Kill() } }
+
+            if (-not (Test-Path -LiteralPath $t32Result)) {
+                $t32Fails += "$($case.Name): scenario_result.json tidak dihasilkan"
+                continue
+            }
+            $r32 = Get-Content -LiteralPath $t32Result -Raw | ConvertFrom-Json
+            # steps_total harus 1: build perantara yang tidak di-await menghasilkan
+            # "pass=0 fail=0" -- step-nya tidak pernah tercatat sama sekali.
+            if ($r32.steps_total -ne 1)              { $t32Fails += "$($case.Name): steps_total=$($r32.steps_total), harus 1" }
+            if ($r32.status -ne $case.WantStatus)    { $t32Fails += "$($case.Name): status=$($r32.status), harus $($case.WantStatus)" }
+            if ($r32.steps_fail -ne $case.WantFail)  { $t32Fails += "$($case.Name): steps_fail=$($r32.steps_fail), harus $($case.WantFail)" }
+        }
+        Add-Result "wait_signal menunggu (timeout fail / diterima pass)" ($t32Fails.Count -eq 0) `
+            $(if ($t32Fails.Count -eq 0) { "timeout -> fail, signal diterima -> pass, step tercatat di kedua kasus" } else { ($t32Fails -join " | ") })
+    } catch {
+        Add-Result "wait_signal menunggu (timeout fail / diterima pass)" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t32Dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\KiloT32" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."

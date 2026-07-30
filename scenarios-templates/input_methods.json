@@ -8,8 +8,8 @@
     "Sesuaikan koordinat, button, action, dan signal name dengan game kamu.",
     "mouse_click dan touch_tap menggunakan koordinat pixel relatif terhadap viewport.",
     "controller_press menerima nama string ('button_a', 'dpad_up', dll) ATAU integer literal Godot JoyButton.",
-    "controller_press membutuhkan joypad terhubung — skip di CI headless tanpa virtual joypad.",
-    "wait_signal membutuhkan game emit ScenarioRunner.scenario_signal(name) dari kode GDScript.",
+    "controller_press TIDAK membutuhkan joypad fisik: ia menyintesis event lewat Input.parse_input_event, bukan membaca hardware. Terverifikasi jalan dengan 0 joypad terhubung, termasuk di CI.",
+    "wait_signal MENUNGGU sampai signal diterima atau timeout habis, lalu FAIL kalau tidak diterima. Game harus memanggil ScenarioRunner.emit_scenario_signal(name) dari GDScript.",
     "assert_fps berguna untuk deteksi regresi performa — sesuaikan threshold dengan target game.",
     "assert_screenshot_exists memverifikasi step screenshot sebelumnya berhasil disimpan ke disk."
   ],
@@ -76,7 +76,7 @@
     {
       "type": "controller_press",
       "button": "button_a",
-      "comment": "SESUAIKAN: tekan tombol controller. Nama string yang valid: button_a, button_b, button_x, button_y, dpad_up, dpad_down, dpad_left, dpad_right, left_shoulder, right_shoulder, left_stick, right_stick, start, back, guide, misc1, paddle1, paddle2, paddle3, paddle4, touchpad. Integer literal Godot JoyButton juga diterima. Membutuhkan joypad terhubung — tidak bekerja di headless CI tanpa virtual joypad."
+      "comment": "SESUAIKAN: tekan tombol controller. Nama string yang valid: button_a, button_b, button_x, button_y, dpad_up, dpad_down, dpad_left, dpad_right, left_shoulder, right_shoulder, left_stick, right_stick, start, back, guide, misc1, paddle1, paddle2, paddle3, paddle4, touchpad. Integer literal Godot JoyButton juga diterima. Tidak perlu joypad fisik — event disintesis lewat Input.parse_input_event, jadi jalan juga di CI."
     },
     {
       "type": "wait_frames",
@@ -95,7 +95,7 @@
       "type": "wait_signal",
       "signal_name": "game_ready",
       "timeout": 10.0,
-      "comment": "SESUAIKAN: tunggu signal 'game_ready' dikirim oleh game. Game harus memanggil ScenarioRunner.scenario_signal('game_ready') dari GDScript saat event terjadi. Contoh di GDScript: ScenarioRunner.scenario_signal.emit('game_ready'). Timeout default 10 detik jika signal tidak diterima."
+      "comment": "SESUAIKAN: tunggu signal 'game_ready' dikirim oleh game. Game harus memanggil ScenarioRunner.emit_scenario_signal('game_ready') dari GDScript saat event terjadi -- pakai method itu, BUKAN scenario_signal.emit(), karena hanya method itu yang menandai signal sebagai diterima. Step ini menunggu sampai signal masuk atau timeout habis (default 10 detik), lalu FAIL kalau tidak diterima."
     },
     {
       "type": "screenshot",

@@ -100,7 +100,10 @@ func _dispatch(step_type: String, step: Dictionary) -> void:
 	elif step_type == "wait_scene":
 		await _exec_wait_scene(step)
 	elif step_type == "wait_signal":
-		_exec_wait_signal(step)
+		# await WAJIB: _exec_wait_signal sekarang benar-benar menunggu (await + timeout).
+		# Tanpa await, dispatcher kembali seketika, scenario selesai lebih dulu, dan hasil
+		# step-nya tidak pernah tercatat -- terukur sebagai "PASS | pass=0 fail=0 skip=0".
+		await _exec_wait_signal(step)
 	elif step_type == "wait_condition":
 		await _exec_wait_condition(step)
 	elif step_type == "action":
@@ -184,9 +187,29 @@ func _exec_wait_signal(step: Dictionary) -> void:
 	if sig.is_empty():
 		_step_fail("wait_signal tidak punya field 'signal_name'")
 		return
+	# Terima "timeout" (dipakai scenarios-templates/input_methods.json) maupun
+	# "timeout_sec" (dipakai wait_condition), supaya scenario yang sudah ada tetap jalan.
+	var timeout_sec: float = float(step.get("timeout_sec", step.get("timeout", 10.0)))
 	_waiting_signal = sig
 	_signal_received = false
-	_step_pass({"waiting_for": sig})
+
+	# Versi sebelumnya memanggil _step_pass() di sini juga -- langsung, tanpa menunggu.
+	# Akibatnya step ini SELALU pass meski signal tidak pernah dikirim, dan field
+	# "timeout" yang dijanjikan template diabaikan total. Terukur: scenario yang menunggu
+	# signal tak-pernah-dikirim dengan timeout 3s selesai dalam 0,229 detik dan lapor PASS.
+	# Itu false-verify: scenario yang memakai wait_signal untuk sinkronisasi akan berlari
+	# mendahului game, lalu melaporkan bahwa sinkronisasinya berhasil.
+	var elapsed: float = 0.0
+	while elapsed < timeout_sec:
+		if _signal_received:
+			_signal_received = false
+			_step_pass({"signal": sig, "waited_sec": snappedf(elapsed, 0.001)})
+			return
+		await _wait_frames(1)
+		elapsed += get_process_delta_time()
+
+	_signal_received = false
+	_step_fail("Signal '%s' tidak diterima dalam %.1f detik" % [sig, timeout_sec])
 
 
 func _exec_wait_condition(step: Dictionary) -> void:
@@ -510,17 +533,16 @@ func _exec_repeat(step: Dictionary) -> void:
 	_step_pass({"repeated": count, "failed_in_repeat": failed})
 
 
-# --- Process polling untuk wait_scene/wait_signal ---
+# --- Process polling ---
 
 func _process_current_step() -> void:
-	if _current_step >= _steps.size():
-		return
-	var step: Dictionary = _steps[_current_step]
-	var step_type: String = step.get("type", "")
-	if step_type == "wait_signal":
-		if _signal_received:
-			_signal_received = false
-			_step_pass({"signal": _waiting_signal})
+	# Dulu berisi polling untuk wait_signal, tapi tidak pernah bisa bekerja: _exec_wait_signal
+	# memanggil _step_pass() sebelum polling ini sempat berjalan, jadi _current_step sudah
+	# maju dan cabang ini selalu melihat step BERIKUTNYA, bukan wait_signal-nya.
+	# Penantian kini dilakukan langsung di _exec_wait_signal dengan await + timeout.
+	# Fungsi ini dipertahankan sebagai titik sisip kalau nanti ada step yang benar-benar
+	# butuh polling per-frame di luar coroutine step-nya sendiri.
+	pass
 
 
 # --- Signal relay ---
