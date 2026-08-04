@@ -170,3 +170,49 @@ function Resolve-GodotShotsDir {
     param([string] $ProjectPath)
     return (Get-GodotUserDirInfo -ProjectPath $ProjectPath).ShotsDir
 }
+
+
+## Persentase pixel yang benar-benar berbeda antara dua gambar (0..100), atau -1 kalau gagal.
+##
+## JANGAN ganti dengan `compare -metric AE`. Pada build Q16-HDRI, AE mengembalikan jumlah
+## magnitudo ter-skala quantum dan bukan cacah pixel: 500 pixel berbeda menghasilkan
+## 500 x 65535 = 32.767.500, sehingga rasio membengkak lalu ter-clamp ke 100 dan SETIAP
+## gambar yang tidak identik dilaporkan "100% berubah".
+##
+## Urutan operator di bawah semuanya load-bearing:
+##   -colorspace sRGB di DEPAN  : menyamakan colorspace kedua input lebih dulu; tanpa ini
+##                                baseline Gray vs current sRGB terbaca identik.
+##   -threshold 0               : bekerja per channel, menandai setiap selisih sekecil apa pun.
+##   -separate -evaluate-sequence max : sebuah pixel dihitung berbeda bila ADA channel yang
+##                                berbeda, sehingga perbedaan murni warna tidak hilang saat
+##                                citra selisih diratakan menjadi Gray.
+function Get-ImageChangePercent {
+    param(
+        [string] $PathA,
+        [string] $PathB,
+        [string] $ImageMagickExe
+    )
+    if (-not (Test-Path -LiteralPath $PathA)) { return -1.0 }
+    if (-not (Test-Path -LiteralPath $PathB)) { return -1.0 }
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName  = $ImageMagickExe
+    $psi.Arguments = "`"$PathA`" `"$PathB`" -colorspace sRGB -alpha off " +
+                     "-compose difference -composite -threshold 0 " +
+                     "-separate -evaluate-sequence max -format `"%[fx:mean]`" info:"
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError  = $true
+    $psi.UseShellExecute        = $false
+    $psi.WindowStyle            = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    try {
+        $p    = [System.Diagnostics.Process]::Start($psi)
+        $so   = $p.StandardOutput.ReadToEnd()
+        $null = $p.StandardError.ReadToEnd()
+        $p.WaitForExit()
+        if ($p.ExitCode -ne 0) { return -1.0 }
+        if ($so.Trim() -match "^([\d.]+(?:[eE][+\-]?\d+)?)$") {
+            return [math]::Round([double]$Matches[1] * 100, 3)
+        }
+    } catch { }
+    return -1.0
+}

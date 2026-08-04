@@ -54,6 +54,12 @@ func _shot_quit_watchdog() -> void:
 	# sudah ter-register sebelum _shot_tour dipanggil.
 	print("[ErrorTracker] --shot watchdog aktif")
 
+	# Jumlah PNG SEBELUM apa pun terjadi. Harus diambil di baris pertama: kalau diukur setelah
+	# jeda hot-reload di bawah, tur milik game (kalau ada) sudah sempat menulis file pertamanya
+	# dan pertambahannya tidak lagi terlihat. Nilai absolutnya tidak berarti -- folder bisa
+	# berisi sisa run sebelumnya -- yang bermakna hanya pertambahannya.
+	var pngAtStart := _count_shot_pngs()
+
 	# Tunggu hot-reload selesai (4 frame cukup untuk class_name re-register)
 	for _i in range(4):
 		await get_tree().process_frame
@@ -96,9 +102,34 @@ func _shot_quit_watchdog() -> void:
 			print("[ErrorTracker] --shot watchdog: tidak ada PNG setelah 10 detik")
 		return
 
+	# ErrorTracker adalah SATU-SATUNYA pemilik pemanggilan _shot_tour. Kalau game juga
+	# memanggilnya sendiri dari _ready(), dua tur berjalan bersamaan menelusuri UI dan state
+	# yang sama: screenshot saling mendahului dan tersimpan dengan nama layar yang SALAH.
+	# Terukur pada jimat -- setiap baris log muncul dua kali dan 01_title.png justru berisi
+	# layar Candi. Kerusakan ini diam: jumlah file tetap benar dan coverage tetap 100%,
+	# sehingga tidak ada satu pun pemeriksaan lain yang bisa melihatnya. Karena itu di sini
+	# harus dibatalkan dan diteriakkan, bukan diperbaiki diam-diam.
+	if main_node.has_meta("saksi_shot_tour_invoked"):
+		push_error("[ErrorTracker] _shot_tour sudah dipanggil watchdog sebelumnya -- pemanggilan kedua dibatalkan")
+		print("[ErrorTracker] --shot watchdog: BATAL -- _shot_tour sudah dipanggil")
+		return
+	# Beri jeda singkat sebelum memutuskan. Tur milik game dipanggil lewat call_deferred dari
+	# _ready(), dan _snap() sendiri menunggu beberapa frame sebelum menulis file -- tanpa jeda
+	# ini watchdog bisa sampai di sini lebih dulu dan tidak melihat pertambahan apa pun.
+	# Pada game yang TIDAK memanggil sendiri, jeda ini tidak menulis apa-apa dan hanya
+	# menambah sekitar setengah detik.
+	for _i in range(30):
+		await get_tree().process_frame
+	var pngNow := _count_shot_pngs()
+	if pngNow > pngAtStart:
+		push_error("[ErrorTracker] Tur screenshot sudah berjalan sebelum watchdog memanggilnya (%d -> %d PNG). Game tampaknya memanggil _shot_tour() sendiri dari _ready() -- hapus pemanggilan itu, ErrorTracker yang memilikinya. Dua tur bersamaan menyimpan screenshot dengan nama layar yang salah." % [pngAtStart, pngNow])
+		print("[ErrorTracker] --shot watchdog: BATAL -- tur sudah berjalan (game memanggil _shot_tour sendiri?)")
+		return
+
 	# Trigger shot tour via ErrorTracker (bukan call_deferred dari main._ready)
 	# Gunakan .call_deferred("_shot_tour") agar kompatibel dengan GDScript strict mode --
 	# memanggil custom method langsung di atas Node return value gagal di unsafe_method_access=2
+	main_node.set_meta("saksi_shot_tour_invoked", true)
 	print("[ErrorTracker] --shot watchdog: memanggil _shot_tour di %s" % main_node.name)
 	main_node.call_deferred("_shot_tour")
 
@@ -128,6 +159,23 @@ func _shot_quit_watchdog() -> void:
 			return
 	print("[ErrorTracker] --shot watchdog: timeout 5 menit")
 	get_tree().quit(0)
+
+## Menghitung PNG di user://shots. Satu-satunya kegunaannya: mendeteksi tur screenshot yang
+## sudah terlanjur berjalan sebelum watchdog memanggilnya.
+func _count_shot_pngs() -> int:
+	var dir := DirAccess.open("user://shots")
+	if dir == null:
+		return 0
+	var n := 0
+	dir.list_dir_begin()
+	var f := dir.get_next()
+	while f != "":
+		if f.ends_with(".png"):
+			n += 1
+		f = dir.get_next()
+	dir.list_dir_end()
+	return n
+
 
 ## Dipanggil dari _shot_tour() saat game perlu ganti scene sebelum screenshot berikutnya.
 ## ErrorTracker tetap hidup sebagai Autoload saat scene change, sehingga coroutine ini

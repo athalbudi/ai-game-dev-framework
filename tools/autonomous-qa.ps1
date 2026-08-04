@@ -197,8 +197,17 @@ function Detect-Anomalies {
     }
 
     # --- Deteksi 2: Screenshot stale ---
+    # HANYA layar hasil tur --shot yang bermakna di sini. Sinyalnya adalah "layar yang dulu
+    # tercapai kini tidak lagi" -- itu memang layak diselidiki. Artefak buatan framework
+    # sendiri (scenario_*, aq_*, zoom_*, diff_*) tidak pernah diperbarui oleh tur, jadi
+    # umurnya bertambah selamanya dan pasti melewati ambang 168 jam.
+    # Terukur pada jimat: 20 dari 21 anomali "critical" adalah sisa run autonomous-qa
+    # sebelumnya, dan kedelapan slot investigasi terpakai habis untuk memotret ulang sampah
+    # milik framework sendiri -- sementara regresi visual yang asli tidak kebagian slot.
+    $artefakFramework = '^(scenario_|aq_|zoom_|diff_)'
     foreach ($ss in @($manifest.screenshots)) {
         if (-not $ss -or -not $ss.last_write) { continue }
+        if ($ss.file -match $artefakFramework) { continue }
         try {
             $lwTime  = [datetime]::ParseExact($ss.last_write, "yyyy-MM-dd HH:mm:ss", $null)
             $runTime = if ($manifest.generated_at) {
@@ -454,7 +463,13 @@ function Generate-InvestigationScenario {
 function Run-Scenario {
     param([hashtable] $scenario, [int] $iteration)
 
-    if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $projectGodot)) {
+    # $projectGodot dulu tidak pernah didefinisikan di mana pun. Karena -or melakukan
+    # short-circuit, baris ini HANYA meledak ketika $GodotExe terisi -- yaitu justru saat
+    # Godot berhasil ditemukan dan fase RUN seharusnya berjalan. Di lingkungan tanpa Godot
+    # cabang kiri sudah true sehingga sisi kanan tak pernah dievaluasi dan bug ini tak
+    # pernah terlihat. Akibatnya fase RUN loop autonomous tidak pernah sekali pun jalan.
+    $projectGodotFile = Join-Path $ProjectPath "project.godot"
+    if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $projectGodotFile)) {
         Write-Warn "Skip RUN — Godot tidak tersedia atau project.godot tidak ditemukan"
         return $null
     }

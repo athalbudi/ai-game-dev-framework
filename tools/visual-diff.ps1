@@ -375,8 +375,11 @@ function Get-NormalizedPath {
 }
 
 # -- 5. Kumpulkan file ---------------------------------------------------------
+        # Filter scenario_* WAJIB simetris. Sebelumnya hanya current yang difilter, sehingga
+        # setiap scenario_*.png yang ikut terbawa saat baseline di-set dilaporkan "HILANG"
+        # selamanya -- alarm palsu, karena file itu sebenarnya ada di disk.
         $currentPngs  = @(Get-ChildItem -LiteralPath $ShotsDir   -Filter "*.png" | Where-Object { $_.Name -notmatch "^scenario_" } | Sort-Object Name)
-        $baselinePngs = @(Get-ChildItem -LiteralPath $BaselineDir -Filter "*.png" | Sort-Object Name)
+        $baselinePngs = @(Get-ChildItem -LiteralPath $BaselineDir -Filter "*.png" | Where-Object { $_.Name -notmatch "^scenario_" } | Sort-Object Name)
 
 $baselineMap = @{}
 foreach ($b in $baselinePngs) {
@@ -394,6 +397,9 @@ Write-Step "Membandingkan $($currentPngs.Count) current vs $($baselinePngs.Count
 Write-Host ""
 
 # -- 6. Bandingkan current vs baseline -----------------------------------------
+# Metrik "persen pixel berubah" ada di Get-ImageChangePercent (_common.ps1) supaya
+# visual-diff dan visual-review memakai perhitungan yang SAMA. Alasan teknis kenapa
+# AE tidak boleh dipakai di build HDRI didokumentasikan di fungsi itu.
 foreach ($cur in $currentPngs) {
     if ($cur.Name -like "zoom_*") { continue }
     if ($cur.Name -like "diff_*") { continue }
@@ -488,13 +494,22 @@ foreach ($cur in $currentPngs) {
             # Fallback: ukuran default jika identify gagal (mis. resolusi Godot default 720×1600)
             if ($totalPixels -le 0) { $totalPixels = 720 * 1600 }
 
-            # Normalisasi AE ke persentase 0–100.
-            # Pada build ImageMagick Q16-HDRI, AE bukan cacah pixel biasa melainkan
-            # nilai quantum-scaled yang bisa jauh > totalPixels. Clamp ke 100 agar
-            # threshold (default 1%) dan region_thresholds tetap bermakna di semua build.
-            # Pada build non-HDRI (Q8/Q16), AE = cacah pixel → rasio tetap benar.
-            $rawChangePct  = ($pixelsDiff / $totalPixels) * 100
-            $changePct     = [math]::Round([math]::Min(100.0, $rawChangePct), 3)
+            # Utama: hitung fraksi pixel berubah secara eksplisit — akurat di semua build.
+            # AE hanya dipakai sebagai fallback kalau pipeline fx gagal (mis. ImageMagick v6,
+            # di mana $ImageMagick menunjuk compare.exe dan bukan konverter serbaguna).
+            $changePct = -1.0
+            if ($isV7) {
+                $changePct = Get-ImageChangePercent -PathA $basePathForDiff `
+                                                    -PathB $curPathForDiff `
+                                                    -ImageMagickExe $ImageMagick
+            }
+            if ($changePct -lt 0) {
+                $rawChangePct    = ($pixelsDiff / $totalPixels) * 100
+                $changePct       = [math]::Round([math]::Min(100.0, $rawChangePct), 3)
+                $entry["metric"] = "ae_fallback"
+            } else {
+                $entry["metric"] = "pixel_exact"
+            }
 
             $entry.change_pct = $changePct
             $entry.diff_image = "diff\diff_" + $cur.Name

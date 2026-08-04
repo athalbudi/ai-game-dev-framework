@@ -32,6 +32,22 @@ var _waiting_signal: String = ""
 var _signal_received: bool = false
 var _active: bool = false
 
+# --- Invariant: klaim yang berlaku sepanjang run, bukan di satu titik ---
+# assert_state bersifat posisional -- ia hanya memeriksa di tempat penulis scenario
+# menaruhnya, jadi bug yang terjadi di antara dua assertion tidak terlihat. Invariant
+# diperiksa setelah SETIAP langkah, sehingga kelas bug "pemain melompati sesuatu"
+# (progres naik tanpa usaha yang mendahuluinya) baru bisa terdeteksi sama sekali.
+#
+# Pelanggaran TIDAK menghentikan run kecuali invariant itu menyetel fail_fast:true --
+# satu run harus bisa memanen semua pelanggaran sekaligus, dan fail-fast di sini akan
+# membuat mode eksplorasi tidak berguna karena pelanggaran pertama mengakhiri penjelajahan.
+# Hasil di-dedup per id: kejadian pertama disimpan lengkap, berikutnya hanya menambah
+# pencacah, supaya satu kondisi yang terus rusak tidak membanjiri laporan.
+var _invariants: Array = []
+var _invariant_violations: Dictionary = {}
+var _invariant_prev: Dictionary = {}
+var _invariant_checks: int = 0
+
 
 func _ready() -> void:
 	# Hanya aktif jika dipanggil langsung via _run_scenario dari main, bukan --scenario flag
@@ -70,6 +86,7 @@ func run_scenario_file(path: String) -> int:
 		_write_result("error", "Scenario tidak punya field 'steps'")
 		return 1
 	_steps = _scenario["steps"]
+	_load_invariants(path)
 	_scenario_start_time = Time.get_unix_time_from_system()
 	_current_step = 0
 	if _scenario.has("seed") and _scenario["seed"] != null:
@@ -81,6 +98,14 @@ func run_scenario_file(path: String) -> int:
 
 
 func _run_steps() -> int:
+	# State awal jadi pembanding untuk delta di langkah pertama. Tanpa ini delta pada
+	# langkah 1 selalu kosong dan invariant berbasis delta diam-diam tidak pernah menguji apa pun.
+	if not _invariants.is_empty():
+		var w0 := _resolve_state_writer()
+		if w0 != null:
+			w0.call("_write_game_state")
+			await _wait_frames(1)
+		_invariant_prev = _read_game_state()
 	for i in range(_steps.size()):
 		_current_step = i
 		_step_start_time = Time.get_unix_time_from_system()
@@ -95,6 +120,17 @@ func _run_steps() -> int:
 				print("[scenario] FAIL at step %d: %s" % [i + 1, last.get("reason", "")])
 				_write_result("fail", last.get("reason", ""))
 				return 1
+		if await _check_invariants(i, step_type):
+			_write_result("fail", "Invariant fail_fast dilanggar di step %d" % (i + 1))
+			return 1
+	# Pelanggaran invariant critical WAJIB mengubah status akhir. Kalau hanya dicatat di
+	# laporan, exit code tetap 0 dan orchestrator yang -- sesuai kontraknya -- hanya membaca
+	# exit code akan meluluskan run yang sebenarnya melanggar aturan game. Itu pola
+	# false-verify yang sudah pernah terjadi di proyek ini (status benar, exit code salah).
+	var critical := _critical_violations()
+	if critical.size() > 0:
+		_write_result("fail", "Invariant critical dilanggar: " + ", ".join(PackedStringArray(critical)))
+		return 1
 	_write_result("pass", null)
 	return 0
 
@@ -135,12 +171,283 @@ func _dispatch(step_type: String, step: Dictionary) -> void:
 		_exec_set_state(step)
 	elif step_type == "log":
 		_exec_log(step)
+	elif step_type == "explore":
+		await _exec_explore(step)
 	elif step_type == "repeat":
 		await _exec_repeat(step)
 	elif step_type == "seed_override":
 		_exec_seed_override(step)
 	else:
 		_step_skip("Step type tidak dikenal: " + step_type)
+
+
+# --- Invariant ---
+
+## Dimuat dari dua sumber: field "invariants" di scenario itu sendiri, dan file game-wide
+## res://scenarios/invariants.json. Yang game-wide berlaku untuk SEMUA scenario -- di situ
+## nilai terbesarnya: sekali tulis, seluruh suite yang sudah ada langsung ikut diawasi
+## tanpa satu pun scenario perlu diubah.
+func _load_invariants(scenario_path: String) -> void:
+	_invariants = []
+	var shared_path := "res://scenarios/invariants.json"
+	if FileAccess.file_exists(shared_path) and scenario_path != shared_path:
+		var f := FileAccess.open(shared_path, FileAccess.READ)
+		if f:
+			var j := JSON.new()
+			var perr := j.parse(f.get_as_text())
+			f.close()
+			if perr == OK:
+				var d: Variant = j.get_data()
+				if d is Dictionary and (d as Dictionary).has("invariants"):
+					var arr: Variant = (d as Dictionary)["invariants"]
+					if arr is Array:
+						_invariants.append_array(arr as Array)
+			else:
+				push_warning("[scenario] invariants.json tidak valid: " + j.get_error_message())
+	if _scenario.has("invariants") and _scenario["invariants"] is Array:
+		_invariants.append_array(_scenario["invariants"] as Array)
+	if _invariants.size() > 0:
+		print("[scenario] Invariant aktif: %d" % _invariants.size())
+
+
+## delta HANYA dihitung untuk field numerik yang hadir di kedua state. Field yang baru
+## muncul atau hilang sengaja tidak diberi delta -- kalau dipaksakan jadi 0, invariant
+## seperti "delta.seals <= delta.wins" akan lolos diam-diam justru saat datanya tidak ada.
+func _state_delta(prev: Dictionary, curr: Dictionary) -> Dictionary:
+	var d: Dictionary = {}
+	for k: Variant in curr.keys():
+		if not prev.has(k):
+			continue
+		var a: Variant = prev[k]
+		var b: Variant = curr[k]
+		if (a is int or a is float) and (b is int or b is float):
+			d[k] = float(b) - float(a)
+	return d
+
+
+## Mengembalikan hasil boolean ekspresi, atau null kalau ekspresi tidak bisa
+## di-parse/dievaluasi. null sengaja dibedakan dari false: ekspresi rusak adalah masalah
+## penulisan invariant, bukan bukti game melanggar sesuatu.
+func _eval_invariant(src: String, prev: Dictionary, curr: Dictionary, delta: Dictionary) -> Variant:
+	var e := Expression.new()
+	var err := e.parse(src, PackedStringArray(["prev", "curr", "delta"]))
+	if err != OK:
+		push_warning("[scenario] invariant tidak bisa di-parse: '%s' -- %s" % [src, e.get_error_text()])
+		return null
+	var res: Variant = e.execute([prev, curr, delta], null, false)
+	if e.has_execute_failed():
+		push_warning("[scenario] invariant gagal dievaluasi: '%s' -- %s" % [src, e.get_error_text()])
+		return null
+	return res
+
+
+## Dipanggil setelah setiap langkah. Mengembalikan true bila ada pelanggaran ber-fail_fast
+## yang harus menghentikan run.
+func _check_invariants(step_index: int, step_type: String) -> bool:
+	if _invariants.is_empty():
+		return false
+	var writer := _resolve_state_writer()
+	if writer != null:
+		writer.call("_write_game_state")
+		await _wait_frames(1)
+	var curr := _read_game_state()
+	if curr.is_empty():
+		return false
+	var delta := _state_delta(_invariant_prev, curr)
+	var stop := false
+	for inv_v: Variant in _invariants:
+		if not (inv_v is Dictionary):
+			continue
+		var inv: Dictionary = inv_v
+		var expr_src: String = str(inv.get("expr", ""))
+		if expr_src == "":
+			continue
+		_invariant_checks += 1
+		var ok: Variant = _eval_invariant(expr_src, _invariant_prev, curr, delta)
+		if ok == null or bool(ok):
+			continue
+		var inv_id: String = str(inv.get("id", expr_src))
+		if _invariant_violations.has(inv_id):
+			var rec: Dictionary = _invariant_violations[inv_id]
+			rec["count"] = int(rec.get("count", 1)) + 1
+			_invariant_violations[inv_id] = rec
+		else:
+			_invariant_violations[inv_id] = {
+				"id": inv_id,
+				"expr": expr_src,
+				"description": str(inv.get("description", "")),
+				"severity": str(inv.get("severity", "critical")),
+				"first_step": step_index + 1,
+				"first_step_type": step_type,
+				"count": 1,
+				"prev": _invariant_prev.duplicate(true),
+				"curr": curr.duplicate(true),
+				"delta": delta.duplicate(true),
+			}
+			print("[scenario] INVARIANT dilanggar: %s -- %s (step %d: %s)" % [inv_id, expr_src, step_index + 1, step_type])
+			push_warning("[scenario] invariant '%s' dilanggar di step %d" % [inv_id, step_index + 1])
+		if bool(inv.get("fail_fast", false)):
+			stop = true
+	_invariant_prev = curr
+	return stop
+
+
+# --- Eksplorasi ---
+
+## Scenario tertulis hanya mengunjungi apa yang sudah dipikirkan penulisnya. Bug "konten
+## bisa dilewati" justru hidup di jalur yang TIDAK terpikirkan -- karena itu ia tidak akan
+## pernah muncul dari suite scenario, seberapa pun banyaknya. Step ini menekan tombol yang
+## benar-benar ada di layar secara acak, dan invariant diperiksa setelah SETIAP klik.
+## Eksplorasi tanpa invariant cuma menghasilkan screenshot; invariant tanpa eksplorasi cuma
+## menjaga jalur yang sudah aman. Nilainya muncul dari gabungan keduanya.
+##
+## Sengaja mengklik Control, BUKAN mengirim action ui_*: tanpa Control yang fokus, ui_*
+## tidak mengenai apa pun -- persis kondisi yang membuat seluruh scenario jimat tidak
+## pernah masuk ke gameplay sama sekali.
+func _exec_explore(step: Dictionary) -> void:
+	var iterations: int = int(step.get("iterations", 40))
+	var settle: int = int(step.get("settle_frames", 10))
+	var stop_on_violation: bool = bool(step.get("stop_on_violation", false))
+	var avoid: Array = step.get("avoid_text", ["Quit", "Keluar", "Exit"])
+	if step.has("seed") and step["seed"] != null:
+		seed(int(step["seed"]))
+
+	if _invariants.is_empty():
+		push_warning("[scenario] explore berjalan TANPA invariant -- ia hanya akan mengklik tombol dan tidak memeriksa apa pun. Sediakan scenarios/invariants.json.")
+
+	var trail: Array = []
+	var visited: Dictionary = {}
+	var seen_violations := _invariant_violations.size()
+	var clicked := 0
+	var dead_ends := 0
+	var replay_written := false
+
+	for i in range(iterations):
+		var buttons := _find_clickable_buttons(avoid)
+		if buttons.is_empty():
+			# Layar buntu (tidak ada tombol aktif). Coba mundur dengan ui_cancel supaya
+			# eksplorasi tidak macet selamanya di satu layar.
+			dead_ends += 1
+			var ev := InputEventAction.new()
+			ev.action = "ui_cancel"
+			ev.pressed = true
+			Input.parse_input_event(ev)
+			await _wait_frames(settle)
+			continue
+
+		var pick: Control = buttons[randi() % buttons.size()]
+		var label := _button_label(pick)
+		var center := pick.get_global_rect().get_center()
+		trail.append({"iteration": i, "x": center.x, "y": center.y, "label": label})
+		visited[label] = int(visited.get(label, 0)) + 1
+
+		await _click_at(center, MOUSE_BUTTON_LEFT)
+		await _wait_frames(settle)
+		clicked += 1
+
+		var must_stop := await _check_invariants(_current_step, "explore#%d" % i)
+		if _invariant_violations.size() > seen_violations:
+			seen_violations = _invariant_violations.size()
+			_write_explore_replay(trail)
+			replay_written = true
+			if stop_on_violation:
+				break
+		if must_stop:
+			break
+
+	var data := {
+		"iterations": iterations, "clicked": clicked, "dead_ends": dead_ends,
+		"unique_buttons": visited.size(),
+		"buttons": visited.keys(),
+		"violations": _invariant_violations.size(),
+		"replay": (("user://shots/explore_replay.json") if replay_written else "")
+	}
+
+	# Eksplorasi yang tidak pernah mengklik apa pun TIDAK mengeksplorasi apa pun. Melaporkan
+	# PASS di sini adalah false-verify paling murni: suite terlihat hijau padahal tak satu
+	# pun perilaku game tersentuh. Terukur pada jimat -- 40 iterasi, 40 layar buntu, 0 klik,
+	# karena game mengambil jalur init minimal saat --scenario dan tidak pernah membangun
+	# layar apa pun. Empat scenario lain di game itu "PASS" bertahun-tahun terhadap layar
+	# kosong yang sama tanpa ada yang menyadarinya.
+	if clicked == 0 and iterations > 0 and bool(step.get("require_clicks", true)):
+		_step_fail(("explore: 0 tombol bisa diklik dalam %d iterasi (%d layar buntu). " +
+			"Tidak ada satu pun perilaku game yang teruji. Periksa: (a) apakah game benar-benar " +
+			"membangun layarnya saat dijalankan dengan --scenario -- beberapa game mengambil " +
+			"jalur init minimal dan menampilkan layar kosong; (b) apakah UI-nya memakai Control " +
+			"selain BaseButton. Kalau game memang tidak digerakkan tombol, set require_clicks:false " +
+			"dan gerakkan lewat step action/mouse_click.") % [iterations, dead_ends])
+		return
+
+	_step_pass(data)
+
+
+func _button_label(b: Node) -> String:
+	if b is Button:
+		var t: String = (b as Button).text
+		if t.strip_edges() != "":
+			return t
+	return b.name
+
+
+func _find_clickable_buttons(avoid: Array) -> Array:
+	var out: Array = []
+	var vp := Rect2(Vector2.ZERO, get_viewport().get_visible_rect().size)
+	_collect_buttons(get_tree().root, out, avoid, vp)
+	return out
+
+
+## Hanya tombol yang benar-benar bisa ditekan pemain: terlihat di tree, tidak disabled,
+## punya luas, dan berpotongan dengan viewport. Tombol di luar layar tetap "ada" di tree
+## tapi mengkliknya tidak mewakili apa pun yang bisa dilakukan pemain.
+func _collect_buttons(node: Node, out: Array, avoid: Array, vp: Rect2) -> void:
+	if node is BaseButton:
+		var b: BaseButton = node
+		if b.is_visible_in_tree() and not b.disabled:
+			var r := b.get_global_rect()
+			if r.size.x > 1.0 and r.size.y > 1.0 and vp.intersects(r):
+				var lbl := _button_label(b)
+				var skip := false
+				for a: Variant in avoid:
+					if lbl.findn(str(a)) >= 0:
+						skip = true
+						break
+				if not skip:
+					out.append(b)
+	for c in node.get_children():
+		_collect_buttons(c, out, avoid, vp)
+
+
+## Eksplorasi yang menemukan bug tapi tidak bisa diulang tidak ada gunanya bagi siapa pun.
+## Setiap kali invariant BARU dilanggar, seluruh jejak klik sampai titik itu ditulis sebagai
+## scenario utuh yang bisa langsung dijalankan untuk mereproduksi.
+func _write_explore_replay(trail: Array) -> void:
+	var steps: Array = []
+	for t: Variant in trail:
+		var d: Dictionary = t
+		steps.append({
+			"type": "mouse_click", "x": d["x"], "y": d["y"], "wait_frames": 10,
+			"comment": "klik: %s" % str(d["label"])
+		})
+	var doc := {
+		"scenario_id": "explore_replay",
+		"description": "Dihasilkan otomatis oleh step explore saat invariant dilanggar. Jalankan scenario ini untuk mereproduksi pelanggaran tersebut.",
+		"steps": steps
+	}
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://shots"))
+	var f := FileAccess.open("user://shots/explore_replay.json", FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(doc, "\t"))
+		f.close()
+		print("[scenario] explore: replay ditulis (%d klik) -> user://shots/explore_replay.json" % steps.size())
+
+
+func _critical_violations() -> Array:
+	var out: Array = []
+	for inv_id: Variant in _invariant_violations.keys():
+		var rec: Dictionary = _invariant_violations[inv_id]
+		if str(rec.get("severity", "critical")) == "critical":
+			out.append(str(inv_id))
+	return out
 
 
 # --- Step handlers ---
@@ -309,12 +616,10 @@ func _resolve_mouse_button(value: Variant) -> int:
 	return MOUSE_BUTTON_LEFT
 
 
-func _exec_mouse_click(step: Dictionary) -> void:
-	var x: float = float(step.get("x", 0))
-	var y: float = float(step.get("y", 0))
-	var button: int = _resolve_mouse_button(step.get("button", MOUSE_BUTTON_LEFT))
-	var wait_after: int = int(step.get("wait_frames", 0))
-	var pos := Vector2(x, y)
+## Sintesis satu klik penuh (tekan + lepas) di posisi global. Dipakai step mouse_click
+## DAN step explore -- keduanya harus memakai jalur yang sama supaya jejak hasil eksplorasi
+## benar-benar bisa diputar ulang sebagai mouse_click biasa.
+func _click_at(pos: Vector2, button: int) -> void:
 	var press := InputEventMouseButton.new()
 	press.position = pos
 	press.button_index = button
@@ -326,6 +631,14 @@ func _exec_mouse_click(step: Dictionary) -> void:
 	rel.button_index = button
 	rel.pressed = false
 	Input.parse_input_event(rel)
+
+
+func _exec_mouse_click(step: Dictionary) -> void:
+	var x: float = float(step.get("x", 0))
+	var y: float = float(step.get("y", 0))
+	var button: int = _resolve_mouse_button(step.get("button", MOUSE_BUTTON_LEFT))
+	var wait_after: int = int(step.get("wait_frames", 0))
+	await _click_at(Vector2(x, y), button)
 	if wait_after > 0:
 		await _wait_frames(wait_after)
 	_step_pass({"x": x, "y": y})
@@ -645,6 +958,14 @@ func _write_result(status: String, error_msg: Variant) -> void:
 		"steps_pass": pass_count,
 		"steps_fail": fail_count,
 		"steps_skip": skip_count,
+		# Runner ini fail-fast: begitu satu step gagal, sisanya tidak dijalankan sama sekali.
+		# Tanpa field ini pass+fail+skip TIDAK menjumlah ke steps_total (mis. 8+1+0 vs 12 pada
+		# scenario new_run jimat) sementara steps_skip=0 justru menyiratkan tidak ada yang
+		# terlewat. Agent yang menghitung cakupan dari angka-angka itu menyimpulkan hal keliru.
+		"steps_not_run": maxi(0, _steps.size() - _step_results.size()),
+		"invariants_total": _invariants.size(),
+		"invariant_checks": _invariant_checks,
+		"invariant_violations": _invariant_violations.values(),
 		"screenshots": _screenshots_taken,
 		"step_results": _step_results,
 	}

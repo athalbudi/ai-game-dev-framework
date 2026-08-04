@@ -1,0 +1,48 @@
+{
+  "_file": "visual-claims.json",
+  "_taruh_di": "res://scenarios/visual-claims.json (atau <project>/scenarios/visual-claims.json)",
+  "_versi": "1.0",
+  "_baca_dulu": [
+    "visual-diff membandingkan pixel: ia tahu sebuah layar BERUBAH, tapi tidak pernah tahu layar itu BENAR. Klaim di file ini yang menutup celah itu.",
+    "Satu klaim harus BINER dan SPESIFIK. 'Apakah layar ini bagus?' tidak bisa dijawab konsisten; 'Apakah ada teks yang terpotong tepi layar atau tertutup elemen lain?' bisa.",
+    "applies_to menerima '*', satu pola, atau daftar pola (wildcard ala nama file). Tanpa applies_to, klaim berlaku ke semua screenshot.",
+    "threshold_pct mengatur kapan verdict lama dibawa maju. Game dengan screen-shake atau animasi menghasilkan gambar yang sedikit berbeda tiap run -- tanpa ambang ini semua verdict batal terus dan sistemnya tak terpakai. Naikkan kalau tangkapan game kamu memang gelisah.",
+    "Alur: -Mode plan (dapat worklist) -> agent MELIHAT gambarnya -> tulis verdict -> -Mode record -> -Mode check di CI.",
+    "verdict 'fail' WAJIB menyertakan note. Verdict tanpa alasan tidak berguna bagi siapa pun yang membacanya nanti."
+  ],
+
+  "threshold_pct": 2.0,
+
+  "claims": [
+    {
+      "id": "teks_tidak_terpotong",
+      "question": "Apakah ada teks yang terpotong tepi layar, terpotong kotak yang memuatnya, atau tertutup elemen lain?",
+      "applies_to": "*"
+    },
+    {
+      "id": "karakter_tidak_rusak",
+      "question": "Apakah ada karakter rusak/mojibake di layar (mis. 'â€”' yang seharusnya '—', 'Â·' yang seharusnya '·', kotak kosong, atau tanda tanya pengganti glyph)?",
+      "applies_to": "*"
+    },
+    {
+      "id": "tidak_meluber",
+      "question": "Apakah ada elemen yang meluber keluar area terlihat -- daftar/tombol yang terpotong di tepi bawah atau kanan?",
+      "applies_to": "*"
+    },
+    {
+      "id": "teks_terbaca",
+      "question": "Apakah semua teks penting punya kontras cukup terhadap latarnya untuk dibaca?",
+      "applies_to": "*"
+    },
+    {
+      "id": "aksi_utama_terlihat",
+      "question": "SESUAIKAN: apakah aksi utama yang diharapkan pemain di layar ini terlihat jelas tanpa harus menggulir?",
+      "applies_to": ["01_title.png", "*menu*.png"]
+    },
+    {
+      "id": "status_nonaktif_beralasan",
+      "question": "SESUAIKAN: kalau ada kontrol yang dinonaktifkan, apakah alasannya tertulis dan terbaca? Kontrol mati tanpa penjelasan sering dikira bug oleh pemain.",
+      "applies_to": "*disabled*.png"
+    }
+  ]
+}

@@ -2388,6 +2388,483 @@ func _get_game_state() -> Dictionary:
 }
 Write-S
 
+# ── TEST 37: akurasi metrik "persen pixel berubah" ─────────────────────────────
+# Ditemukan saat menjalankan framework pada jimat: dua run identik berturut-turut
+# melaporkan 9 "regresi", 6 di antaranya sebenarnya < 1% -- di bawah threshold default.
+# Sebabnya AE pada build Q16-HDRI mengembalikan SUM magnitudo ter-skala quantum, bukan
+# cacah pixel: 500 pixel beda -> AE 32.767.500 (= 500 x 65535) -> rasio membengkak 65.535x
+# lalu ter-clamp ke 100. Efeknya SETIAP screenshot yang tidak identik dilaporkan
+# "100% pixel berubah", sehingga threshold dan region_thresholds mati total.
+# Test ini memakai kanvas dengan jawaban yang diketahui persis; build lama gagal pada
+# kasus 5% dan 25% (keduanya dilaporkan 100%).
+Write-T "TEST 37: visual-diff melaporkan persen pixel yang akurat, bukan nilai ter-clamp"
+$t37Vd = Join-Path $PSScriptRoot "visual-diff.ps1"
+$t37Im = ""
+foreach ($cand37 in @("magick", "convert")) {
+    $f37 = Get-Command $cand37 -ErrorAction SilentlyContinue
+    if ($f37) { $t37Im = $f37.Source; break }
+}
+if ((Test-Path -LiteralPath $t37Vd) -and $t37Im -ne "") {
+    $t37Dir = Join-Path $env:TEMP "kilo_t37_$($PID)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $t37Cur  = Join-Path $t37Dir "shots"
+        $t37Base = Join-Path $t37Dir "baseline"
+        $null = New-Item -ItemType Directory -Path $t37Cur  -Force
+        $null = New-Item -ItemType Directory -Path $t37Base -Force
+
+        # Kanvas 100x100 = 10.000 pixel. Persegi hitam menentukan jawaban yang tepat.
+        $t37Cases = @(
+            @{ n = "m_000"; rect = ""            ; expect = 0.0   },
+            @{ n = "m_005"; rect = "0,0 49,9"    ; expect = 5.0   },   # 50x10  =   500
+            @{ n = "m_025"; rect = "0,0 49,49"   ; expect = 25.0  },   # 50x50  =  2500
+            @{ n = "m_100"; rect = "0,0 99,99"   ; expect = 100.0 }    # 100x100= 10000
+        )
+        foreach ($c37 in $t37Cases) {
+            & $t37Im "-size" "100x100" "xc:white" (Join-Path $t37Base "$($c37.n).png") 2>$null
+            if ($c37.rect -eq "") {
+                & $t37Im "-size" "100x100" "xc:white" (Join-Path $t37Cur "$($c37.n).png") 2>$null
+            } else {
+                & $t37Im "-size" "100x100" "xc:white" "-fill" "black" "-draw" "rectangle $($c37.rect)" `
+                         (Join-Path $t37Cur "$($c37.n).png") 2>$null
+            }
+        }
+
+        & $t37Vd -ShotsDir $t37Cur -BaselineDir $t37Base -Threshold 1 *>$null
+        $t37Rep = Join-Path $t37Cur "diff\diff-report.json"
+        $t37Probs = @()
+        if (-not (Test-Path -LiteralPath $t37Rep)) {
+            $t37Probs += "diff-report.json tidak dihasilkan"
+        } else {
+            $t37Json = Get-Content -LiteralPath $t37Rep -Raw | ConvertFrom-Json
+            foreach ($c37 in $t37Cases) {
+                $row = $t37Json.files | Where-Object { $_.file -eq "$($c37.n).png" }
+                if ($null -eq $row) { $t37Probs += "$($c37.n): tidak ada di laporan"; continue }
+                $got37 = [double]$row.change_pct
+                if ([math]::Abs($got37 - $c37.expect) -gt 0.01) {
+                    $t37Probs += "$($c37.n): dilaporkan $got37%, seharusnya $($c37.expect)%"
+                }
+            }
+        }
+        Add-Result "visual-diff melaporkan persen pixel akurat" ($t37Probs.Count -eq 0) `
+            $(if ($t37Probs.Count -eq 0) { "0/5/25/100% dilaporkan tepat" } else { ($t37Probs -join " | ") })
+    } catch {
+        Add-Result "visual-diff melaporkan persen pixel akurat" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t37Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Add-Result "visual-diff melaporkan persen pixel akurat" $false "SKIP -- ImageMagick/visual-diff tidak tersedia"
+}
+Write-S
+
+# ── TEST 38: filter scenario_* harus simetris current vs baseline ──────────────
+# Sebelumnya hanya sisi current yang memfilter scenario_*, sehingga setiap file
+# scenario_*.png yang ikut terbawa saat baseline di-set dilaporkan "HILANG" selamanya
+# padahal file itu ADA di disk. Pada jimat ini menghasilkan 17 alarm palsu sekaligus.
+Write-T "TEST 38: scenario_*.png di baseline tidak dilaporkan HILANG"
+if ((Test-Path -LiteralPath $t37Vd) -and $t37Im -ne "") {
+    $t38Dir = Join-Path $env:TEMP "kilo_t38_$($PID)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $t38Cur  = Join-Path $t38Dir "shots"
+        $t38Base = Join-Path $t38Dir "baseline"
+        $null = New-Item -ItemType Directory -Path $t38Cur  -Force
+        $null = New-Item -ItemType Directory -Path $t38Base -Force
+
+        # Satu layar biasa (identik) + satu artefak scenario_ yang ada di KEDUA sisi.
+        foreach ($side in @($t38Cur, $t38Base)) {
+            & $t37Im "-size" "60x60" "xc:white" (Join-Path $side "01_title.png")          2>$null
+            & $t37Im "-size" "60x60" "xc:white" (Join-Path $side "scenario_smoke_01.png") 2>$null
+        }
+
+        & $t37Vd -ShotsDir $t38Cur -BaselineDir $t38Base -Threshold 1 *>$null
+        $t38Rep = Join-Path $t38Cur "diff\diff-report.json"
+        $t38Probs = @()
+        if (-not (Test-Path -LiteralPath $t38Rep)) {
+            $t38Probs += "diff-report.json tidak dihasilkan"
+        } else {
+            $t38Json = Get-Content -LiteralPath $t38Rep -Raw | ConvertFrom-Json
+            $hilang = @($t38Json.files | Where-Object { $_.status -eq "HILANG" })
+            if ($hilang.Count -ne 0) {
+                $t38Probs += ("dilaporkan HILANG padahal ada di disk: " + (($hilang | ForEach-Object { $_.file }) -join ", "))
+            }
+        }
+        Add-Result "scenario_* di baseline tidak dilaporkan HILANG" ($t38Probs.Count -eq 0) `
+            $(if ($t38Probs.Count -eq 0) { "filter simetris -- 0 alarm palsu" } else { ($t38Probs -join " | ") })
+    } catch {
+        Add-Result "scenario_* di baseline tidak dilaporkan HILANG" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t38Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Add-Result "scenario_* di baseline tidak dilaporkan HILANG" $false "SKIP -- ImageMagick/visual-diff tidak tersedia"
+}
+Write-S
+
+# ── TEST 39: tidak ada variabel dibaca tanpa pernah didefinisikan ──────────────
+# autonomous-qa.ps1 membaca $projectGodot yang tidak pernah ada. Karena -or melakukan
+# short-circuit, baris itu HANYA meledak saat Godot berhasil ditemukan -- yaitu justru
+# di lingkungan yang sehat. Akibatnya fase RUN loop autonomous tidak pernah sekali pun
+# berjalan, dan tidak ada satu pun test yang menangkapnya karena semua fixture
+# sebelumnya berjalan tanpa Godot. Pemeriksaan AST ini menutup seluruh kelas bug itu.
+Write-T "TEST 39: tidak ada pembacaan variabel yang tak pernah didefinisikan di tools/"
+try {
+    $t39Safe = @(
+        '_', 'PSItem', 'args', 'input', 'true', 'false', 'null', 'this',
+        'PSScriptRoot', 'PSCommandPath', 'MyInvocation', 'PSBoundParameters',
+        'Matches', 'Error', 'LASTEXITCODE', 'PID', 'env', 'Host', 'ExecutionContext',
+        'StackTrace', 'foreach', 'switch', 'PWD', 'HOME', 'PSVersionTable',
+        'ErrorActionPreference', 'ProgressPreference', 'WarningPreference',
+        'InformationPreference', 'VerbosePreference', 'DebugPreference',
+        'ConfirmPreference', 'PSDefaultParameterValues', 'IsWindows', 'IsLinux', 'IsMacOS',
+        'OutputEncoding', 'PSStyle', 'global', 'script', 'local', 'using'
+    )
+    $t39Bad = @()
+    foreach ($t39File in (Get-ChildItem -LiteralPath $PSScriptRoot -Filter *.ps1)) {
+        $t39Tok = $null; $t39Err = $null
+        $t39Ast = [System.Management.Automation.Language.Parser]::ParseFile($t39File.FullName, [ref]$t39Tok, [ref]$t39Err)
+        if ($t39Err -and $t39Err.Count -gt 0) { $t39Bad += "$($t39File.Name): parse error"; continue }
+
+        $t39Assigned = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        foreach ($a39 in $t39Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+            foreach ($v39 in $a39.Left.FindAll({ $args[0] -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
+                $null = $t39Assigned.Add($v39.VariablePath.UserPath)
+            }
+        }
+        foreach ($p39 in $t39Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.ParameterAst] }, $true)) {
+            $null = $t39Assigned.Add($p39.Name.VariablePath.UserPath)
+        }
+        foreach ($fe39 in $t39Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.ForEachStatementAst] }, $true)) {
+            $null = $t39Assigned.Add($fe39.Variable.VariablePath.UserPath)
+        }
+        foreach ($v39 in $t39Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)) {
+            $n39 = $v39.VariablePath.UserPath
+            if ($n39 -match '^(env|global|script|local|using):') { continue }
+            if ($t39Safe -contains $n39) { continue }
+            if ($t39Assigned.Contains($n39)) { continue }
+            $t39Bad += "$($t39File.Name):$($v39.Extent.StartLineNumber) `$$n39"
+        }
+    }
+    Add-Result "tidak ada variabel dibaca tanpa didefinisikan" ($t39Bad.Count -eq 0) `
+        $(if ($t39Bad.Count -eq 0) { "semua tool bersih" } else { ($t39Bad | Select-Object -Unique) -join " | " })
+} catch {
+    Add-Result "tidak ada variabel dibaca tanpa didefinisikan" $false ("Exception: " + $_)
+}
+Write-S
+
+# ── TEST 40: invariant -- klaim yang berlaku sepanjang run ────────────────────
+# assert_state bersifat posisional: ia hanya memeriksa di titik tempat penulis scenario
+# menaruhnya, jadi bug yang terjadi DI ANTARA dua assertion tak pernah terlihat. Invariant
+# diperiksa setelah setiap langkah, dan itu satu-satunya cara framework bisa menangkap
+# kelas "progres naik tanpa usaha yang mendahuluinya" (mis. level bisa dilewati).
+# Empat kontrak yang diuji sekaligus, semuanya pernah salah kalau diimplementasikan asal:
+#   1. invariants.json game-wide berlaku tanpa disebut file scenario mana pun
+#   2. invariant yang TERPENUHI tidak boleh muncul sebagai pelanggaran
+#   3. pelanggaran berulang di-dedup jadi satu entri ber-count (bukan membanjiri laporan)
+#   4. severity critical mengubah status akhir jadi fail; warning TIDAK
+# Kontrak 4 yang paling mudah salah: kalau pelanggaran cuma dicatat tanpa mengubah status,
+# exit code tetap 0 dan orchestrator yang hanya membaca exit code meluluskan run yang cacat.
+Write-T "TEST 40: invariant diperiksa tiap langkah, di-dedup, critical mengubah status"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "invariant: dedup + severity mengubah status" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t40Dir = Join-Path $env:TEMP "kilo_t40_$($PID)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $null = New-Item -ItemType Directory -Path "$t40Dir\scripts"   -Force
+        $null = New-Item -ItemType Directory -Path "$t40Dir\scenarios" -Force
+        $noBom40 = New-Object System.Text.UTF8Encoding($false)
+        $t40Tmpl = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        foreach ($tmpl in @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")) {
+            $rawT = [System.IO.File]::ReadAllBytes((Join-Path $t40Tmpl $tmpl))
+            $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF) { 3 } else { 0 }
+            [System.IO.File]::WriteAllText("$t40Dir\scripts\$tmpl",
+                [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom40)
+        }
+        [System.IO.File]::WriteAllText("$t40Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"KiloT40`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom40)
+        [System.IO.File]::WriteAllText("$t40Dir\main.tscn",
+            "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom40)
+        # coins naik tiap kali state ditulis, wins tidak pernah naik -> "delta.coins <= delta.wins"
+        # dilanggar di SETIAP langkah, jadi dedup ikut teruji sekaligus.
+        [System.IO.File]::WriteAllText("$t40Dir\main.gd", @'
+extends Node
+
+var _coins := 0
+
+func _get_game_state() -> Dictionary:
+	_coins += 10
+	return {"coins": _coins, "wins": 0, "hp": 5}
+'@, $noBom40)
+        # Game-wide: hanya invariant yang TERPENUHI -- tidak boleh muncul sebagai pelanggaran.
+        [System.IO.File]::WriteAllText("$t40Dir\scenarios\invariants.json",
+            '{"invariants":[{"id":"hp_tak_negatif","expr":"curr.hp >= 0","severity":"critical"}]}', $noBom40)
+        [System.IO.File]::WriteAllText("$t40Dir\scenarios\warn.json",
+            '{"scenario_id":"t40_warn","invariants":[{"id":"koin_warn","expr":"delta.coins <= delta.wins","severity":"warning"}],"steps":[{"type":"wait_frames","frames":3},{"type":"wait_frames","frames":3},{"type":"wait_frames","frames":3}]}', $noBom40)
+        [System.IO.File]::WriteAllText("$t40Dir\scenarios\crit.json",
+            '{"scenario_id":"t40_crit","invariants":[{"id":"koin_crit","expr":"delta.coins <= delta.wins","severity":"critical"}],"steps":[{"type":"wait_frames","frames":3},{"type":"wait_frames","frames":3},{"type":"wait_frames","frames":3}]}', $noBom40)
+
+        $null = Start-Process $GodotExe -ArgumentList "--path", "`"$t40Dir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+        $t40Res = "$env:APPDATA\Godot\app_userdata\KiloT40\shots\scenario_result.json"
+
+        $t40Probs = @()
+        foreach ($case in @(
+            @{ File = "warn.json"; Id = "koin_warn"; Status = "pass" },
+            @{ File = "crit.json"; Id = "koin_crit"; Status = "fail" }
+        )) {
+            Remove-Item -LiteralPath $t40Res -Force -ErrorAction SilentlyContinue
+            $pr40 = Start-Process $GodotExe -ArgumentList "--path", "`"$t40Dir`"", "--", "--scenario", "res://scenarios/$($case.File)" `
+                -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+            if ($pr40) { $pr40.Handle | Out-Null; $pr40.WaitForExit(45000) | Out-Null; if (-not $pr40.HasExited) { $pr40.Kill() } }
+
+            if (-not (Test-Path -LiteralPath $t40Res)) {
+                $t40Probs += "$($case.File): scenario_result.json tidak dihasilkan"
+                continue
+            }
+            $r40 = Get-Content -LiteralPath $t40Res -Raw | ConvertFrom-Json
+            if ($r40.status -ne $case.Status) {
+                $t40Probs += "$($case.File): status=$($r40.status), harus $($case.Status)"
+            }
+            $viol = @($r40.invariant_violations)
+            # kontrak 2: invariant yang terpenuhi tidak boleh terlaporkan
+            if (@($viol | Where-Object { $_.id -eq "hp_tak_negatif" }).Count -gt 0) {
+                $t40Probs += "$($case.File): invariant yang TERPENUHI ikut dilaporkan"
+            }
+            $hit = @($viol | Where-Object { $_.id -eq $case.Id })
+            if ($hit.Count -eq 0) {
+                $t40Probs += "$($case.File): pelanggaran '$($case.Id)' tidak tercatat"
+            } elseif ($hit.Count -gt 1) {
+                $t40Probs += "$($case.File): '$($case.Id)' muncul $($hit.Count)x -- dedup gagal"
+            } elseif ([int]$hit[0].count -lt 2) {
+                $t40Probs += "$($case.File): count=$($hit[0].count), harus >1 (dilanggar tiap langkah)"
+            }
+            # semua step sendiri harus lulus -- pelanggaran invariant tidak boleh menggagalkan step
+            if ([int]$r40.steps_fail -ne 0) {
+                $t40Probs += "$($case.File): steps_fail=$($r40.steps_fail), invariant tidak boleh menggagalkan step"
+            }
+        }
+        Add-Result "invariant: dedup + severity mengubah status" ($t40Probs.Count -eq 0) `
+            $(if ($t40Probs.Count -eq 0) { "warning->pass, critical->fail, dedup ok, invariant terpenuhi tidak dilaporkan" } else { ($t40Probs -join " | ") })
+    } catch {
+        Add-Result "invariant: dedup + severity mengubah status" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t40Dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\KiloT40" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
+# ── TEST 41: visual-review -- verdict visual yang awet ────────────────────────
+# visual-diff tahu sebuah layar BERUBAH, tapi tidak pernah tahu layar itu BENAR.
+# Cacat seperti teks terpotong dan mojibake hanya bisa dinilai dengan melihat, dan
+# penilaian itu perlu bertahan lintas sesi. Lima kontrak diuji di sini:
+#   1. fail-closed -- check pada proyek yang belum dinilai HARUS exit 1, bukan lulus.
+#      Diam bukan bukti bahwa tampilannya benar.
+#   2. verdict fail muncul di check beserta catatannya, exit 1
+#   3. BAWA-MAJU: gambar berubah di BAWAH threshold -> verdict lama tetap berlaku.
+#      Tanpa ini game dengan screen-shake membatalkan semua verdict tiap run dan
+#      sistemnya jadi tak terpakai sama sekali.
+#   4. BASI: gambar berubah di ATAS threshold -> verdict batal, wajib dinilai ulang.
+#   5. verdict 'fail' tanpa note ditolak -- verdict tanpa alasan tidak berguna nanti.
+Write-T "TEST 41: visual-review fail-closed, bawa-maju, dan pembatalan saat gambar berubah"
+$t41Vr = Join-Path $PSScriptRoot "visual-review.ps1"
+$t41Im = ""
+foreach ($cand41 in @("magick", "convert")) {
+    $f41 = Get-Command $cand41 -ErrorAction SilentlyContinue
+    if ($f41) { $t41Im = $f41.Source; break }
+}
+if ((Test-Path -LiteralPath $t41Vr) -and $t41Im -ne "") {
+    $t41Dir = Join-Path $env:TEMP "kilo_t41_$($PID)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $t41Shots  = Join-Path $t41Dir "shots"
+        $null = New-Item -ItemType Directory -Path $t41Shots -Force
+        $t41Claims = Join-Path $t41Dir "visual-claims.json"
+        $t41Verd   = Join-Path $t41Dir "verdicts.json"
+        $noBom41   = New-Object System.Text.UTF8Encoding($false)
+
+        # Kanvas 200x200 = 40.000 pixel. Threshold 2% -> 800 pixel.
+        & $t41Im "-size" "200x200" "xc:white" (Join-Path $t41Shots "layar.png") 2>$null
+
+        [System.IO.File]::WriteAllText($t41Claims,
+            '{"threshold_pct":2.0,"claims":[{"id":"klaim_a","question":"A?","applies_to":"*"}]}', $noBom41)
+
+        # -- kontrak 1: fail-closed --------------------------------------------
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode check *>$null
+        $t41ExitKosong = $LASTEXITCODE
+
+        # -- kontrak 5: verdict fail tanpa note ditolak -------------------------
+        [System.IO.File]::WriteAllText($t41Verd,
+            '{"verdicts":[{"file":"layar.png","claim_id":"klaim_a","verdict":"fail"}]}', $noBom41)
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode record -VerdictFile $t41Verd *>$null
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode check -AllowUnjudged *>$null
+        $t41ExitTanpaNote = $LASTEXITCODE   # ditolak -> tetap belum dinilai -> bukan FAIL
+
+        # -- kontrak 2: verdict fail bernote tercatat dan menggagalkan check ----
+        [System.IO.File]::WriteAllText($t41Verd,
+            '{"verdicts":[{"file":"layar.png","claim_id":"klaim_a","verdict":"fail","note":"teks terpotong di tepi"}]}', $noBom41)
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode record -VerdictFile $t41Verd *>$null
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode check -AllowUnjudged *>$null
+        $t41ExitFail = $LASTEXITCODE
+
+        # -- kontrak 3: bawa-maju (ubah 100 pixel = 0.25%, di bawah 2%) ---------
+        & $t41Im "-size" "200x200" "xc:white" "-fill" "black" "-draw" "rectangle 0,0 9,9" `
+                 (Join-Path $t41Shots "layar.png") 2>$null
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode plan *>$null
+        $t41Rev = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw | ConvertFrom-Json
+        $t41Carried  = [int]$t41Rev.summary.carried_forward
+        $t41StaleKcl = [int]$t41Rev.summary.stale
+
+        # -- kontrak 4: basi (ubah 10.000 pixel = 25%, di atas 2%) --------------
+        & $t41Im "-size" "200x200" "xc:white" "-fill" "black" "-draw" "rectangle 0,0 99,99" `
+                 (Join-Path $t41Shots "layar.png") 2>$null
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode plan *>$null
+        $t41Rev2 = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw | ConvertFrom-Json
+        $t41StaleBesar = [int]$t41Rev2.summary.stale
+
+        $t41Probs = @()
+        if ($t41ExitKosong -ne 1)    { $t41Probs += "check tanpa verdict exit=$t41ExitKosong, harus 1 (fail-closed)" }
+        if ($t41ExitTanpaNote -ne 0) { $t41Probs += "verdict fail tanpa note seharusnya DITOLAK (exit=$t41ExitTanpaNote)" }
+        if ($t41ExitFail -ne 1)      { $t41Probs += "check dengan verdict fail exit=$t41ExitFail, harus 1" }
+        if ($t41Carried -lt 1)       { $t41Probs += "perubahan 0.25% seharusnya dibawa maju (carried=$t41Carried)" }
+        if ($t41StaleKcl -ne 0)      { $t41Probs += "perubahan 0.25% tidak boleh jadi basi (stale=$t41StaleKcl)" }
+        if ($t41StaleBesar -lt 1)    { $t41Probs += "perubahan 25% harus jadi basi (stale=$t41StaleBesar)" }
+
+        Add-Result "visual-review: fail-closed + bawa-maju + pembatalan" ($t41Probs.Count -eq 0) `
+            $(if ($t41Probs.Count -eq 0) { "5 kontrak terpenuhi (0.25% dibawa maju, 25% dibatalkan)" } else { ($t41Probs -join " | ") })
+    } catch {
+        Add-Result "visual-review: fail-closed + bawa-maju + pembatalan" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t41Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Add-Result "visual-review: fail-closed + bawa-maju + pembatalan" $false "SKIP -- ImageMagick/visual-review tidak tersedia"
+}
+Write-S
+
+# ── TEST 42: explore -- eksplorasi yang menekan tombol nyata ──────────────────
+# Scenario tertulis hanya mengunjungi apa yang sudah dipikirkan penulisnya; bug "konten
+# bisa dilewati" hidup di jalur yang tidak terpikirkan. Tiga kontrak diuji:
+#   1. explore benar-benar menemukan dan mengklik Button di scene tree, dan invariant
+#      diperiksa SETELAH SETIAP KLIK (bukan sekali di akhir step)
+#   2. saat invariant jebol, jejak klik ditulis sebagai scenario replay yang bisa
+#      dijalankan ulang -- eksplorasi yang tak bisa direproduksi tidak berguna
+#   3. explore yang 0 klik GAGAL, bukan lulus. Ini kontrak terpenting: terukur pada jimat,
+#      40 iterasi menghasilkan 40 layar buntu karena game mengambil jalur init minimal saat
+#      --scenario dan menampilkan layar kosong -- sementara 4 scenario lain di game itu
+#      melaporkan PASS terhadap layar kosong yang sama.
+Write-T "TEST 42: explore mengklik tombol nyata, menulis replay, dan gagal saat 0 klik"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "explore: klik nyata + replay + gagal saat 0 klik" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t42Dir = Join-Path $env:TEMP "kilo_t42_$($PID)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $null = New-Item -ItemType Directory -Path "$t42Dir\scripts"   -Force
+        $null = New-Item -ItemType Directory -Path "$t42Dir\scenarios" -Force
+        $noBom42 = New-Object System.Text.UTF8Encoding($false)
+        $t42Tmpl = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        foreach ($tmpl in @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")) {
+            $rawT = [System.IO.File]::ReadAllBytes((Join-Path $t42Tmpl $tmpl))
+            $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF) { 3 } else { 0 }
+            [System.IO.File]::WriteAllText("$t42Dir\scripts\$tmpl",
+                [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom42)
+        }
+        [System.IO.File]::WriteAllText("$t42Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"KiloT42`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom42)
+        [System.IO.File]::WriteAllText("$t42Dir\main.tscn",
+            "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom42)
+        # Tiga tombol nyata. Menekan salah satunya menaikkan coins tanpa menaikkan wins,
+        # sehingga invariant "delta.coins <= delta.wins" HANYA jebol kalau klik benar-benar
+        # mengenai tombol -- inilah yang membedakan "explore jalan" dari "explore pura-pura".
+        [System.IO.File]::WriteAllText("$t42Dir\main.gd", @'
+extends Node
+
+var _coins := 0
+
+func _ready() -> void:
+	var ui := Control.new()
+	ui.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(ui)
+	var vb := VBoxContainer.new()
+	vb.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ui.add_child(vb)
+	for n in ["alpha", "beta", "gamma"]:
+		var b := Button.new()
+		b.text = n
+		b.custom_minimum_size = Vector2(240, 48)
+		b.pressed.connect(_on_press)
+		vb.add_child(b)
+
+func _on_press() -> void:
+	_coins += 5
+
+func _get_game_state() -> Dictionary:
+	return {"coins": _coins, "wins": 0}
+'@, $noBom42)
+        [System.IO.File]::WriteAllText("$t42Dir\scenarios\invariants.json",
+            '{"invariants":[{"id":"koin_butuh_menang","expr":"delta.coins <= delta.wins","severity":"warning"}]}', $noBom42)
+        [System.IO.File]::WriteAllText("$t42Dir\scenarios\ada.json",
+            '{"scenario_id":"t42_ada","steps":[{"type":"wait_frames","frames":30},{"type":"explore","iterations":6,"seed":42,"settle_frames":4}]}', $noBom42)
+        # avoid_text menutup SEMUA label -> tidak ada tombol yang boleh diklik, meniru
+        # kondisi layar kosong tanpa perlu project kedua.
+        [System.IO.File]::WriteAllText("$t42Dir\scenarios\kosong.json",
+            '{"scenario_id":"t42_kosong","steps":[{"type":"wait_frames","frames":30},{"type":"explore","iterations":4,"seed":1,"settle_frames":2,"avoid_text":["alpha","beta","gamma"]}]}', $noBom42)
+
+        $null = Start-Process $GodotExe -ArgumentList "--path", "`"$t42Dir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+        $t42Res    = "$env:APPDATA\Godot\app_userdata\KiloT42\shots\scenario_result.json"
+        $t42Replay = "$env:APPDATA\Godot\app_userdata\KiloT42\shots\explore_replay.json"
+        $t42Probs  = @()
+
+        # -- kontrak 1 & 2: tombol nyata diklik, invariant jebol, replay ditulis --
+        Remove-Item -LiteralPath $t42Res, $t42Replay -Force -ErrorAction SilentlyContinue
+        $pr42 = Start-Process $GodotExe -ArgumentList "--path", "`"$t42Dir`"", "--", "--scenario", "res://scenarios/ada.json" `
+            -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+        if ($pr42) { $pr42.Handle | Out-Null; $pr42.WaitForExit(60000) | Out-Null; if (-not $pr42.HasExited) { $pr42.Kill() } }
+
+        if (-not (Test-Path -LiteralPath $t42Res)) {
+            $t42Probs += "ada.json: scenario_result.json tidak dihasilkan"
+        } else {
+            $r42 = Get-Content -LiteralPath $t42Res -Raw | ConvertFrom-Json
+            $ex42 = @($r42.step_results | Where-Object { $_.type -eq "explore" })
+            if ($ex42.Count -eq 0) {
+                $t42Probs += "ada.json: step explore tidak tercatat"
+            } else {
+                $d42 = $ex42[0].data
+                if ([int]$d42.clicked -lt 1)        { $t42Probs += "ada.json: clicked=$($d42.clicked), harus >=1" }
+                if ([int]$d42.unique_buttons -lt 1) { $t42Probs += "ada.json: unique_buttons=$($d42.unique_buttons), harus >=1" }
+                if ([int]$d42.violations -lt 1)     { $t42Probs += "ada.json: invariant tidak jebol -- klik tidak mengenai tombol?" }
+            }
+            if (-not (Test-Path -LiteralPath $t42Replay)) {
+                $t42Probs += "ada.json: explore_replay.json tidak ditulis saat invariant jebol"
+            } else {
+                $rep42 = Get-Content -LiteralPath $t42Replay -Raw | ConvertFrom-Json
+                $mc = @($rep42.steps | Where-Object { $_.type -eq "mouse_click" })
+                if ($mc.Count -lt 1) { $t42Probs += "replay tidak berisi step mouse_click" }
+            }
+        }
+
+        # -- kontrak 3: 0 klik harus GAGAL, bukan lulus --------------------------
+        Remove-Item -LiteralPath $t42Res -Force -ErrorAction SilentlyContinue
+        $pr42b = Start-Process $GodotExe -ArgumentList "--path", "`"$t42Dir`"", "--", "--scenario", "res://scenarios/kosong.json" `
+            -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+        if ($pr42b) { $pr42b.Handle | Out-Null; $pr42b.WaitForExit(60000) | Out-Null; if (-not $pr42b.HasExited) { $pr42b.Kill() } }
+        if (-not (Test-Path -LiteralPath $t42Res)) {
+            $t42Probs += "kosong.json: scenario_result.json tidak dihasilkan"
+        } else {
+            $r42b = Get-Content -LiteralPath $t42Res -Raw | ConvertFrom-Json
+            if ($r42b.status -ne "fail") { $t42Probs += "kosong.json: status=$($r42b.status), explore 0 klik HARUS fail" }
+        }
+
+        Add-Result "explore: klik nyata + replay + gagal saat 0 klik" ($t42Probs.Count -eq 0) `
+            $(if ($t42Probs.Count -eq 0) { "tombol diklik, invariant jebol per klik, replay ditulis, 0-klik gagal" } else { ($t42Probs -join " | ") })
+    } catch {
+        Add-Result "explore: klik nyata + replay + gagal saat 0 klik" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t42Dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\KiloT42" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."

@@ -1,0 +1,55 @@
+{
+  "_file": "invariants.json",
+  "_taruh_di": "res://scenarios/invariants.json (berlaku untuk SEMUA scenario game ini)",
+  "_versi": "1.0",
+  "_baca_dulu": [
+    "Invariant BUKAN assert_state. assert_state posisional -- ia memeriksa di titik tempat kamu menaruhnya. Invariant diperiksa setelah SETIAP langkah, di semua scenario, tanpa satu pun scenario perlu diubah.",
+    "Karena itu invariant adalah satu-satunya cara framework bisa menangkap kelas bug 'pemain melompati sesuatu': progres naik tanpa usaha yang mendahuluinya.",
+    "Tiga variabel tersedia di 'expr': prev (state sebelum langkah), curr (state sesudah), dan delta (selisih numerik curr-prev).",
+    "delta HANYA berisi field numerik yang ada di prev DAN curr. Field yang baru muncul tidak diberi delta -- supaya invariant tidak lolos diam-diam saat datanya belum ada.",
+    "Pelanggaran TIDAK menghentikan run, supaya satu run memanen semua pelanggaran sekaligus. Pakai fail_fast:true kalau melanjutkan memang tidak bermakna.",
+    "Pelanggaran di-dedup per id: kejadian pertama disimpan lengkap (prev/curr/delta/langkah), berikutnya hanya menambah 'count'.",
+    "severity 'critical' membuat status akhir scenario jadi fail dan exit code 1. severity 'warning' hanya dicatat di laporan.",
+    "Field yang dipakai 'expr' harus benar-benar ada di game_state.json -- sediakan lewat _get_game_state() di game kamu."
+  ],
+
+  "invariants": [
+    {
+      "id": "progres_butuh_usaha",
+      "expr": "delta.level_selesai <= delta.musuh_dikalahkan",
+      "description": "SESUAIKAN: level tidak boleh bertambah selesai tanpa ada musuh yang dikalahkan. Inilah bentuk konkret dari 'game bisa ditamatkan dalam 5 detik dengan melewati banyak hal' -- progres melonjak sementara usaha yang mendahuluinya nol.",
+      "severity": "critical"
+    },
+    {
+      "id": "satu_aksi_satu_langkah",
+      "expr": "delta.step_idx <= 1",
+      "description": "SESUAIKAN: satu aksi tidak boleh memajukan peta lebih dari satu node. Menangkap tombol yang ter-trigger dobel dan transisi yang melompat.",
+      "severity": "critical"
+    },
+    {
+      "id": "mata_uang_tak_negatif",
+      "expr": "curr.coins >= 0",
+      "description": "SESUAIKAN: pemeriksaan batas paling murah dan paling sering berbuah. Pembelian yang tidak memvalidasi saldo muncul di sini.",
+      "severity": "critical"
+    },
+    {
+      "id": "hp_dalam_batas",
+      "expr": "curr.hp <= curr.hp_max",
+      "description": "SESUAIKAN: penyembuhan yang melewati batas maksimum. Ganti nama field sesuai game kamu.",
+      "severity": "critical"
+    },
+    {
+      "id": "koleksi_tak_menyusut",
+      "expr": "delta.spesies_terkumpul >= 0",
+      "description": "SESUAIKAN: contoh invariant monotonik -- sesuatu yang sekali didapat tidak boleh hilang sendiri. Bagus untuk codex, achievement, unlock.",
+      "severity": "warning"
+    },
+    {
+      "id": "contoh_fail_fast",
+      "expr": "curr.save_rusak == false",
+      "description": "SESUAIKAN atau HAPUS: contoh kapan fail_fast pantas dipakai -- kalau save sudah rusak, langkah berikutnya tidak menguji apa pun yang bermakna.",
+      "severity": "critical",
+      "fail_fast": true
+    }
+  ]
+}
