@@ -1208,7 +1208,9 @@ func _ready() -> void:
         [System.IO.File]::WriteAllText("$t17Dir\main.tscn", $mainTscn, (New-Object System.Text.UTF8Encoding($false)))
 
         # Import dulu
-        $impProc = Start-Process $godotExe17 -ArgumentList "--path", "`"$t17Dir`"", "--import", "--quit-after", "2" `
+        # --headless: tanpa ini import yang gagal memunculkan dialog modal yang merebut
+        # fokus pengguna dan menahan suite sampai timeout.
+        $impProc = Start-Process $godotExe17 -ArgumentList "--path", "`"$t17Dir`"", "--headless", "--import", "--quit-after", "2" `
             -PassThru -NoNewWindow -ErrorAction SilentlyContinue
         if ($impProc) { $impProc.Handle | Out-Null; $impProc.WaitForExit(30000) | Out-Null }
 
@@ -1237,7 +1239,7 @@ func _ready() -> void:
         [System.IO.File]::WriteAllText("$t17Dir\project.godot", $projGodotStrict, (New-Object System.Text.UTF8Encoding($false)))
 
         # Re-import dengan setting baru
-        $imp2Proc = Start-Process $godotExe17 -ArgumentList "--path", "`"$t17Dir`"", "--import", "--quit-after", "2" `
+        $imp2Proc = Start-Process $godotExe17 -ArgumentList "--path", "`"$t17Dir`"", "--headless", "--import", "--quit-after", "2" `
             -PassThru -NoNewWindow -ErrorAction SilentlyContinue
         if ($imp2Proc) { $imp2Proc.Handle | Out-Null; $imp2Proc.WaitForExit(30000) | Out-Null }
 
@@ -3084,6 +3086,50 @@ func _get_game_state() -> Dictionary:
     } finally {
         Remove-Item -LiteralPath $t44Dir -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+Write-S
+
+# ── TEST 45: setiap peluncuran Godot --import wajib --headless ────────────────
+# Godot berjendela yang GAGAL mengimpor project memunculkan dialog modal
+# "Can't run project: no main scene defined in the project". Dialog itu merebut fokus
+# pengguna dan MENAHAN proses sampai timeout -- tool yang seharusnya berjalan tanpa
+# pengawasan jadi menggantung, dan di CI ia menggantung sampai job dibunuh.
+# Empat lokasi pernah kehilangan flag ini sekaligus, termasuk run-and-analyze.ps1 yang
+# dipakai pengguna langsung. Godot headless secara arsitektural tidak bisa menampilkan
+# dialog, jadi flag ini bukan kosmetik melainkan syarat agar tool bisa dipercaya jalan
+# tanpa ditunggui. Pemeriksaan statis menutup seluruh kelasnya sekaligus.
+Write-T "TEST 45: semua peluncuran Godot --import memakai --headless"
+try {
+    # Disusun dari potongan supaya baris ini sendiri tidak ikut terpindai.
+    $needleImport   = "--" + "import"
+    $needleHeadless = "--" + "headless"
+    $t45Bad = @()
+    foreach ($t45File in (Get-ChildItem -LiteralPath $PSScriptRoot -Filter *.ps1 -File)) {
+        # Gabungkan baris yang disambung backtick supaya satu pemanggilan Start-Process
+        # yang terpecah beberapa baris terbaca sebagai satu perintah utuh.
+        $t45Join = @()
+        $t45Acc = ""
+        foreach ($ln in (Get-Content -LiteralPath $t45File.FullName)) {
+            $trimmed = $ln.TrimEnd()
+            if ($trimmed.EndsWith('`')) { $t45Acc += $trimmed.TrimEnd('`') + " "; continue }
+            $t45Join += ($t45Acc + $trimmed)
+            $t45Acc = ""
+        }
+        if ($t45Acc -ne "") { $t45Join += $t45Acc }
+
+        $lineNo = 0
+        foreach ($cmd in $t45Join) {
+            $lineNo++
+            if ($cmd -notmatch "Start-Process") { continue }
+            if ($cmd -notlike "*$needleImport*") { continue }
+            if ($cmd -like "*$needleHeadless*") { continue }
+            $t45Bad += "$($t45File.Name) (perintah ke-$lineNo)"
+        }
+    }
+    Add-Result "semua Godot --import memakai --headless" ($t45Bad.Count -eq 0) `
+        $(if ($t45Bad.Count -eq 0) { "tidak ada peluncuran import berjendela" } else { ($t45Bad -join " | ") })
+} catch {
+    Add-Result "semua Godot --import memakai --headless" $false ("Exception: " + $_)
 }
 Write-S
 

@@ -539,8 +539,12 @@ if ($FixLoopMode -and $PatchBranch -ne "") {
             # Ini tetap diperlukan karena patch mungkin mengubah script GDScript yang
             # cache-nya di .godot/imported/ perlu diperbarui.
             Write-Phase "WORKTREE" "Menjalankan --import di worktree (isi .godot/)..."
+            # --headless WAJIB: worktree yang baru dibuat sering belum punya aset biner
+            # (tidak dilacak git), sehingga import gagal dan Godot berjendela memunculkan
+            # dialog modal yang menahan proses sampai timeout. Fix-loop harus bisa berjalan
+            # tanpa pengawasan; satu dialog modal cukup untuk menggantungkannya.
             $importProc = Start-Process -FilePath $GodotExe `
-                -ArgumentList "--path", "`"$worktreeProjectPath`"", "--import", "--quit-after", "2" `
+                -ArgumentList "--path", "`"$worktreeProjectPath`"", "--headless", "--import", "--quit-after", "2" `
                 -PassThru -NoNewWindow -ErrorAction SilentlyContinue
             if ($importProc) {
                 $importProc.Handle | Out-Null

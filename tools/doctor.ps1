@@ -224,7 +224,13 @@ func _ready() -> void:
             $mainTscn = "[gd_scene load_steps=2 format=3]`n[ext_resource type=""Script"" path=""res://scripts/checker.gd"" id=""1""]`n[node name=""Main"" type=""Node""]`nscript = ExtResource(""1"")`n"
             [System.IO.File]::WriteAllText("$checkDir\main.tscn", $mainTscn, (New-Object System.Text.UTF8Encoding($false)))
 
-            $impProc = Start-Process $GodotExe -ArgumentList "--path", "`"$checkDir`"", "--import", "--quit-after", "2" `
+            # --headless WAJIB. Tanpanya, Godot yang gagal mengimpor project (mis. karena
+            # sebuah template .gd tidak bisa di-parse -- yang justru kondisi yang sedang
+            # diperiksa di sini) memunculkan dialog modal "Can't run project: no main scene
+            # defined". Dialog itu merebut fokus dari pengguna dan menahan proses sampai
+            # timeout, sehingga healthcheck jadi lambat dan tampak menggantung. Godot
+            # headless secara arsitektural tidak bisa menampilkan dialog.
+            $impProc = Start-Process $GodotExe -ArgumentList "--path", "`"$checkDir`"", "--headless", "--import", "--quit-after", "2" `
                 -PassThru -NoNewWindow -ErrorAction SilentlyContinue
             if ($impProc) { $impProc.Handle | Out-Null; $impProc.WaitForExit(30000) | Out-Null }
 
