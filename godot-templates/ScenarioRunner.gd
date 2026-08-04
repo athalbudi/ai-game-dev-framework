@@ -5,7 +5,12 @@
 # Lihat README.md dan FRAMEWORK.md untuk cara penggunaan yang benar.
 #
 # Interface dengan game:
-#   - Game implementasikan _write_game_state() di node manapun
+#   - Game menyediakan state lewat SALAH SATU dari dua kontrak berikut:
+#       a. _get_game_state() -> Dictionary  di node manapun  (DISARANKAN)
+#          GameStateWriter yang mengurus penulisan file; game cukup menyediakan datanya.
+#       b. _write_game_state() -> void      di node manapun
+#          Game menulis filenya sendiri. Kalau GameStateWriter autoload juga terpasang,
+#          implementasi milik GAME yang dipakai -- lihat _resolve_state_writer().
 #   - Game implementasikan _on_set_state(key, value) untuk step set_state
 #   - Emit ScenarioRunner.scenario_signal(name) untuk step wait_signal
 
@@ -222,9 +227,9 @@ func _exec_wait_condition(step: Dictionary) -> void:
 		return
 	var elapsed: float = 0.0
 	while elapsed < timeout_sec:
-		var writers := _find_nodes_with_method(get_tree().root, "_write_game_state")
-		if writers.size() > 0:
-			writers[0].call("_write_game_state")
+		var condWriter := _resolve_state_writer()
+		if condWriter != null:
+			condWriter.call("_write_game_state")
 		await _wait_frames(6)
 		elapsed += 6.0 / 60.0
 		var state := _read_game_state()
@@ -403,30 +408,45 @@ func _exec_screenshot(step: Dictionary) -> void:
 	_step_pass({"name": name, "path": path})
 
 
-func _exec_write_state(step: Dictionary) -> void:
-	# Prioritas 1: pakai GameStateWriter autoload (stable, tidak hancur oleh hot-reload)
-	if has_node("/root/GameStateWriter"):
-		get_node("/root/GameStateWriter").call("_write_game_state")
-		await _wait_frames(1)
-		_step_pass({"writer": "GameStateWriter"})
-		return
-	# Prioritas 2: cari _write_game_state() di tree (untuk game tanpa GameStateWriter autoload)
+# Pilih node yang akan menulis game_state, dengan aturan: implementasi milik GAME
+# menang atas autoload GameStateWriter yang generik.
+#
+# Ini memperbaiki bug yang membuat state game-specific tidak pernah tertulis saat scenario:
+# ScenarioRunner mendokumentasikan hook bernama _write_game_state(), dan GameStateWriter.gd
+# JUGA mengimplementasikan nama itu. Autoload adalah anak root yang ditambahkan sebelum
+# main scene, jadi ia selalu ditemukan lebih dulu -- implementasi kaya milik game selalu
+# terbayangi. Terukur di jimat: main.gd menulis coins/run_active/dukun, tapi yang sampai
+# ke game_state.json hanya field generik, sehingga SEMUA assertion game-specific gagal.
+#
+# GameStateWriter tetap dipakai sebagai fallback: ia stabil terhadap hot-reload dan
+# mendelegasikan ke _get_game_state() kalau game memakai kontrak yang itu.
+func _resolve_state_writer() -> Node:
 	var writers := _find_nodes_with_method(get_tree().root, "_write_game_state")
-	if writers.is_empty():
-		_step_skip("Tidak ada GameStateWriter autoload dan tidak ada node dengan _write_game_state() di tree")
+	for w in writers:
+		if w.name != "GameStateWriter":
+			return w
+	if writers.size() > 0:
+		return writers[0]
+	return null
+
+
+func _exec_write_state(step: Dictionary) -> void:
+	var writer := _resolve_state_writer()
+	if writer == null:
+		_step_skip("Tidak ada node dengan _write_game_state() -- pasang GameStateWriter autoload atau implementasikan hook itu di game")
 		return
-	writers[0].call("_write_game_state")
+	writer.call("_write_game_state")
 	await _wait_frames(1)
-	_step_pass({"writer": writers[0].name})
+	_step_pass({"writer": writer.name})
 
 
 func _exec_assert_state(step: Dictionary) -> void:
 	var key: String = step.get("field", step.get("key", ""))
 	var expected = step.get("expected", null)
 	var op: String = step.get("op", "eq")
-	var writers := _find_nodes_with_method(get_tree().root, "_write_game_state")
-	if writers.size() > 0:
-		writers[0].call("_write_game_state")
+	var stateWriter := _resolve_state_writer()
+	if stateWriter != null:
+		stateWriter.call("_write_game_state")
 		await _wait_frames(1)
 	var state := _read_game_state()
 	if state.is_empty():

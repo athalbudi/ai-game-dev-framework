@@ -2139,6 +2139,88 @@ func _write_game_state() -> void:
 }
 Write-S
 
+# ── TEST 34: implementasi _write_game_state() milik GAME menang atas autoload ────
+# ScenarioRunner mendokumentasikan hook _write_game_state(), dan GameStateWriter.gd JUGA
+# mengimplementasikan nama itu. Autoload adalah anak root yang ditambahkan sebelum main
+# scene, sehingga selalu ditemukan lebih dulu -- implementasi kaya milik game selalu
+# terbayangi, dan _exec_write_state bahkan secara eksplisit mendahulukan autoload.
+#
+# Terukur di jimat: main.gd menulis coins/run_active/dukun (23 field), tapi yang sampai ke
+# game_state.json hanya 6 field generik. Akibatnya SEMUA assertion game-specific tidak
+# punya data -- dan sebelum perbaikan null, semuanya lolos diam-diam.
+Write-T "TEST 34: _write_game_state() milik game menang atas autoload GameStateWriter"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "_write_game_state game menang atas autoload" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t34Dir = Join-Path $env:TEMP "kilo_t34_$(Get-Date -Format 'HHmmss')"
+    try {
+        $null = New-Item -ItemType Directory -Path "$t34Dir\scripts"   -Force
+        $null = New-Item -ItemType Directory -Path "$t34Dir\scenarios" -Force
+        $noBom34 = New-Object System.Text.UTF8Encoding($false)
+        $t34Tmpl = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        # GameStateWriter autoload SENGAJA dipasang -- itu kondisi yang memicu bug
+        foreach ($tmpl in @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")) {
+            $rawT = [System.IO.File]::ReadAllBytes((Join-Path $t34Tmpl $tmpl))
+            $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF) { 3 } else { 0 }
+            [System.IO.File]::WriteAllText("$t34Dir\scripts\$tmpl",
+                [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom34)
+        }
+        [System.IO.File]::WriteAllText("$t34Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"KiloT34`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom34)
+        [System.IO.File]::WriteAllText("$t34Dir\main.tscn",
+            "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom34)
+        # Game menulis penanda khas yang TIDAK PERNAH ditulis GameStateWriter generik
+        [System.IO.File]::WriteAllText("$t34Dir\main.gd", @'
+extends Node
+
+func _write_game_state() -> void:
+	var state := {"penanda_milik_game": 42}
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://shots"))
+	var f := FileAccess.open("user://shots/game_state.json", FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(state))
+		f.close()
+'@, $noBom34)
+        [System.IO.File]::WriteAllText("$t34Dir\scenarios\writer.json", @'
+{
+  "scenario_id": "t34",
+  "steps": [
+    {"type": "write_state"},
+    {"type": "assert_state", "field": "penanda_milik_game", "op": "eq", "expected": 42}
+  ]
+}
+'@, $noBom34)
+
+        $null = Start-Process $GodotExe -ArgumentList "--path", "`"$t34Dir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+        $t34Res = "$env:APPDATA\Godot\app_userdata\KiloT34\shots\scenario_result.json"
+        Remove-Item -LiteralPath $t34Res -Force -ErrorAction SilentlyContinue
+        $pr34 = Start-Process $GodotExe -ArgumentList "--path", "`"$t34Dir`"", "--", "--scenario", "res://scenarios/writer.json" `
+            -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+        if ($pr34) { $pr34.Handle | Out-Null; $pr34.WaitForExit(45000) | Out-Null; if (-not $pr34.HasExited) { $pr34.Kill() } }
+
+        if (-not (Test-Path -LiteralPath $t34Res)) {
+            Add-Result "_write_game_state game menang atas autoload" $false "scenario_result.json tidak dihasilkan"
+        } else {
+            $r34    = Get-Content -LiteralPath $t34Res -Raw | ConvertFrom-Json
+            $wStep  = @($r34.step_results | Where-Object { $_.type -eq "write_state" })[0]
+            $aStep  = @($r34.step_results | Where-Object { $_.type -eq "assert_state" })[0]
+            $t34Probs = @()
+            # writer harus "Main" (node game), BUKAN "GameStateWriter"
+            if ($wStep.data.writer -ne "Main") { $t34Probs += "writer=$($wStep.data.writer), harus Main" }
+            if ($aStep.status -ne "pass")      { $t34Probs += "assert penanda game: $($aStep.status), harus pass" }
+            Add-Result "_write_game_state game menang atas autoload" ($t34Probs.Count -eq 0) `
+                $(if ($t34Probs.Count -eq 0) { "writer=Main, state game-specific terbaca" } else { ($t34Probs -join " | ") })
+        }
+    } catch {
+        Add-Result "_write_game_state game menang atas autoload" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t34Dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\KiloT34" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
