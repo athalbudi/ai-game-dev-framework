@@ -2033,6 +2033,112 @@ func _ready() -> void:
 }
 Write-S
 
+# ── TEST 33: assert_state pada field yang TIDAK ADA harus GAGAL ─────────────────
+# GDScript mengubah float(str(null)) menjadi 0.0, sehingga sebelum perbaikan ini field
+# yang tidak ada di game_state dibaca sebagai 0 dan bentuk assertion paling umum untuk
+# invarian justru SELALU lolos:
+#     "coins gte 0"        -> 0.0 >= 0.0 -> true
+#     "dukun.hp_pct lte 1" -> 0.0 <= 1.0 -> true
+#
+# Ditemukan lewat scenario adversarial pertama di jimat: TUJUH invarian dilaporkan utuh
+# padahal tidak satu pun benar-benar diperiksa. Ini false-verify di lapisan assertion --
+# tepat kemampuan yang paling diandalkan framework ini.
+#
+# Diuji TIGA arah: field ada dan valid -> pass; field ada tapi melanggar -> fail;
+# field tidak ada -> fail. Menguji arah terakhir saja akan meloloskan regresi
+# "semua assertion gagal", yang sama tidak bergunanya.
+Write-T "TEST 33: assert_state pada field tidak ada harus GAGAL, bukan lolos diam-diam"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "assert_state: field tidak ada -> fail (bukan lolos)" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t33Dir = Join-Path $env:TEMP "kilo_t33_$(Get-Date -Format 'HHmmss')"
+    try {
+        $null = New-Item -ItemType Directory -Path "$t33Dir\scripts"   -Force
+        $null = New-Item -ItemType Directory -Path "$t33Dir\scenarios" -Force
+        $noBom33 = New-Object System.Text.UTF8Encoding($false)
+        $t33Tmpl = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        foreach ($tmpl in @("ErrorTracker.gd", "ScenarioRunner.gd")) {
+            $rawT = [System.IO.File]::ReadAllBytes((Join-Path $t33Tmpl $tmpl))
+            $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF) { 3 } else { 0 }
+            [System.IO.File]::WriteAllText("$t33Dir\scripts\$tmpl",
+                [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom33)
+        }
+        [System.IO.File]::WriteAllText("$t33Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"KiloT33`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom33)
+        [System.IO.File]::WriteAllText("$t33Dir\main.tscn",
+            "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom33)
+        # Game menulis state dengan field yang DIKETAHUI -- 'hp_ada' dan 'nested.pct' ada,
+        # 'hp_tidak_ada' sengaja tidak pernah ditulis.
+        [System.IO.File]::WriteAllText("$t33Dir\main.gd", @'
+extends Node
+
+func _write_game_state() -> void:
+	var state := {"hp_ada": 5, "nested": {"pct": 0.5}}
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://shots"))
+	var f := FileAccess.open("user://shots/game_state.json", FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(state))
+		f.close()
+'@, $noBom33)
+        # DUA scenario terpisah: ScenarioRunner berhenti pada kegagalan pertama (fail-fast),
+        # jadi assertion sesudah step yang gagal tidak pernah dijalankan. Menggabungkan
+        # kasus pass dan fail dalam satu scenario membuat kasus terakhir tak pernah teruji.
+        [System.IO.File]::WriteAllText("$t33Dir\scenarios\ok.json", @'
+{
+  "scenario_id": "t33_ok",
+  "steps": [
+    {"type": "write_state"},
+    {"type": "assert_state", "field": "hp_ada", "op": "gte", "expected": 0},
+    {"type": "assert_state", "field": "nested.pct", "op": "lte", "expected": 1.0}
+  ]
+}
+'@, $noBom33)
+        [System.IO.File]::WriteAllText("$t33Dir\scenarios\missing.json", @'
+{
+  "scenario_id": "t33_missing",
+  "steps": [
+    {"type": "write_state"},
+    {"type": "assert_state", "field": "hp_tidak_ada", "op": "gte", "expected": 0}
+  ]
+}
+'@, $noBom33)
+
+        $null = Start-Process $GodotExe -ArgumentList "--path", "`"$t33Dir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+        $t33Res   = "$env:APPDATA\Godot\app_userdata\KiloT33\shots\scenario_result.json"
+        $t33Probs = @()
+        foreach ($case in @(
+            @{ File = "ok.json";      Want = "pass"; Label = "field ada (gte + dot-path)" },
+            @{ File = "missing.json"; Want = "fail"; Label = "field TIDAK ADA" }
+        )) {
+            Remove-Item -LiteralPath $t33Res -Force -ErrorAction SilentlyContinue
+            $pr33 = Start-Process $GodotExe -ArgumentList "--path", "`"$t33Dir`"", "--", "--scenario", "res://scenarios/$($case.File)" `
+                -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+            if ($pr33) { $pr33.Handle | Out-Null; $pr33.WaitForExit(45000) | Out-Null; if (-not $pr33.HasExited) { $pr33.Kill() } }
+
+            if (-not (Test-Path -LiteralPath $t33Res)) {
+                $t33Probs += "$($case.Label): scenario_result.json tidak dihasilkan"
+                continue
+            }
+            $r33 = Get-Content -LiteralPath $t33Res -Raw | ConvertFrom-Json
+            if ($r33.status -ne $case.Want) {
+                $t33Probs += "$($case.Label): status=$($r33.status), harus $($case.Want)"
+            }
+            # Assertion harus benar-benar dijalankan, bukan sekadar scenario yang berakhir
+            $nAssert = @($r33.step_results | Where-Object { $_.type -eq "assert_state" }).Count
+            if ($nAssert -lt 1) { $t33Probs += "$($case.Label): tidak ada assert_state tercatat" }
+        }
+        Add-Result "assert_state: field tidak ada -> fail (bukan lolos)" ($t33Probs.Count -eq 0) `
+            $(if ($t33Probs.Count -eq 0) { "field ada -> pass, field tidak ada -> fail" } else { ($t33Probs -join " | ") })
+    } catch {
+        Add-Result "assert_state: field tidak ada -> fail (bukan lolos)" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t33Dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\KiloT33" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."

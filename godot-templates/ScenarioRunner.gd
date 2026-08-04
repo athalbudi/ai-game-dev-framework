@@ -433,6 +433,14 @@ func _exec_assert_state(step: Dictionary) -> void:
 		_step_skip("game_state.json belum ada")
 		return
 	var actual = _resolve_dot_key(state, key)
+	# Field tidak ada di game_state = kegagalan yang HARUS terlihat, bukan lolos diam-diam.
+	# Penyebab tersering: salah ketik nama field, atau assertion dijalankan di saat game
+	# belum menulis field itu (mis. memeriksa state run padahal run belum dimulai).
+	# Pesan menyebut key yang tersedia supaya penulis scenario bisa langsung membetulkan.
+	if actual == null and not (op in ["is_null", "not_null"]):
+		var available := ", ".join(PackedStringArray(state.keys()))
+		_step_fail("assert_state: field '%s' tidak ada di game_state (op=%s). Field tersedia: %s" % [key, op, available])
+		return
 	if _evaluate_op(actual, op, expected):
 		_step_pass({"key": key, "actual": str(actual), "expected": str(expected)})
 	else:
@@ -655,6 +663,17 @@ func _resolve_dot_key(data: Dictionary, key: String):
 
 
 func _evaluate_op(actual, op: String, expected) -> bool:
+	# Perbandingan numerik terhadap nilai yang TIDAK ADA harus selalu gagal, tidak pernah lolos.
+	#
+	# GDScript mengubah float(str(null)) menjadi 0.0. Tanpa penjagaan ini, field yang tidak
+	# ada di game_state diam-diam dibaca sebagai 0, sehingga bentuk assertion yang paling
+	# umum untuk menyatakan invarian justru SELALU lolos:
+	#     "coins gte 0"        -> 0.0 >= 0.0  -> true
+	#     "dukun.hp_pct lte 1" -> 0.0 <= 1.0  -> true
+	# Terukur di jimat: tujuh invarian dilaporkan utuh padahal tidak satu pun diperiksa.
+	# Nilai yang tidak diketahui tidak bisa memenuhi batasan apa pun -- itu bukan "0".
+	if actual == null and op in ["gt", "gte", "lt", "lte"]:
+		return false
 	match op:
 		"eq":       return actual == expected
 		"neq":      return actual != expected
