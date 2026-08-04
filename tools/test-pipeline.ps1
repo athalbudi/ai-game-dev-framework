@@ -2311,6 +2311,83 @@ func _ready() -> void:
 }
 Write-S
 
+# ── TEST 36: kontrak _get_game_state() -- yang DISARANKAN framework ─────────────
+# ScenarioRunner mendokumentasikan dua kontrak penyedia state. TEST 34 menguji
+# _write_game_state(); yang DISARANKAN -- _get_game_state() -- tidak punya cakupan sama
+# sekali sampai test ini. Kalau delegasi GameStateWriter ke provider rusak, game yang
+# mengikuti dokumentasi utama diam-diam hanya mendapat state fallback generik.
+#
+# Ditemukan saat mendiagnosis bread-adventure: state yang tertulis berisi build="unknown"
+# (nilai fallback GameStateWriter), bukan data provider. Framework ternyata benar --
+# tapi tidak ada satu pun test yang bisa membuktikannya.
+Write-T "TEST 36: kontrak _get_game_state() menghasilkan state dari game, bukan fallback"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "kontrak _get_game_state() dipakai (bukan fallback)" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t36Dir = Join-Path $env:TEMP "kilo_t36_$(Get-Date -Format 'HHmmss')"
+    try {
+        $null = New-Item -ItemType Directory -Path "$t36Dir\scripts"   -Force
+        $null = New-Item -ItemType Directory -Path "$t36Dir\scenarios" -Force
+        $noBom36 = New-Object System.Text.UTF8Encoding($false)
+        $t36Tmpl = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        foreach ($tmpl in @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")) {
+            $rawT = [System.IO.File]::ReadAllBytes((Join-Path $t36Tmpl $tmpl))
+            $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF) { 3 } else { 0 }
+            [System.IO.File]::WriteAllText("$t36Dir\scripts\$tmpl",
+                [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom36)
+        }
+        [System.IO.File]::WriteAllText("$t36Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"KiloT36`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom36)
+        [System.IO.File]::WriteAllText("$t36Dir\main.tscn",
+            "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom36)
+        # Node scene memakai kontrak yang DISARANKAN: menyediakan data, bukan menulis file.
+        # 'build' sengaja diisi nilai khas -- kalau fallback yang dipakai, isinya "unknown".
+        [System.IO.File]::WriteAllText("$t36Dir\main.gd", @'
+extends Node
+
+func _get_game_state() -> Dictionary:
+	return {"build": "provider-1.0", "penanda_provider": 99}
+'@, $noBom36)
+        [System.IO.File]::WriteAllText("$t36Dir\scenarios\p.json",
+            '{"scenario_id":"t36","steps":[{"type":"wait_frames","frames":30},{"type":"write_state"},{"type":"assert_state","field":"penanda_provider","op":"eq","expected":99}]}', $noBom36)
+
+        $null = Start-Process $GodotExe -ArgumentList "--path", "`"$t36Dir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+        $t36Res = "$env:APPDATA\Godot\app_userdata\KiloT36\shots\scenario_result.json"
+        $t36Gs  = "$env:APPDATA\Godot\app_userdata\KiloT36\shots\game_state.json"
+        Remove-Item -LiteralPath $t36Res -Force -ErrorAction SilentlyContinue
+        $pr36 = Start-Process $GodotExe -ArgumentList "--path", "`"$t36Dir`"", "--", "--scenario", "res://scenarios/p.json" `
+            -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+        if ($pr36) { $pr36.Handle | Out-Null; $pr36.WaitForExit(45000) | Out-Null; if (-not $pr36.HasExited) { $pr36.Kill() } }
+
+        $t36Probs = @()
+        if (-not (Test-Path -LiteralPath $t36Res)) {
+            $t36Probs += "scenario_result.json tidak dihasilkan"
+        } else {
+            $r36 = Get-Content -LiteralPath $t36Res -Raw | ConvertFrom-Json
+            if ($r36.status -ne "pass") { $t36Probs += "scenario status=$($r36.status), harus pass" }
+        }
+        if (-not (Test-Path -LiteralPath $t36Gs)) {
+            $t36Probs += "game_state.json tidak dihasilkan"
+        } else {
+            $g36 = Get-Content -LiteralPath $t36Gs -Raw | ConvertFrom-Json
+            # 'build' membedakan data provider dari state fallback GameStateWriter
+            if ($g36.build -ne "provider-1.0") { $t36Probs += "build='$($g36.build)', harus 'provider-1.0' (fallback dipakai?)" }
+            if (-not ($g36.PSObject.Properties.Name -contains 'penanda_provider')) {
+                $t36Probs += "penanda_provider tidak ada di state"
+            }
+        }
+        Add-Result "kontrak _get_game_state() dipakai (bukan fallback)" ($t36Probs.Count -eq 0) `
+            $(if ($t36Probs.Count -eq 0) { "data provider tertulis (build=provider-1.0), assertion lulus" } else { ($t36Probs -join " | ") })
+    } catch {
+        Add-Result "kontrak _get_game_state() dipakai (bukan fallback)" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t36Dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\KiloT36" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
