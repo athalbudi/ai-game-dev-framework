@@ -2970,6 +2970,123 @@ func _get_game_state() -> Dictionary:
 }
 Write-S
 
+# ── TEST 44: game-doctor -- pemeriksaan statis terhadap project game ──────────
+# Dari tujuh temuan pada audit jimat, tiga bisa didapat dengan satu grep: mojibake di teks
+# UI, tur screenshot yang dipanggil dua kali, dan nol grab_focus(). Ketiganya STATIS, dan
+# framework tidak memeriksanya sama sekali -- ia hanya melihat apa yang berhasil dirender.
+# Artinya ketiga temuan itu bergantung pada ada-tidaknya seseorang yang kebetulan curiga.
+# Test ini mengunci empat pemeriksaan itu plus satu kontrak yang gampang terlewat:
+#   1. mojibake terdeteksi lewat uji keterbalikan encoding (bukan daftar karakter)
+#   2. game yang memanggil _shot_tour sendiri terdeteksi
+#   3. project bertombol tanpa grab_focus terdeteksi
+#   4. cabang --scenario yang berhenti dini terdeteksi
+#   5. direktori cadangan/arsip TIDAK ikut diperiksa -- saat menguji tool ini, temuan
+#      pertama yang muncul justru folder _backup buatan sendiri. Pemeriksa yang menuduh
+#      arsip cepat kehilangan kepercayaan, dan yang tidak dipercaya akan dimatikan.
+Write-T "TEST 44: game-doctor menemukan cacat statis dan tidak memeriksa folder arsip"
+$t44Tool = Join-Path $PSScriptRoot "game-doctor.ps1"
+if (-not (Test-Path -LiteralPath $t44Tool)) {
+    Add-Result "game-doctor: cacat statis + arsip diabaikan" $false "game-doctor.ps1 tidak ditemukan"
+} else {
+    $t44Dir = Join-Path $env:TEMP "kilo_t44_$($PID)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $t44Bad   = Join-Path $t44Dir "rusak"
+        $t44Good  = Join-Path $t44Dir "bersih"
+        foreach ($d in @("$t44Bad\scripts", "$t44Good\scripts", "$t44Good\_backup")) {
+            $null = New-Item -ItemType Directory -Path $d -Force
+        }
+        $noBom44 = New-Object System.Text.UTF8Encoding($false)
+
+        # Mojibake ASLI, dibuat dengan mensimulasikan kerusakannya: byte UTF-8 dari em-dash
+        # dibaca sebagai CP1252, lalu hasilnya disimpan sebagai UTF-8. Menuliskan urutan
+        # karakternya secara harfiah akan menguji regex saya, bukan mekanisme sebenarnya.
+        $emdash   = [char]0x2014
+        $utf8Byte = [System.Text.Encoding]::UTF8.GetBytes("Lanjut $emdash malam")
+        $moji     = [System.Text.Encoding]::GetEncoding(1252).GetString($utf8Byte)
+
+        $badMain = @"
+extends Node
+
+func _ready() -> void:
+	if "--scenario" in OS.get_cmdline_user_args():
+		var ui := Control.new()
+		add_child(ui)
+		return
+	if "--shot" in OS.get_cmdline_user_args():
+		_shot_tour.call_deferred()
+	var b := Button.new()
+	b.text = "$moji"
+	add_child(b)
+
+func _shot_tour() -> void:
+	pass
+
+func _get_game_state() -> Dictionary:
+	return {"x": 1}
+"@
+        [System.IO.File]::WriteAllText("$t44Bad\scripts\main.gd", $badMain, $noBom44)
+        [System.IO.File]::WriteAllText("$t44Bad\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"T44Bad`"`n`n[autoload]`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom44)
+
+        # Versi bersih: tanpa mojibake, tanpa pemanggilan _shot_tour, ada grab_focus,
+        # cabang --scenario tidak berhenti dini, kedua autoload terpasang.
+        $goodMain = @"
+extends Node
+
+func _ready() -> void:
+	var b := Button.new()
+	b.text = "Mulai"
+	add_child(b)
+	b.grab_focus()
+
+func _get_game_state() -> Dictionary:
+	return {"x": 1}
+"@
+        [System.IO.File]::WriteAllText("$t44Good\scripts\main.gd", $goodMain, $noBom44)
+        [System.IO.File]::WriteAllText("$t44Good\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"T44Good`"`n`n[autoload]`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`n", $noBom44)
+        # Arsip bermasalah di project BERSIH -- tidak boleh dilaporkan sama sekali.
+        [System.IO.File]::WriteAllText("$t44Good\_backup\main.gd", $badMain, $noBom44)
+
+        $t44Probs = @()
+
+        $repBad = Join-Path $t44Dir "bad.json"
+        & $t44Tool -ProjectPath $t44Bad -OutputPath $repBad -Quiet *>$null
+        $exitBad = $LASTEXITCODE
+        if ($exitBad -ne 1) { $t44Probs += "project rusak: exit=$exitBad, harus 1" }
+        if (-not (Test-Path -LiteralPath $repBad)) {
+            $t44Probs += "laporan project rusak tidak ditulis"
+        } else {
+            $jb = Get-Content -LiteralPath $repBad -Raw | ConvertFrom-Json
+            $ids = @($jb.findings | ForEach-Object { $_.id })
+            foreach ($want in @("mojibake", "shot_tour_dipanggil_game", "tanpa_grab_focus",
+                                "scenario_berhenti_dini", "autoload_hilang")) {
+                if ($ids -notcontains $want) { $t44Probs += "project rusak: '$want' tidak terdeteksi" }
+            }
+        }
+
+        $repGood = Join-Path $t44Dir "good.json"
+        & $t44Tool -ProjectPath $t44Good -OutputPath $repGood -Quiet *>$null
+        $exitGood = $LASTEXITCODE
+        if ($exitGood -ne 0) { $t44Probs += "project bersih: exit=$exitGood, harus 0" }
+        if (Test-Path -LiteralPath $repGood) {
+            $jg = Get-Content -LiteralPath $repGood -Raw | ConvertFrom-Json
+            if ([int]$jg.summary.error -ne 0)   { $t44Probs += "project bersih: $($jg.summary.error) error (harus 0)" }
+            if ([int]$jg.summary.warning -ne 0) { $t44Probs += "project bersih: $($jg.summary.warning) warning (harus 0)" }
+            $backupHit = @($jg.findings | Where-Object { $_.file -match "_backup" })
+            if ($backupHit.Count -gt 0) { $t44Probs += "folder arsip _backup ikut diperiksa -- harus dilewati" }
+        }
+
+        Add-Result "game-doctor: cacat statis + arsip diabaikan" ($t44Probs.Count -eq 0) `
+            $(if ($t44Probs.Count -eq 0) { "5 pemeriksaan menyala di project rusak, 0 temuan di project bersih" } else { ($t44Probs -join " | ") })
+    } catch {
+        Add-Result "game-doctor: cacat statis + arsip diabaikan" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t44Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
