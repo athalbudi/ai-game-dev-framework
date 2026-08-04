@@ -50,7 +50,7 @@ func detect_all(manifest_path: String, scenario_result_path: String = "") -> Arr
 	# Load game_state jika tersedia (dari manifest layer 1)
 	var game_state: Dictionary = {}
 	if manifest.has("game_state") and manifest["game_state"] != null:
-		var gs = manifest["game_state"]
+		var gs: Variant = manifest["game_state"]
 		if gs is Dictionary:
 			game_state = gs
 
@@ -173,7 +173,7 @@ func _detect_stale_screenshots(manifest: Dictionary) -> Array[Dictionary]:
 
 	var now_unix := Time.get_unix_time_from_system()
 
-	for ss in screenshots:
+	for ss: Variant in screenshots:
 		if not (ss is Dictionary):
 			continue
 		var ss_d := ss as Dictionary
@@ -212,7 +212,7 @@ func _detect_stale_screenshots(manifest: Dictionary) -> Array[Dictionary]:
 
 func _detect_coverage_gaps(manifest: Dictionary) -> Array[Dictionary]:
 	var results: Array[Dictionary] = []
-	var coverage = manifest.get("coverage", null)
+	var coverage: Variant = manifest.get("coverage", null)
 	if coverage == null or not (coverage is Dictionary):
 		return results
 
@@ -239,7 +239,7 @@ func _detect_visual_regressions(diff_report: Dictionary, manifest: Dictionary) -
 		return results
 
 	var files: Array = diff_report.get("files", [])
-	for f in files:
+	for f: Variant in files:
 		if not (f is Dictionary):
 			continue
 		var f_d := f as Dictionary
@@ -284,12 +284,12 @@ func _detect_state_anomalies(game_state: Dictionary, manifest: Dictionary) -> Ar
 		return results
 
 	# Deteksi hp = 0 tapi is_alive = true (pattern umum health bar bug)
-	var player = game_state.get("player", null)
+	var player: Variant = game_state.get("player", null)
 	if player is Dictionary:
 		var player_d := player as Dictionary
-		var hp = player_d.get("hp", null)
-		var hp_max = player_d.get("hp_max", null)
-		var is_alive = player_d.get("is_alive", null)
+		var hp: Variant = player_d.get("hp", null)
+		var hp_max: Variant = player_d.get("hp_max", null)
+		var is_alive: Variant = player_d.get("is_alive", null)
 
 		if hp != null and hp_max != null and float(str(hp_max)) > 0:
 			var hp_pct := float(str(hp)) / float(str(hp_max))
@@ -311,7 +311,7 @@ func _detect_state_anomalies(game_state: Dictionary, manifest: Dictionary) -> Ar
 				))
 
 	# Deteksi shots_taken mismatch vs png_count di manifest
-	var shots_taken = game_state.get("shots_taken", null)
+	var shots_taken: Variant = game_state.get("shots_taken", null)
 	var png_count: int = manifest.get("png_count", 0)
 	if shots_taken != null and int(str(shots_taken)) != png_count:
 		# Tipe eksplisit: abs() bertanda-tangan Variant di GDScript static analyzer,
@@ -329,8 +329,8 @@ func _detect_state_anomalies(game_state: Dictionary, manifest: Dictionary) -> Ar
 			))
 
 	# Deteksi resource negatif (coins, dll)
-	for key in ["coins", "gold", "resource", "score"]:
-		var val = _resolve_dot_key(game_state, key)
+	for key: String in ["coins", "gold", "resource", "score"]:
+		var val: Variant = _resolve_dot_key(game_state, key)
 		if val != null and float(str(val)) < 0:
 			results.append(_make_anomaly(
 				"state", WARNING,
@@ -351,7 +351,7 @@ func _detect_scenario_failures(scenario_result: Dictionary) -> Array[Dictionary]
 	var all_steps: Array = scenario_result.get("steps", [])
 	var failed_steps: Array[Dictionary] = []
 	var skipped_steps: Array[Dictionary] = []
-	for _s in all_steps:
+	for _s: Variant in all_steps:
 		if not (_s is Dictionary): continue
 		var _sd := _s as Dictionary
 		if _sd.get("status") == "fail":  failed_steps.append(_sd)
@@ -405,7 +405,7 @@ func _detect_performance_signals(manifest: Dictionary, scenario_result: Dictiona
 	if not scenario_result.is_empty():
 		var all_fps_steps: Array = scenario_result.get("steps", [])
 		var fps_steps: Array[Dictionary] = []
-		for _fs in all_fps_steps:
+		for _fs: Variant in all_fps_steps:
 			if not (_fs is Dictionary): continue
 			var _fsd := _fs as Dictionary
 			if _fsd.get("type") == "assert_fps" and _fsd.get("status") == "fail":
@@ -475,7 +475,7 @@ func _load_json(path: String) -> Dictionary:
 		file.close()
 		return {}
 	file.close()
-	var data = json.get_data()
+	var data: Variant = json.get_data()
 	return data if data is Dictionary else {}
 
 
@@ -527,7 +527,7 @@ func _find_reproducing_scenario(target_file: String, evidence: Dictionary, scena
 func _scenario_matches(scenario: Dictionary, target_norm: String, evidence: Dictionary) -> bool:
 	if not scenario.has("steps") or not (scenario["steps"] is Array):
 		return false
-	for step in scenario["steps"]:
+	for step: Variant in scenario["steps"]:
 		if not (step is Dictionary):
 			continue
 		var step_d := step as Dictionary
@@ -543,12 +543,12 @@ func _scenario_matches(scenario: Dictionary, target_norm: String, evidence: Dict
 	return false
 
 
-func _resolve_dot_key(data: Dictionary, key: String):
+func _resolve_dot_key(data: Dictionary, key: String) -> Variant:
 	var parts := key.split(".")
-	var current = data
-	for part in parts:
-		if current is Dictionary and current.has(part):
-			current = current[part]
+	var current: Variant = data
+	for part: String in parts:
+		if current is Dictionary and (current as Dictionary).has(part):
+			current = (current as Dictionary)[part]
 		else:
 			return null
 	return current

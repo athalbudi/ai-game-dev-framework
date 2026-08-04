@@ -191,12 +191,15 @@ if (-not $godotFound) {
 
             $scriptNames = @($allGdFiles | ForEach-Object { $_.Name })
             $fileListGD  = ($scriptNames | ForEach-Object { '"scripts/' + $_ + '"' }) -join ', '
+            # checker.gd sendiri harus typed: ia dikompilasi di project yang sama dengan
+            # untyped_declaration=2 aktif, jadi deklarasi tanpa tipe di sini akan membuat
+            # checker-nya sendiri gagal parse dan seluruh cek jadi tak pernah berjalan.
             $gdChecker = @"
 extends Node
 func _ready() -> void:
-    var fail_count := 0
-    for f in [$fileListGD]:
-        var s = ResourceLoader.load(f)
+    var fail_count: int = 0
+    for f: String in [$fileListGD]:
+        var s: Variant = ResourceLoader.load(f)
         if s == null or not (s is GDScript) or not (s as GDScript).can_instantiate():
             printerr("COMPILE_FAIL: " + f)
             fail_count += 1
@@ -207,9 +210,15 @@ func _ready() -> void:
 "@
             [System.IO.File]::WriteAllText("$checkDir\scripts\checker.gd", $gdChecker, (New-Object System.Text.UTF8Encoding($false)))
 
-            # unsafe_method_access=2 langsung diaktifkan -- ini healthcheck ringan,
-            # bukan regresi vanilla-vs-strict terpisah seperti test-pipeline TEST 17.
-            $projGodot = "config_version=5`n`n[application]`nconfig/name=`"DoctorCheck`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`n`n[debug]`ngdscript/warnings/unsafe_method_access=2`ngdscript/warnings/unsafe_property_access=2`n"
+            # Warning ketat langsung diaktifkan -- ini healthcheck ringan, bukan regresi
+            # vanilla-vs-strict terpisah seperti test-pipeline TEST 17.
+            #
+            # untyped_declaration=2 ikut diuji sejak ditemukan bahwa template framework
+            # TIDAK BISA DIMUAT sama sekali di project yang memakainya. bread-adventure
+            # memakai setelan itu, dan akibatnya ScenarioRunner.gd gagal parse -- scenario
+            # tidak pernah sekali pun berjalan di sana. Framework hanya menguji dua warning
+            # lain, jadi ketidakcocokan ini tak pernah terlihat.
+            $projGodot = "config_version=5`n`n[application]`nconfig/name=`"DoctorCheck`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`n`n[debug]`ngdscript/warnings/unsafe_method_access=2`ngdscript/warnings/unsafe_property_access=2`ngdscript/warnings/untyped_declaration=2`n"
             [System.IO.File]::WriteAllText("$checkDir\project.godot", $projGodot, (New-Object System.Text.UTF8Encoding($false)))
 
             $mainTscn = "[gd_scene load_steps=2 format=3]`n[ext_resource type=""Script"" path=""res://scripts/checker.gd"" id=""1""]`n[node name=""Main"" type=""Node""]`nscript = ExtResource(""1"")`n"

@@ -176,7 +176,7 @@ func _record_event(event: InputEvent, frame_offset: int) -> Dictionary:
 		var e := event as InputEventKey
 		# Konversi ke action jika ada di InputMap
 		var matched_actions := InputMap.get_actions().filter(
-			func(a): return InputMap.action_has_event(a, event)
+			func(a: StringName) -> bool: return InputMap.action_has_event(a, event)
 		)
 		if not matched_actions.is_empty():
 			base.merge({

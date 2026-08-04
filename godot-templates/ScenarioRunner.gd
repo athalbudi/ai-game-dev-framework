@@ -220,7 +220,7 @@ func _exec_wait_signal(step: Dictionary) -> void:
 func _exec_wait_condition(step: Dictionary) -> void:
 	var key: String = step.get("key", "")
 	var op: String = step.get("op", "not_null")
-	var expected = step.get("expected", null)
+	var expected: Variant = step.get("expected", null)
 	var timeout_sec: float = float(step.get("timeout_sec", 10.0))
 	if key.is_empty():
 		_step_fail("wait_condition tidak punya field 'key'")
@@ -234,7 +234,7 @@ func _exec_wait_condition(step: Dictionary) -> void:
 		elapsed += 6.0 / 60.0
 		var state := _read_game_state()
 		if not state.is_empty():
-			var actual = _resolve_dot_key(state, key)
+			var actual: Variant = _resolve_dot_key(state, key)
 			if _evaluate_op(actual, op, expected):
 				_step_pass({"key": key, "op": op, "elapsed": elapsed})
 				return
@@ -283,7 +283,7 @@ func _exec_action(step: Dictionary) -> void:
 	_step_pass(data)
 
 
-func _resolve_mouse_button(value) -> int:
+func _resolve_mouse_button(value: Variant) -> int:
 	# Terima integer langsung atau nama string MouseButton.
 	# Masalah yang sama dengan _resolve_joy_button: int("left") = 0, tapi MOUSE_BUTTON_LEFT = 1
 	# sehingga string "left" akan resolve ke tombol yang salah. int("right") = 0 juga — salah.
@@ -352,7 +352,7 @@ func _exec_touch_tap(step: Dictionary) -> void:
 	_step_pass({"x": x, "y": y})
 
 
-func _resolve_joy_button(value) -> int:
+func _resolve_joy_button(value: Variant) -> int:
 	# Terima integer langsung atau nama string JoyButton.
 	# GDScript int("button_a") = 0 — semua string non-numerik collapse ke 0 tanpa error,
 	# sehingga nama string harus di-resolve sebelum cast ke int.
@@ -460,7 +460,7 @@ func _exec_write_state(step: Dictionary) -> void:
 
 func _exec_assert_state(step: Dictionary) -> void:
 	var key: String = step.get("field", step.get("key", ""))
-	var expected = step.get("expected", null)
+	var expected: Variant = step.get("expected", null)
 	var op: String = step.get("op", "eq")
 	var stateWriter := _resolve_state_writer()
 	if stateWriter != null:
@@ -470,7 +470,7 @@ func _exec_assert_state(step: Dictionary) -> void:
 	if state.is_empty():
 		_step_skip("game_state.json belum ada")
 		return
-	var actual = _resolve_dot_key(state, key)
+	var actual: Variant = _resolve_dot_key(state, key)
 	# Field tidak ada di game_state = kegagalan yang HARUS terlihat, bukan lolos diam-diam.
 	# Penyebab tersering: salah ketik nama field, atau assertion dijalankan di saat game
 	# belum menulis field itu (mis. memeriksa state run padahal run belum dimulai).
@@ -534,7 +534,7 @@ func _exec_assert_screenshot_exists(step: Dictionary) -> void:
 
 func _exec_set_state(step: Dictionary) -> void:
 	var key: String = step.get("key", "")
-	var value = step.get("value", null)
+	var value: Variant = step.get("value", null)
 	var setters := _find_nodes_with_method(get_tree().root, "_on_set_state")
 	if setters.is_empty():
 		_step_skip("_on_set_state tidak diimplementasikan di game")
@@ -550,7 +550,7 @@ func _exec_log(step: Dictionary) -> void:
 
 
 func _exec_seed_override(step: Dictionary) -> void:
-	var s = step.get("seed", null)
+	var s: Variant = step.get("seed", null)
 	if s != null:
 		seed(int(s))
 		_step_pass({"seed": s})
@@ -601,7 +601,7 @@ func emit_scenario_signal(sig_name: String) -> void:
 
 # --- Result helpers ---
 
-func _step_pass(data) -> void:
+func _step_pass(data: Variant) -> void:
 	var cur_step: Dictionary = _steps[_current_step]
 	var result := {"step": _current_step, "type": cur_step.get("type", ""), "status": "pass"}
 	if data != null:
@@ -626,7 +626,7 @@ func _step_skip(reason: String) -> void:
 
 # --- Finish ---
 
-func _write_result(status: String, error_msg) -> void:
+func _write_result(status: String, error_msg: Variant) -> void:
 	var pass_count := 0
 	var fail_count := 0
 	var skip_count := 0
@@ -683,24 +683,24 @@ func _read_game_state() -> Dictionary:
 	if json.parse(f.get_as_text()) != OK:
 		return {}
 	f.close()
-	var data = json.get_data()
+	var data: Variant = json.get_data()
 	if data is Dictionary:
 		return data
 	return {}
 
 
-func _resolve_dot_key(data: Dictionary, key: String):
+func _resolve_dot_key(data: Dictionary, key: String) -> Variant:
 	var parts := key.split(".")
-	var current = data
-	for part in parts:
-		if current is Dictionary and current.has(part):
-			current = current[part]
+	var current: Variant = data
+	for part: String in parts:
+		if current is Dictionary and (current as Dictionary).has(part):
+			current = (current as Dictionary)[part]
 		else:
 			return null
 	return current
 
 
-func _evaluate_op(actual, op: String, expected) -> bool:
+func _evaluate_op(actual: Variant, op: String, expected: Variant) -> bool:
 	# Perbandingan numerik terhadap nilai yang TIDAK ADA harus selalu gagal, tidak pernah lolos.
 	#
 	# GDScript mengubah float(str(null)) menjadi 0.0. Tanpa penjagaan ini, field yang tidak
