@@ -2865,6 +2865,111 @@ func _get_game_state() -> Dictionary:
 }
 Write-S
 
+# ── TEST 43: gerbang liveness ─────────────────────────────────────────────────
+# Kegagalan terburuk sebuah harness bukan melewatkan bug, melainkan melaporkan PASS atas
+# ketiadaan pengujian. Terukur pada jimat: menu_navigation "PASS" berminggu-minggu terhadap
+# LAYAR KOSONG karena game mengambil jalur init minimal saat --scenario. Semua assertion-nya
+# memang lolos -- terhadap ketiadaan. Tidak ada satu pun pemeriksaan lama yang bisa melihatnya.
+# Empat kontrak diuji:
+#   1. scenario yang mengirim input tetapi tidak mengubah state maupun layar -> status inert
+#   2. scenario yang inputnya benar-benar mengubah state -> pass
+#   3. allow_inert:true menonaktifkan gerbang (untuk scenario yang memang tidak mengubah apa pun)
+#   4. scenario TANPA langkah input tidak dikenai gerbang sama sekali -- kalau ini salah,
+#      setiap scenario screenshot-saja akan gagal dan gerbangnya akan dimatikan orang
+Write-T "TEST 43: liveness -- input tanpa perubahan = inert, bukan pass"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "liveness: input tanpa perubahan -> inert" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t43Dir = Join-Path $env:TEMP "kilo_t43_$($PID)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $null = New-Item -ItemType Directory -Path "$t43Dir\scripts"   -Force
+        $null = New-Item -ItemType Directory -Path "$t43Dir\scenarios" -Force
+        $noBom43 = New-Object System.Text.UTF8Encoding($false)
+        $t43Tmpl = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        foreach ($tmpl in @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")) {
+            $rawT = [System.IO.File]::ReadAllBytes((Join-Path $t43Tmpl $tmpl))
+            $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF) { 3 } else { 0 }
+            [System.IO.File]::WriteAllText("$t43Dir\scripts\$tmpl",
+                [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom43)
+        }
+        [System.IO.File]::WriteAllText("$t43Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"KiloT43`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom43)
+        [System.IO.File]::WriteAllText("$t43Dir\main.tscn",
+            "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom43)
+        # Satu tombol pada posisi tetap, TANPA grab_focus. Jadi ui_accept tidak mengenai
+        # apa pun (state diam, layar diam) sementara mouse_click di koordinatnya mengenai.
+        # Itulah yang memisahkan kontrak 1 dari kontrak 2 di project yang sama.
+        [System.IO.File]::WriteAllText("$t43Dir\main.gd", @'
+extends Node
+
+var _n := 0
+
+func _ready() -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+	var b := Button.new()
+	b.text = "tekan"
+	b.position = Vector2(100, 100)
+	b.size = Vector2(200, 60)
+	b.pressed.connect(func(): _n += 1)
+	root.add_child(b)
+
+func _get_game_state() -> Dictionary:
+	return {"counter": _n}
+'@, $noBom43)
+
+        [System.IO.File]::WriteAllText("$t43Dir\scenarios\inert.json",
+            '{"scenario_id":"t43_inert","steps":[{"type":"wait_frames","frames":20},{"type":"screenshot","name":"t43i_a"},{"type":"action","action":"ui_accept"},{"type":"wait_frames","frames":10},{"type":"screenshot","name":"t43i_b"}]}', $noBom43)
+        [System.IO.File]::WriteAllText("$t43Dir\scenarios\alive.json",
+            '{"scenario_id":"t43_alive","steps":[{"type":"wait_frames","frames":20},{"type":"screenshot","name":"t43a_a"},{"type":"mouse_click","x":200,"y":130},{"type":"wait_frames","frames":10},{"type":"screenshot","name":"t43a_b"}]}', $noBom43)
+        [System.IO.File]::WriteAllText("$t43Dir\scenarios\allow.json",
+            '{"scenario_id":"t43_allow","allow_inert":true,"steps":[{"type":"wait_frames","frames":20},{"type":"screenshot","name":"t43w_a"},{"type":"action","action":"ui_accept"},{"type":"wait_frames","frames":10},{"type":"screenshot","name":"t43w_b"}]}', $noBom43)
+        [System.IO.File]::WriteAllText("$t43Dir\scenarios\shots.json",
+            '{"scenario_id":"t43_shots","steps":[{"type":"wait_frames","frames":20},{"type":"screenshot","name":"t43s_a"},{"type":"wait_frames","frames":10},{"type":"screenshot","name":"t43s_b"}]}', $noBom43)
+
+        $null = Start-Process $GodotExe -ArgumentList "--path", "`"$t43Dir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+        $t43Res = "$env:APPDATA\Godot\app_userdata\KiloT43\shots\scenario_result.json"
+        $t43Probs = @()
+
+        foreach ($case in @(
+            @{ File = "inert.json"; Expect = "inert" },
+            @{ File = "alive.json"; Expect = "pass"  },
+            @{ File = "allow.json"; Expect = "pass"  },
+            @{ File = "shots.json"; Expect = "pass"  }
+        )) {
+            Remove-Item -LiteralPath $t43Res -Force -ErrorAction SilentlyContinue
+            $pr43 = Start-Process $GodotExe -ArgumentList "--path", "`"$t43Dir`"", "--", "--scenario", "res://scenarios/$($case.File)" `
+                -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+            if ($pr43) { $pr43.Handle | Out-Null; $pr43.WaitForExit(45000) | Out-Null; if (-not $pr43.HasExited) { $pr43.Kill() } }
+            if (-not (Test-Path -LiteralPath $t43Res)) {
+                $t43Probs += "$($case.File): scenario_result.json tidak dihasilkan"; continue
+            }
+            $r43 = Get-Content -LiteralPath $t43Res -Raw | ConvertFrom-Json
+            if ($r43.status -ne $case.Expect) {
+                $t43Probs += "$($case.File): status=$($r43.status), harus $($case.Expect)"
+            }
+            # kontrak 4: scenario tanpa input tidak boleh dikenai gerbang
+            if ($case.File -eq "shots.json" -and $r43.liveness.required) {
+                $t43Probs += "shots.json: liveness.required=true padahal tidak ada langkah input"
+            }
+            if ($case.File -eq "alive.json" -and -not $r43.liveness.state_changed) {
+                $t43Probs += "alive.json: state_changed=false padahal klik menaikkan counter"
+            }
+        }
+
+        Add-Result "liveness: input tanpa perubahan -> inert" ($t43Probs.Count -eq 0) `
+            $(if ($t43Probs.Count -eq 0) { "inert/pass/allow_inert/tanpa-input keempatnya benar" } else { ($t43Probs -join " | ") })
+    } catch {
+        Add-Result "liveness: input tanpa perubahan -> inert" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t43Dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\KiloT43" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."

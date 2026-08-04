@@ -48,6 +48,29 @@ var _invariant_violations: Dictionary = {}
 var _invariant_prev: Dictionary = {}
 var _invariant_checks: int = 0
 
+# --- Gerbang liveness: scenario yang tidak menyentuh apa pun bukan scenario yang lulus ---
+# Kegagalan terburuk yang bisa dilakukan harness bukan melewatkan bug, melainkan melaporkan
+# PASS atas ketiadaan pengujian. Terukur pada jimat: smoke, menu_navigation,
+# adversarial_input_mash, dan probe_run_start semuanya "PASS" selama berminggu-minggu
+# terhadap LAYAR KOSONG, karena game mengambil jalur init minimal saat --scenario. Tidak ada
+# satu pun assertion yang bisa menangkapnya -- semuanya memang lolos, terhadap ketiadaan.
+#
+# Aturannya sengaja dipersempit supaya tidak menghukum scenario yang sah: liveness HANYA
+# dituntut bila scenario benar-benar mengirim input. Scenario yang isinya hanya screenshot
+# memang wajar tidak mengubah apa pun; scenario yang menekan tombol lalu tidak mengubah
+# state maupun layar tidak menguji apa-apa.
+const INPUT_STEP_TYPES := ["action", "mouse_click", "touch_tap", "controller_press", "explore"]
+
+# Field yang SELALU berubah tiap penulisan state. Tanpa dikecualikan, setiap scenario akan
+# tampak hidup dan gerbang ini jadi hiasan.
+const VOLATILE_STATE_FIELDS := ["timestamp", "frame_count", "schema_version", "fps",
+	"uptime_sec", "time", "delta", "elapsed"]
+
+var _liveness_required: bool = false
+var _liveness_input_steps: int = 0
+var _liveness_state_changed: bool = false
+var _liveness_shots_vary: bool = false
+
 
 func _ready() -> void:
 	# Hanya aktif jika dipanggil langsung via _run_scenario dari main, bukan --scenario flag
@@ -106,6 +129,15 @@ func _run_steps() -> int:
 			w0.call("_write_game_state")
 			await _wait_frames(1)
 		_invariant_prev = _read_game_state()
+	# Liveness hanya relevan kalau scenario memang mengirim input -- lihat catatan di
+	# INPUT_STEP_TYPES. Snapshot diambil SEBELUM langkah pertama supaya pembandingnya
+	# adalah keadaan awal yang sesungguhnya.
+	_liveness_input_steps = _count_input_steps(_steps)
+	_liveness_required = _liveness_input_steps > 0
+	var state_before: Dictionary = {}
+	if _liveness_required:
+		state_before = await _snapshot_state()
+
 	for i in range(_steps.size()):
 		_current_step = i
 		_step_start_time = Time.get_unix_time_from_system()
@@ -131,6 +163,24 @@ func _run_steps() -> int:
 	if critical.size() > 0:
 		_write_result("fail", "Invariant critical dilanggar: " + ", ".join(PackedStringArray(critical)))
 		return 1
+
+	# Gerbang liveness -- dijalankan hanya di jalur yang SEHARUSNYA lulus. Sebuah scenario
+	# yang mengirim input lalu tidak mengubah state maupun layar tidak menguji apa pun, dan
+	# melabelinya "pass" adalah false-verify yang paling merugikan: ia bukan cuma gagal
+	# menemukan bug, ia memberi lampu hijau atas ketiadaan pengujian.
+	if _liveness_required and not bool(_scenario.get("allow_inert", false)):
+		var state_after := await _snapshot_state()
+		_liveness_state_changed = _state_meaningfully_changed(state_before, state_after)
+		_liveness_shots_vary = _screenshots_vary()
+		if not _liveness_state_changed and not _liveness_shots_vary:
+			_write_result("inert", ("Scenario mengirim %d langkah input tetapi TIDAK ada yang berubah: " +
+				"game_state identik dari awal sampai akhir (di luar field volatil) dan semua screenshot " +
+				"byte-identik. Tidak ada perilaku game yang teruji. Periksa apakah game benar-benar " +
+				"membangun layarnya saat dijalankan dengan --scenario -- beberapa game mengambil jalur " +
+				"init minimal dan menampilkan layar kosong. Kalau scenario ini memang dimaksudkan tidak " +
+				"mengubah apa-apa, set \"allow_inert\": true.") % _liveness_input_steps)
+			return 1
+
 	_write_result("pass", null)
 	return 0
 
@@ -439,6 +489,75 @@ func _write_explore_replay(trail: Array) -> void:
 		f.store_string(JSON.stringify(doc, "\t"))
 		f.close()
 		print("[scenario] explore: replay ditulis (%d klik) -> user://shots/explore_replay.json" % steps.size())
+
+
+# --- Liveness ---
+
+## Menghitung langkah input TERMASUK yang bersarang, mis. di dalam repeat.
+## Pemindaian yang hanya melihat tingkat teratas melewatkan justru scenario yang paling
+## banyak mengirim input: adversarial_input_mash milik jimat menaruh kelima langkah action-nya
+## di dalam satu repeat, sehingga gerbang liveness sama sekali tidak berlaku untuknya --
+## padahal ia salah satu dari empat scenario yang dulu "PASS" terhadap layar kosong.
+func _count_input_steps(steps: Array) -> int:
+	var n := 0
+	for s: Variant in steps:
+		if not (s is Dictionary):
+			continue
+		var d: Dictionary = s
+		if str(d.get("type", "")) in INPUT_STEP_TYPES:
+			n += 1
+		if d.has("steps") and d["steps"] is Array:
+			n += _count_input_steps(d["steps"] as Array)
+	return n
+
+
+## Paksa game menulis state terbaru lalu baca. Dipakai sebagai pembanding awal/akhir.
+func _snapshot_state() -> Dictionary:
+	var w := _resolve_state_writer()
+	if w != null:
+		w.call("_write_game_state")
+		await _wait_frames(1)
+	return _read_game_state()
+
+
+## Perbandingan dilakukan lewat str() supaya nilai bersarang (Dictionary/Array) ikut
+## terbandingkan tanpa perlu deep-compare manual. Field volatil dikecualikan -- tanpa itu
+## frame_count saja sudah membuat setiap scenario tampak hidup.
+func _state_meaningfully_changed(before: Dictionary, after: Dictionary) -> bool:
+	if before.is_empty() and after.is_empty():
+		return false
+	var volatile: Array = VOLATILE_STATE_FIELDS.duplicate()
+	if _scenario.has("volatile_fields") and _scenario["volatile_fields"] is Array:
+		volatile.append_array(_scenario["volatile_fields"] as Array)
+	var all_keys: Dictionary = {}
+	for k: Variant in before.keys():
+		all_keys[k] = true
+	for k: Variant in after.keys():
+		all_keys[k] = true
+	for k: Variant in all_keys.keys():
+		if str(k) in volatile:
+			continue
+		if str(before.get(k, null)) != str(after.get(k, null)):
+			return true
+	return false
+
+
+## true bila ADA dua screenshot yang berbeda isinya. Layar yang tidak pernah berubah
+## sepanjang scenario adalah tanda kuat bahwa input tidak mengenai apa pun.
+func _screenshots_vary() -> bool:
+	if _screenshots_taken.size() < 2:
+		return false
+	var first := ""
+	for nm: String in _screenshots_taken:
+		var p := "user://shots/scenario_" + nm + ".png"
+		if not FileAccess.file_exists(p):
+			continue
+		var h := FileAccess.get_md5(p)
+		if first == "":
+			first = h
+		elif h != first:
+			return true
+	return false
 
 
 func _critical_violations() -> Array:
@@ -966,6 +1085,12 @@ func _write_result(status: String, error_msg: Variant) -> void:
 		"invariants_total": _invariants.size(),
 		"invariant_checks": _invariant_checks,
 		"invariant_violations": _invariant_violations.values(),
+		"liveness": {
+			"required": _liveness_required,
+			"input_steps": _liveness_input_steps,
+			"state_changed": _liveness_state_changed,
+			"screenshots_vary": _liveness_shots_vary,
+		},
 		"screenshots": _screenshots_taken,
 		"step_results": _step_results,
 	}
