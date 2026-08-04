@@ -262,7 +262,25 @@ func _exec_action(step: Dictionary) -> void:
 	Input.parse_input_event(release)
 	if wait_after > 0:
 		await _wait_frames(wait_after)
-	_step_pass({"action": action_name})
+
+	# PASS di sini berarti "input dikirim", BUKAN "input berpengaruh" -- framework tidak
+	# bisa tahu apakah game merespons. Tapi satu kasus bisa dipastikan: action ui_* di
+	# Godot hanya sampai ke Button/Control yang sedang FOKUS. Kalau tidak ada yang fokus,
+	# input itu dijamin tidak mengenai apa pun.
+	#
+	# Ini penyebab senyap yang mahal: scenario menekan ui_accept berkali-kali, setiap step
+	# melapor PASS, dan game tidak bergerak sedikit pun. Terukur di jimat -- goto_title()
+	# tidak pernah memanggil grab_focus(), sehingga seluruh navigasi berbasis ui_accept
+	# tidak berfungsi sementara scenario melaporkan sukses.
+	#
+	# Peringatan, bukan kegagalan: sebagian game menangani ui_* lewat _input()/_unhandled_input
+	# tanpa bergantung fokus, dan di situ input tetap sampai.
+	var data := {"action": action_name}
+	if action_name.begins_with("ui_") and get_viewport().gui_get_focus_owner() == null:
+		var warn := "tidak ada Control yang fokus -- action ui_* kemungkinan besar tidak mengenai apa pun. Panggil grab_focus() di game, atau pakai mouse_click."
+		data["warning"] = warn
+		push_warning("[scenario] action '%s': %s" % [action_name, warn])
+	_step_pass(data)
 
 
 func _resolve_mouse_button(value) -> int:

@@ -170,7 +170,13 @@ if (-not $godotFound) {
         Write-Bad "Tidak ada file .gd ditemukan di godot-templates/ atau game-state-templates/"
         $criticalFail = $true
     } else {
-        $checkDir = Join-Path $env:TEMP "kilo_doctor_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+        # $PID wajib ikut: timestamp beresolusi DETIK saja membuat dua doctor yang jalan
+        # dalam detik yang sama memakai direktori yang SAMA. Blok finally milik yang satu
+        # menghapusnya saat Godot milik yang lain masih membacanya, menghasilkan
+        # "Cannot create file .godot/editor/filesystem_cache10", class_name gagal ter-resolve,
+        # lalu dilaporkan sebagai "Template gagal compile" -- kegagalan PALSU pada template
+        # yang sebenarnya sehat. Terukur flaky: FAIL, FAIL, OK pada fixture yang sama.
+        $checkDir = Join-Path $env:TEMP "kilo_doctor_$PID`_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
         try {
             $null = New-Item -ItemType Directory -Path "$checkDir\scripts" -Force
 
@@ -289,7 +295,8 @@ if ($Full) {
         Write-Warn "Skip cek #5 (-Full golden project) -- shot-harness.ps1 tidak ditemukan"
         $skippedChecks += "golden-project run (shot-harness.ps1 tidak ada)"
     } else {
-        $goldenDir     = Join-Path $env:TEMP "kilo_doctor_golden_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+        # $PID -- alasan sama seperti $checkDir di atas
+        $goldenDir     = Join-Path $env:TEMP "kilo_doctor_golden_$PID`_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
         $goldenScripts = Join-Path $goldenDir "scripts"
         try {
             $null = New-Item -ItemType Directory -Path $goldenScripts -Force

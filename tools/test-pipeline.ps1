@@ -2221,6 +2221,96 @@ func _write_game_state() -> void:
 }
 Write-S
 
+# ── TEST 35: action ui_* tanpa Control fokus harus memberi peringatan ───────────
+# Di Godot, action ui_* hanya sampai ke Button/Control yang sedang FOKUS. Tanpa fokus,
+# input dijamin tidak mengenai apa pun -- tapi step tetap PASS, karena framework memang
+# tidak bisa tahu apakah game merespons.
+#
+# Terukur di jimat: goto_title() tidak pernah memanggil grab_focus(), sehingga seluruh
+# navigasi berbasis ui_accept tidak berfungsi sementara setiap step melapor PASS. Penyebab
+# senyap yang mahal untuk didiagnosis.
+#
+# Peringatan (bukan kegagalan) karena sebagian game menangani ui_* lewat _input() tanpa
+# bergantung fokus. Diuji DUA ARAH: tanpa fokus -> ada peringatan; dengan fokus -> tidak ada.
+Write-T "TEST 35: action ui_* tanpa Control fokus memberi peringatan"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "action ui_* tanpa fokus -> peringatan" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t35Base  = Join-Path $env:TEMP "kilo_t35_$(Get-Date -Format 'HHmmss')"
+    $t35Probs = @()
+    try {
+        $noBom35 = New-Object System.Text.UTF8Encoding($false)
+        $t35Tmpl = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        $mainNoFocus = "extends Node`n`nfunc _ready() -> void:`n`tpass`n"
+        $mainFocus   = @'
+extends Node
+
+func _ready() -> void:
+	var b := Button.new()
+	b.text = "fokus"
+	add_child(b)
+	b.grab_focus()
+'@
+        foreach ($case in @(
+            @{ Name = "tanpa-fokus"; Main = $mainNoFocus; WantWarn = $true },
+            @{ Name = "dengan-fokus"; Main = $mainFocus;  WantWarn = $false }
+        )) {
+            $d35 = Join-Path $t35Base $case.Name
+            $null = New-Item -ItemType Directory -Path "$d35\scripts"   -Force
+            $null = New-Item -ItemType Directory -Path "$d35\scenarios" -Force
+            foreach ($tmpl in @("ErrorTracker.gd", "ScenarioRunner.gd")) {
+                $rawT = [System.IO.File]::ReadAllBytes((Join-Path $t35Tmpl $tmpl))
+                $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF) { 3 } else { 0 }
+                [System.IO.File]::WriteAllText("$d35\scripts\$tmpl",
+                    [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom35)
+            }
+            $appName = "KiloT35" + $case.Name.Replace("-", "")
+            [System.IO.File]::WriteAllText("$d35\project.godot",
+                "config_version=5`n`n[application]`nconfig/name=`"$appName`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom35)
+            [System.IO.File]::WriteAllText("$d35\main.tscn",
+                "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom35)
+            [System.IO.File]::WriteAllText("$d35\main.gd", $case.Main, $noBom35)
+            [System.IO.File]::WriteAllText("$d35\scenarios\act.json",
+                '{"scenario_id":"t35","steps":[{"type":"wait_frames","frames":30},{"type":"action","action":"ui_accept"}]}', $noBom35)
+
+            $null = Start-Process $GodotExe -ArgumentList "--path", "`"$d35`"", "--headless", "--import", "--quit" `
+                -PassThru -NoNewWindow -Wait
+            $r35Path = "$env:APPDATA\Godot\app_userdata\$appName\shots\scenario_result.json"
+            Remove-Item -LiteralPath $r35Path -Force -ErrorAction SilentlyContinue
+            $pr35 = Start-Process $GodotExe -ArgumentList "--path", "`"$d35`"", "--", "--scenario", "res://scenarios/act.json" `
+                -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+            if ($pr35) { $pr35.Handle | Out-Null; $pr35.WaitForExit(45000) | Out-Null; if (-not $pr35.HasExited) { $pr35.Kill() } }
+
+            if (-not (Test-Path -LiteralPath $r35Path)) {
+                $t35Probs += "$($case.Name): scenario_result.json tidak dihasilkan"
+            } else {
+                $r35   = Get-Content -LiteralPath $r35Path -Raw | ConvertFrom-Json
+                $aStep = @($r35.step_results | Where-Object { $_.type -eq "action" })[0]
+                # StrictMode: mengakses properti yang tidak ada MELEMPAR, bukan mengembalikan
+                # null. Kasus "tidak ada peringatan" justru berarti properti itu absen --
+                # jadi keberadaannya harus dicek lewat PSObject, bukan perbandingan nilai.
+                $hasWarn = $false
+                if ($null -ne $aStep -and $null -ne $aStep.data) {
+                    $hasWarn = ($aStep.data.PSObject.Properties.Name -contains 'warning')
+                }
+                if ($hasWarn -ne $case.WantWarn) {
+                    $t35Probs += "$($case.Name): peringatan=$hasWarn, harus $($case.WantWarn)"
+                }
+                # Step harus tetap PASS di kedua kasus -- ini peringatan, bukan kegagalan
+                if ($aStep -and $aStep.status -ne "pass") { $t35Probs += "$($case.Name): status=$($aStep.status), harus pass" }
+            }
+            Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\$appName" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Add-Result "action ui_* tanpa fokus -> peringatan" ($t35Probs.Count -eq 0) `
+            $(if ($t35Probs.Count -eq 0) { "tanpa fokus -> ada peringatan, dengan fokus -> tidak, keduanya tetap pass" } else { ($t35Probs -join " | ") })
+    } catch {
+        Add-Result "action ui_* tanpa fokus -> peringatan" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t35Base -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
