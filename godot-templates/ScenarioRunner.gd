@@ -359,8 +359,10 @@ func _exec_explore(step: Dictionary) -> void:
 	var settle: int = int(step.get("settle_frames", 10))
 	var stop_on_violation: bool = bool(step.get("stop_on_violation", false))
 	var avoid: Array = step.get("avoid_text", ["Quit", "Keluar", "Exit"])
-	if step.has("seed") and step["seed"] != null:
-		seed(int(step["seed"]))
+	var warmup: int = int(step.get("warmup_frames", 90))
+	var seed_val: Variant = step.get("seed", null)
+	if seed_val != null:
+		seed(int(seed_val))
 
 	if _invariants.is_empty():
 		push_warning("[scenario] explore berjalan TANPA invariant -- ia hanya akan mengklik tombol dan tidak memeriksa apa pun. Sediakan scenarios/invariants.json.")
@@ -398,7 +400,7 @@ func _exec_explore(step: Dictionary) -> void:
 		var must_stop := await _check_invariants(_current_step, "explore#%d" % i)
 		if _invariant_violations.size() > seen_violations:
 			seen_violations = _invariant_violations.size()
-			_write_explore_replay(trail)
+			_write_explore_replay(trail, seed_val, settle, warmup)
 			replay_written = true
 			if stop_on_violation:
 				break
@@ -470,19 +472,35 @@ func _collect_buttons(node: Node, out: Array, avoid: Array, vp: Rect2) -> void:
 ## Eksplorasi yang menemukan bug tapi tidak bisa diulang tidak ada gunanya bagi siapa pun.
 ## Setiap kali invariant BARU dilanggar, seluruh jejak klik sampai titik itu ditulis sebagai
 ## scenario utuh yang bisa langsung dijalankan untuk mereproduksi.
-func _write_explore_replay(trail: Array) -> void:
+func _write_explore_replay(trail: Array, seed_val: Variant, settle: int, warmup: int) -> void:
 	var steps: Array = []
+	# Seed dan pemanasan ikut ditulis supaya replay benar-benar bisa dijalankan SENDIRI.
+	# Tanpa keduanya, klik pertama mendarat sebelum layar selesai dibangun dan replay
+	# gagal mereproduksi apa pun -- file yang terlihat berguna tapi tidak pernah bekerja.
+	if seed_val != null:
+		steps.append({"type": "seed_override", "seed": int(seed_val)})
+	steps.append({"type": "wait_frames", "frames": warmup,
+		"comment": "tunggu layar awal selesai dibangun sebelum klik pertama"})
 	for t: Variant in trail:
 		var d: Dictionary = t
 		steps.append({
-			"type": "mouse_click", "x": d["x"], "y": d["y"], "wait_frames": 10,
+			"type": "mouse_click", "x": d["x"], "y": d["y"], "wait_frames": settle,
 			"comment": "klik: %s" % str(d["label"])
 		})
 	var doc := {
 		"scenario_id": "explore_replay",
-		"description": "Dihasilkan otomatis oleh step explore saat invariant dilanggar. Jalankan scenario ini untuk mereproduksi pelanggaran tersebut.",
+		"description": "Dihasilkan otomatis oleh step explore saat invariant dilanggar. Jalankan scenario ini untuk mereproduksi pelanggaran tersebut, atau perkecil dulu dengan tools/explore-minimize.ps1.",
 		"steps": steps
 	}
+	# Invariant inline milik scenario asal WAJIB ikut. Yang game-wide dimuat sendiri dari
+	# scenarios/invariants.json, tapi yang dideklarasikan di dalam scenario tidak ada di
+	# mana pun selain scenario itu -- tanpa disalin ke sini, replay berjalan tanpa aturan
+	# yang tadi dilanggarnya dan tidak akan pernah mereproduksi apa pun. Terukur: kandidat
+	# minimisasi memuat 8 invariant game-wide dan bukan yang inline, lalu baseline gagal.
+	if _scenario.has("invariants") and _scenario["invariants"] is Array:
+		var inline: Array = _scenario["invariants"]
+		if inline.size() > 0:
+			doc["invariants"] = inline
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://shots"))
 	var f := FileAccess.open("user://shots/explore_replay.json", FileAccess.WRITE)
 	if f:

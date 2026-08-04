@@ -3133,6 +3133,124 @@ try {
 }
 Write-S
 
+# ── TEST 46: explore-minimize -- jejak diperkecil jadi repro minimal ──────────
+# "40 klik lalu invariant jebol" benar tapi nyaris tak terpakai; yang dibutuhkan adalah
+# KLIK MANA penyebabnya. Tiga kontrak diuji:
+#   1. jejak diperkecil sampai hanya menyisakan klik yang benar-benar perlu
+#   2. baseline diverifikasi lebih dulu dan GAGAL TERTUTUP: jejak yang tidak mereproduksi
+#      menghentikan proses, bukan menghasilkan repro palsu. Ini kontrak terpenting --
+#      hasil minimisasi dari jejak yang tidak reproducible adalah file yang tampak
+#      berguna tapi tidak pernah bekerja, lebih buruk daripada tidak ada hasil.
+#   3. invariant inline ikut terbawa ke setiap kandidat. Terukur saat pertama dijalankan:
+#      kandidat hanya memuat invariant game-wide, sehingga baseline gagal karena aturan
+#      yang sedang diselidiki tidak ikut dimuat.
+Write-T "TEST 46: explore-minimize memperkecil jejak dan gagal tertutup bila tak reproducible"
+$t46Tool = Join-Path $PSScriptRoot "explore-minimize.ps1"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "explore-minimize: perkecil jejak + gagal tertutup" $false "SKIP -- Godot tidak tersedia"
+} elseif (-not (Test-Path -LiteralPath $t46Tool)) {
+    Add-Result "explore-minimize: perkecil jejak + gagal tertutup" $false "explore-minimize.ps1 tidak ditemukan"
+} else {
+    $t46Dir = Join-Path $env:TEMP "kilo_t46_$($PID)_$(Get-Date -Format 'HHmmss')"
+    $t46Shots = "$env:APPDATA\Godot\app_userdata\KiloT46\shots"
+    try {
+        $null = New-Item -ItemType Directory -Path "$t46Dir\scripts" -Force
+        $null = New-Item -ItemType Directory -Path $t46Shots -Force
+        $noBom46 = New-Object System.Text.UTF8Encoding($false)
+        $t46Tmpl = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        foreach ($tmpl in @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")) {
+            $rawT = [System.IO.File]::ReadAllBytes((Join-Path $t46Tmpl $tmpl))
+            $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF) { 3 } else { 0 }
+            [System.IO.File]::WriteAllText("$t46Dir\scripts\$tmpl",
+                [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom46)
+        }
+        [System.IO.File]::WriteAllText("$t46Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"KiloT46`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom46)
+        [System.IO.File]::WriteAllText("$t46Dir\main.tscn",
+            "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom46)
+        # Tiga tombol pada posisi TETAP dan semuanya terlihat bersamaan -- tidak ada navigasi,
+        # jadi membuang satu klik tidak menggeser posisi klik lain. Hanya tombol C yang
+        # mengubah state, sehingga hasil minimisasi yang benar HARUS tinggal satu klik.
+        [System.IO.File]::WriteAllText("$t46Dir\main.gd", @'
+extends Node
+
+var _flag := false
+
+func _ready() -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+	var ys := [100, 200, 300]
+	var nm := ["A", "B", "C"]
+	for i in 3:
+		var b := Button.new()
+		b.text = nm[i]
+		b.position = Vector2(100, ys[i])
+		b.size = Vector2(200, 50)
+		root.add_child(b)
+		if nm[i] == "C":
+			b.pressed.connect(_on_c)
+
+func _on_c() -> void:
+	_flag = true
+
+func _get_game_state() -> Dictionary:
+	return {"flag": _flag}
+'@, $noBom46)
+
+        $null = Start-Process $GodotExe -ArgumentList "--path", "`"$t46Dir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+
+        $t46Inv = '"invariants":[{"id":"flag_mati","expr":"curr.flag == false","severity":"warning"}]'
+        $t46Pre = '{"type":"wait_frames","frames":30}'
+        $t46A   = '{"type":"mouse_click","x":200,"y":125,"wait_frames":6,"comment":"klik: A"}'
+        $t46B   = '{"type":"mouse_click","x":200,"y":225,"wait_frames":6,"comment":"klik: B"}'
+        $t46C   = '{"type":"mouse_click","x":200,"y":325,"wait_frames":6,"comment":"klik: C"}'
+        $t46Probs = @()
+        $t46Replay = Join-Path $t46Shots "explore_replay.json"
+        $t46Repro  = Join-Path $t46Shots "explore_repro.json"
+
+        # -- kontrak 1 & 3: A,B,C -> harus tersisa hanya C ----------------------
+        [System.IO.File]::WriteAllText($t46Replay,
+            "{`"scenario_id`":`"explore_replay`",$t46Inv,`"steps`":[$t46Pre,$t46A,$t46B,$t46C]}", $noBom46)
+        Remove-Item -LiteralPath $t46Repro -Force -ErrorAction SilentlyContinue
+        & $t46Tool -ProjectPath $t46Dir -InvariantId "flag_mati" -Timeout 45 -MaxRuns 15 *>$null
+        $exitMin = $LASTEXITCODE
+        if ($exitMin -ne 0) { $t46Probs += "minimisasi exit=$exitMin, harus 0" }
+        if (-not (Test-Path -LiteralPath $t46Repro)) {
+            $t46Probs += "explore_repro.json tidak ditulis"
+        } else {
+            $rr = Get-Content -LiteralPath $t46Repro -Raw | ConvertFrom-Json
+            $mc = @($rr.steps | Where-Object { $_.type -eq "mouse_click" })
+            if ($mc.Count -ne 1) {
+                $t46Probs += "hasil $($mc.Count) klik, harus 1 (hanya C yang mengubah state)"
+            } elseif ([int]$mc[0].y -ne 325) {
+                $t46Probs += "klik tersisa y=$($mc[0].y), harus 325 (tombol C)"
+            }
+        }
+
+        # -- kontrak 2: jejak tanpa C -> baseline gagal -> exit 1, TANPA repro ---
+        [System.IO.File]::WriteAllText($t46Replay,
+            "{`"scenario_id`":`"explore_replay`",$t46Inv,`"steps`":[$t46Pre,$t46A,$t46B]}", $noBom46)
+        Remove-Item -LiteralPath $t46Repro -Force -ErrorAction SilentlyContinue
+        & $t46Tool -ProjectPath $t46Dir -InvariantId "flag_mati" -Timeout 45 -MaxRuns 15 *>$null
+        $exitNo = $LASTEXITCODE
+        if ($exitNo -ne 1) { $t46Probs += "jejak tak reproducible exit=$exitNo, harus 1 (gagal tertutup)" }
+        if (Test-Path -LiteralPath $t46Repro) {
+            $t46Probs += "explore_repro.json ditulis padahal baseline tidak mereproduksi"
+        }
+
+        Add-Result "explore-minimize: perkecil jejak + gagal tertutup" ($t46Probs.Count -eq 0) `
+            $(if ($t46Probs.Count -eq 0) { "3 klik -> 1 klik (C), dan jejak tak reproducible ditolak" } else { ($t46Probs -join " | ") })
+    } catch {
+        Add-Result "explore-minimize: perkecil jejak + gagal tertutup" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t46Dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\KiloT46" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
