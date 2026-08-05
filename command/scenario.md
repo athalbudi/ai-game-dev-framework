@@ -239,30 +239,36 @@ Jika scenario yang dibuat gagal dijalankan (harness error):
 
 | Type | Deskripsi |
 |---|---|
-| `wait_scene` | Tunggu scene tertentu aktif (field: `scene`, `timeout_sec`) |
-| `screenshot` | Ambil screenshot (field: `name`) |
-| `action` | Simulasi input action (field: `action`, `duration_frames`, `wait_frames`) |
-| `mouse_click` | Klik pada koordinat layar (field: `x`, `y`, `button`, `wait_frames`) |
-| `mouse_move` | Gerakkan kursor ke koordinat (field: `x`, `y`, `wait_frames`) |
-| `touch` | Sentuh layar di koordinat — mobile input (field: `x`, `y`, `index`, `wait_frames`) |
-| `swipe` | Swipe gesture dari titik A ke B (field: `from_x`, `from_y`, `to_x`, `to_y`, `steps`) |
-| `controller` | Input gamepad/controller — button press atau axis (field: `button`/`axis`, `value`, `device`) |
-| `long_press` | Tahan sentuhan N frame (field: `x`, `y`, `frames`, `index`) |
-| `double_tap` | Dua tap berurutan di koordinat yang sama (field: `x`, `y`, `gap_frames`) |
-| `pinch` | Pinch gesture dua jari zoom in/out (field: `center_x`, `center_y`, `scale`, `steps`) |
 | `wait_frames` | Tunggu N frame (field: `frames`) |
+| `wait_scene` | Tunggu scene tertentu aktif (field: `scene`, `timeout_sec`) |
 | `wait_signal` | Tunggu signal dari game (field: `signal_name`, `timeout_sec`) |
 | `wait_condition` | Polling kondisi game_state sampai terpenuhi (field: `key`, `op`, `expected`, `timeout_sec`) |
+| `action` | Simulasi input action (field: `action`, `duration_frames`, `wait_frames`) |
+| `mouse_click` | Klik pada koordinat layar (field: `x`, `y`, `button`, `wait_frames`) |
+| `click_button` | Klik tombol berdasarkan **label**, bukan koordinat (field: `label`, `wait_frames`) |
+| `touch_tap` | Tap layar di koordinat — input mobile (field: `x`, `y`, `wait_frames`) |
+| `controller_press` | Tekan tombol gamepad (field: `button`, `duration_frames`, `wait_frames`, `device`) |
+| `screenshot` | Ambil screenshot (field: `name`) |
 | `assert_state` | Validasi game_state.json (field: `key`, `op`, `expected`) |
 | `assert_fps` | Verifikasi FPS tidak di bawah threshold (field: `min_fps`, `sample_frames`) |
 | `assert_no_error` | Verifikasi tidak ada error dalam N frame (field: `window_frames`) |
-| `load_scene` | Load scene langsung (field: `scene_path`, `wait_frames`) |
+| `assert_screenshot_exists` | Verifikasi file screenshot benar-benar ada (field: `name`) |
 | `set_state` | Set nilai game state (field: `key`, `value`) |
 | `write_state` | Minta game tulis game_state.json ke disk |
 | `repeat` | Ulangi steps N kali (field: `count`, `steps`) |
 | `seed_override` | Override random seed untuk determinisme (field: `seed`) |
 | `log` | Tulis pesan ke log scenario (field: `message`) |
+| `comment` | Anotasi murni, tidak melakukan apa pun (field: `text`) — JSON tidak punya komentar |
 | `explore` | Klik tombol nyata di layar secara acak dengan invariant hidup — lihat `/explore` |
+
+Dua puluh satu, dan hanya dua puluh satu. **Step type di luar daftar ini membuat langkahnya GAGAL**,
+bukan dilewati diam-diam. Sebelumnya ia di-skip, dan itu satu kelas false-verify sendiri:
+scenario yang seluruh langkahnya salah ketik akan berakhir `pass` tanpa pernah menjalankan
+apa pun. Salah ketik `mouse_clik` sekarang berhenti dan menyebut daftar yang sah.
+
+`click_button` lebih disukai daripada `mouse_click` untuk menekan tombol. Koordinat mati
+diam-diam begitu layout bergeser — kliknya mendarat di tempat kosong dan langkahnya tetap
+`pass`. Label tidak bisa gagal diam-diam.
 
 ## Status hasil: `pass`, `fail`, dan `inert`
 

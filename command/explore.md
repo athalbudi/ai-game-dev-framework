@@ -91,8 +91,16 @@ Yang perlu kamu tahu saat membaca keluarannya:
   reproducible menghasilkan file yang tampak berguna tapi tidak pernah bekerja.
 - Penyebab tersering jejak tidak reproducible: seed tidak diisi, atau game menyimpan
   kemajuan di `user://` sehingga run kedua berangkat dari keadaan berbeda.
-- Hasilnya **1-minimal, bukan minimal global**. Replay berbasis koordinat: membuang klik di
-  tengah menggeser layar yang dikenai klik berikutnya. Jangan janjikan lebih dari itu.
+- Replay memakai **label tombol**, bukan koordinat. Replay tetap sah setelah layout bergeser,
+  dan kalau tombolnya tidak ada, langkahnya gagal dengan daftar tombol yang sebenarnya
+  tersedia — bukan mengklik tempat kosong lalu lolos diam-diam.
+- Pembuangan mencoba **jendela berurutan sampai 4 klik**, bukan satu-satu. Navigasi datang
+  berpasangan ("masuk menu", lalu "Back"); membuang salah satunya membuat pasangannya tidak
+  punya tombol untuk ditekan. Terukur pada jimat: satu-satu mentok di 5 dari 5 klik,
+  berjendela menyusut ke 1.
+- Batasnya tetap ada: **jendela lebih panjang dari 4 tidak dicoba**, dan pembuangan hanya
+  berurutan — dua klik tak bersebelahan yang cuma bisa pergi bersama tidak akan ditemukan.
+  Jejak panjang mungkin perlu `-MaxRuns` lebih besar dari 40.
 
 ## Urutan yang disarankan
 

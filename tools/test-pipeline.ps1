@@ -191,7 +191,7 @@ Write-T "TEST 1: schema-migration -- manifest v1.0 dengan 1 screenshot"
 $mPath = Join-Path $manifestDir "shots-manifest.json"
 try {
     $null = & $migPs1 -ManifestPath $mPath 2>&1
-    $m  = Get-Content -LiteralPath $mPath -Raw | ConvertFrom-Json
+    $m  = Get-Content -LiteralPath $mPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $sv = if ($m.PSObject.Properties["schema_version"]) { $m.schema_version } else { "" }
     if ($sv -eq "1.1") {
         Add-Result "schema-migration 1 screenshot" $true "schema_version=1.1"
@@ -225,7 +225,7 @@ try {
     $null = & $diffPs1 -ShotsDir $shotsMulti -BaselineDir $baselineMulti 2>&1
     $reportPath = Join-Path $shotsMulti "diff\diff-report.json"
     if (Test-Path -LiteralPath $reportPath) {
-        $rep      = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+        $rep      = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $regCount = @($rep.files | Where-Object { $_.status -eq "REGRESI" }).Count
         $okCount  = @($rep.files | Where-Object { $_.status -eq "OK" }).Count
         if ($regCount -eq 0) {
@@ -616,7 +616,7 @@ try {
     $templateFields = @()
     if ($templatePath -and (Test-Path -LiteralPath $templatePath)) {
         try {
-            $frTemplate = Get-Content -LiteralPath $templatePath -Raw | ConvertFrom-Json
+            $frTemplate = Get-Content -LiteralPath $templatePath -Raw -Encoding UTF8 | ConvertFrom-Json
             $firstReq = $frTemplate.fix_requests[0]
             $requiredFields = @("fix_request_id", "source", "type", "severity", "description",
                                 "evidence", "target_file", "suggested_action", "step_hint",
@@ -1617,25 +1617,25 @@ if ($setupSrc -eq "" -or -not (Test-Path -LiteralPath $setupSrc)) {
         # (a) tanpa flag -- tidak boleh menyentuh apa pun
         & $setupSrc -SkipHealthCheck *>&1 | Out-Null
         $untouched = (-not (Test-Path -LiteralPath $kiloRule)) -and
-                     ((Get-Content -LiteralPath $claudeMd -Raw) -notmatch "ai-game-dev-framework")
+                     ((Get-Content -LiteralPath $claudeMd -Raw -Encoding UTF8) -notmatch "ai-game-dev-framework")
 
         # (b) install
         & $setupSrc -InstallAgentRules -SkipHealthCheck *>&1 | Out-Null
         # Cek ISI, bukan cuma keberadaan: bug yang menulis file kosong lolos dari Test-Path.
         $installedKilo = (Test-Path -LiteralPath $kiloRule) -and
-                         ((Get-Content -LiteralPath $kiloRule -Raw) -match "project\.godot")
+                         ((Get-Content -LiteralPath $kiloRule -Raw -Encoding UTF8) -match "project\.godot")
         $hash1  = (Get-FileHash -LiteralPath $claudeMd -Algorithm MD5).Hash
-        $begin1 = ([regex]::Matches((Get-Content -LiteralPath $claudeMd -Raw), 'BEGIN ai-game-dev-framework')).Count
+        $begin1 = ([regex]::Matches((Get-Content -LiteralPath $claudeMd -Raw -Encoding UTF8), 'BEGIN ai-game-dev-framework')).Count
 
         # (c) install lagi -- harus identik
         & $setupSrc -InstallAgentRules -SkipHealthCheck *>&1 | Out-Null
         $hash2  = (Get-FileHash -LiteralPath $claudeMd -Algorithm MD5).Hash
-        $begin2 = ([regex]::Matches((Get-Content -LiteralPath $claudeMd -Raw), 'BEGIN ai-game-dev-framework')).Count
+        $begin2 = ([regex]::Matches((Get-Content -LiteralPath $claudeMd -Raw -Encoding UTF8), 'BEGIN ai-game-dev-framework')).Count
         $idempotent = ($hash1 -eq $hash2) -and ($begin1 -eq 1) -and ($begin2 -eq 1)
 
         # (d) uninstall -- jejak hilang, teks pengguna utuh
         & $setupSrc -UninstallAgentRules *>&1 | Out-Null
-        $afterText     = (Get-Content -LiteralPath $claudeMd -Raw)
+        $afterText     = (Get-Content -LiteralPath $claudeMd -Raw -Encoding UTF8)
         $kiloGone      = -not (Test-Path -LiteralPath $kiloRule)
         $blockGone     = $afterText -notmatch "ai-game-dev-framework"
         $userTextKept  = $afterText -match "Baris ini tidak boleh hilang"
@@ -1725,7 +1725,7 @@ if ($setupSrc -eq "" -or -not (Test-Path -LiteralPath $setupSrc)) {
         } finally { $env:USERPROFILE = $origUP27 }
 
         $hashAfter = (Get-FileHash -LiteralPath $cm27 -Algorithm MD5).Hash
-        $textKept  = (Get-Content -LiteralPath $cm27 -Raw) -match "Catatan B yang tidak boleh hilang"
+        $textKept  = (Get-Content -LiteralPath $cm27 -Raw -Encoding UTF8) -match "Catatan B yang tidak boleh hilang"
 
         Add-Result "aturan agent: penanda rusak ditolak" `
             (($ec27a -eq 1) -and ($hashBefore -eq $hashAfter) -and $textKept) `
@@ -1805,7 +1805,7 @@ exit 1
     if (-not (Test-Path -LiteralPath $t29Report)) {
         Add-Result "run-and-analyze mendeteksi harness gagal" $false "laporan tidak dihasilkan: $t29Report"
     } else {
-        $rep29    = Get-Content -LiteralPath $t29Report -Raw | ConvertFrom-Json
+        $rep29    = Get-Content -LiteralPath $t29Report -Raw -Encoding UTF8 | ConvertFrom-Json
         $phase1   = if ($rep29.PSObject.Properties["phases"]) { $rep29.phases.observe } else { "" }
         Add-Result "run-and-analyze mendeteksi harness gagal" ($phase1 -ne "ok") `
             "phase observe='$phase1' (tidak boleh 'ok' saat harness exit 1)"
@@ -2017,7 +2017,7 @@ func _ready() -> void:
                 $t32Fails += "$($case.Name): scenario_result.json tidak dihasilkan"
                 continue
             }
-            $r32 = Get-Content -LiteralPath $t32Result -Raw | ConvertFrom-Json
+            $r32 = Get-Content -LiteralPath $t32Result -Raw -Encoding UTF8 | ConvertFrom-Json
             # steps_total harus 1: build perantara yang tidak di-await menghasilkan
             # "pass=0 fail=0" -- step-nya tidak pernah tercatat sama sekali.
             if ($r32.steps_total -ne 1)              { $t32Fails += "$($case.Name): steps_total=$($r32.steps_total), harus 1" }
@@ -2122,7 +2122,7 @@ func _write_game_state() -> void:
                 $t33Probs += "$($case.Label): scenario_result.json tidak dihasilkan"
                 continue
             }
-            $r33 = Get-Content -LiteralPath $t33Res -Raw | ConvertFrom-Json
+            $r33 = Get-Content -LiteralPath $t33Res -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($r33.status -ne $case.Want) {
                 $t33Probs += "$($case.Label): status=$($r33.status), harus $($case.Want)"
             }
@@ -2204,7 +2204,7 @@ func _write_game_state() -> void:
         if (-not (Test-Path -LiteralPath $t34Res)) {
             Add-Result "_write_game_state game menang atas autoload" $false "scenario_result.json tidak dihasilkan"
         } else {
-            $r34    = Get-Content -LiteralPath $t34Res -Raw | ConvertFrom-Json
+            $r34    = Get-Content -LiteralPath $t34Res -Raw -Encoding UTF8 | ConvertFrom-Json
             $wStep  = @($r34.step_results | Where-Object { $_.type -eq "write_state" })[0]
             $aStep  = @($r34.step_results | Where-Object { $_.type -eq "assert_state" })[0]
             $t34Probs = @()
@@ -2286,7 +2286,7 @@ func _ready() -> void:
             if (-not (Test-Path -LiteralPath $r35Path)) {
                 $t35Probs += "$($case.Name): scenario_result.json tidak dihasilkan"
             } else {
-                $r35   = Get-Content -LiteralPath $r35Path -Raw | ConvertFrom-Json
+                $r35   = Get-Content -LiteralPath $r35Path -Raw -Encoding UTF8 | ConvertFrom-Json
                 $aStep = @($r35.step_results | Where-Object { $_.type -eq "action" })[0]
                 # StrictMode: mengakses properti yang tidak ada MELEMPAR, bukan mengembalikan
                 # null. Kasus "tidak ada peringatan" justru berarti properti itu absen --
@@ -2366,13 +2366,13 @@ func _get_game_state() -> Dictionary:
         if (-not (Test-Path -LiteralPath $t36Res)) {
             $t36Probs += "scenario_result.json tidak dihasilkan"
         } else {
-            $r36 = Get-Content -LiteralPath $t36Res -Raw | ConvertFrom-Json
+            $r36 = Get-Content -LiteralPath $t36Res -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($r36.status -ne "pass") { $t36Probs += "scenario status=$($r36.status), harus pass" }
         }
         if (-not (Test-Path -LiteralPath $t36Gs)) {
             $t36Probs += "game_state.json tidak dihasilkan"
         } else {
-            $g36 = Get-Content -LiteralPath $t36Gs -Raw | ConvertFrom-Json
+            $g36 = Get-Content -LiteralPath $t36Gs -Raw -Encoding UTF8 | ConvertFrom-Json
             # 'build' membedakan data provider dari state fallback GameStateWriter
             if ($g36.build -ne "provider-1.0") { $t36Probs += "build='$($g36.build)', harus 'provider-1.0' (fallback dipakai?)" }
             if (-not ($g36.PSObject.Properties.Name -contains 'penanda_provider')) {
@@ -2437,7 +2437,7 @@ if ((Test-Path -LiteralPath $t37Vd) -and $t37Im -ne "") {
         if (-not (Test-Path -LiteralPath $t37Rep)) {
             $t37Probs += "diff-report.json tidak dihasilkan"
         } else {
-            $t37Json = Get-Content -LiteralPath $t37Rep -Raw | ConvertFrom-Json
+            $t37Json = Get-Content -LiteralPath $t37Rep -Raw -Encoding UTF8 | ConvertFrom-Json
             foreach ($c37 in $t37Cases) {
                 $row = $t37Json.files | Where-Object { $_.file -eq "$($c37.n).png" }
                 if ($null -eq $row) { $t37Probs += "$($c37.n): tidak ada di laporan"; continue }
@@ -2484,7 +2484,7 @@ if ((Test-Path -LiteralPath $t37Vd) -and $t37Im -ne "") {
         if (-not (Test-Path -LiteralPath $t38Rep)) {
             $t38Probs += "diff-report.json tidak dihasilkan"
         } else {
-            $t38Json = Get-Content -LiteralPath $t38Rep -Raw | ConvertFrom-Json
+            $t38Json = Get-Content -LiteralPath $t38Rep -Raw -Encoding UTF8 | ConvertFrom-Json
             $hilang = @($t38Json.files | Where-Object { $_.status -eq "HILANG" })
             if ($hilang.Count -ne 0) {
                 $t38Probs += ("dilaporkan HILANG padahal ada di disk: " + (($hilang | ForEach-Object { $_.file }) -join ", "))
@@ -2622,7 +2622,7 @@ func _get_game_state() -> Dictionary:
                 $t40Probs += "$($case.File): scenario_result.json tidak dihasilkan"
                 continue
             }
-            $r40 = Get-Content -LiteralPath $t40Res -Raw | ConvertFrom-Json
+            $r40 = Get-Content -LiteralPath $t40Res -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($r40.status -ne $case.Status) {
                 $t40Probs += "$($case.File): status=$($r40.status), harus $($case.Status)"
             }
@@ -2883,7 +2883,7 @@ func _get_game_state() -> Dictionary:
         if (-not (Test-Path -LiteralPath $t42Res)) {
             $t42Probs += "ada.json: scenario_result.json tidak dihasilkan"
         } else {
-            $r42 = Get-Content -LiteralPath $t42Res -Raw | ConvertFrom-Json
+            $r42 = Get-Content -LiteralPath $t42Res -Raw -Encoding UTF8 | ConvertFrom-Json
             $ex42 = @($r42.step_results | Where-Object { $_.type -eq "explore" })
             if ($ex42.Count -eq 0) {
                 $t42Probs += "ada.json: step explore tidak tercatat"
@@ -2896,9 +2896,28 @@ func _get_game_state() -> Dictionary:
             if (-not (Test-Path -LiteralPath $t42Replay)) {
                 $t42Probs += "ada.json: explore_replay.json tidak ditulis saat invariant jebol"
             } else {
-                $rep42 = Get-Content -LiteralPath $t42Replay -Raw | ConvertFrom-Json
-                $mc = @($rep42.steps | Where-Object { $_.type -eq "mouse_click" })
-                if ($mc.Count -lt 1) { $t42Probs += "replay tidak berisi step mouse_click" }
+                $rep42 = Get-Content -LiteralPath $t42Replay -Raw -Encoding UTF8 | ConvertFrom-Json
+                # Replay memakai LABEL, bukan koordinat. Koordinat mati diam-diam begitu layout
+                # bergeser: klik mendarat di tempat kosong dan langkahnya tetap PASS. Label tidak
+                # bisa gagal diam-diam. Koordinat aslinya tetap dicatat sebagai `recorded_x/y`
+                # untuk forensik -- berguna saat membaca ulang jejak, tapi bukan yang dipakai mengklik.
+                $mc = @($rep42.steps | Where-Object { $_.type -eq "click_button" })
+                if ($mc.Count -lt 1) {
+                    $t42Probs += "replay tidak berisi step click_button"
+                } else {
+                    # @() wajib: satu properti saja membuat .Name jadi String, dan .Contains()
+                    # pada String mencocokkan substring -- lolos untuk alasan yang salah.
+                    $names42 = @($mc[0].PSObject.Properties | ForEach-Object { $_.Name })
+                    if ($names42 -notcontains "label" -or "$($mc[0].label)" -eq "") {
+                        $t42Probs += "step click_button tanpa field 'label' terisi"
+                    }
+                    if ($names42 -notcontains "recorded_x") {
+                        $t42Probs += "step click_button tidak mencatat recorded_x untuk forensik"
+                    }
+                }
+                if (@($rep42.steps | Where-Object { $_.type -eq "mouse_click" }).Count -gt 0) {
+                    $t42Probs += "replay masih menulis mouse_click berbasis koordinat"
+                }
             }
         }
 
@@ -2910,7 +2929,7 @@ func _get_game_state() -> Dictionary:
         if (-not (Test-Path -LiteralPath $t42Res)) {
             $t42Probs += "kosong.json: scenario_result.json tidak dihasilkan"
         } else {
-            $r42b = Get-Content -LiteralPath $t42Res -Raw | ConvertFrom-Json
+            $r42b = Get-Content -LiteralPath $t42Res -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($r42b.status -ne "fail") { $t42Probs += "kosong.json: status=$($r42b.status), explore 0 klik HARUS fail" }
         }
 
@@ -3006,7 +3025,7 @@ func _get_game_state() -> Dictionary:
             if (-not (Test-Path -LiteralPath $t43Res)) {
                 $t43Probs += "$($case.File): scenario_result.json tidak dihasilkan"; continue
             }
-            $r43 = Get-Content -LiteralPath $t43Res -Raw | ConvertFrom-Json
+            $r43 = Get-Content -LiteralPath $t43Res -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($r43.status -ne $case.Expect) {
                 $t43Probs += "$($case.File): status=$($r43.status), harus $($case.Expect)"
             }
@@ -3117,7 +3136,7 @@ func _get_game_state() -> Dictionary:
         if (-not (Test-Path -LiteralPath $repBad)) {
             $t44Probs += "laporan project rusak tidak ditulis"
         } else {
-            $jb = Get-Content -LiteralPath $repBad -Raw | ConvertFrom-Json
+            $jb = Get-Content -LiteralPath $repBad -Raw -Encoding UTF8 | ConvertFrom-Json
             $ids = @($jb.findings | ForEach-Object { $_.id })
             foreach ($want in @("mojibake", "shot_tour_dipanggil_game", "tanpa_grab_focus",
                                 "scenario_berhenti_dini", "autoload_hilang")) {
@@ -3130,7 +3149,7 @@ func _get_game_state() -> Dictionary:
         $exitGood = $LASTEXITCODE
         if ($exitGood -ne 0) { $t44Probs += "project bersih: exit=$exitGood, harus 0" }
         if (Test-Path -LiteralPath $repGood) {
-            $jg = Get-Content -LiteralPath $repGood -Raw | ConvertFrom-Json
+            $jg = Get-Content -LiteralPath $repGood -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([int]$jg.summary.error -ne 0)   { $t44Probs += "project bersih: $($jg.summary.error) error (harus 0)" }
             if ([int]$jg.summary.warning -ne 0) { $t44Probs += "project bersih: $($jg.summary.warning) warning (harus 0)" }
             $backupHit = @($jg.findings | Where-Object { $_.file -match "_backup" })
@@ -3278,7 +3297,7 @@ func _get_game_state() -> Dictionary:
         if (-not (Test-Path -LiteralPath $t46Repro)) {
             $t46Probs += "explore_repro.json tidak ditulis"
         } else {
-            $rr = Get-Content -LiteralPath $t46Repro -Raw | ConvertFrom-Json
+            $rr = Get-Content -LiteralPath $t46Repro -Raw -Encoding UTF8 | ConvertFrom-Json
             $mc = @($rr.steps | Where-Object { $_.type -eq "mouse_click" })
             if ($mc.Count -ne 1) {
                 $t46Probs += "hasil $($mc.Count) klik, harus 1 (hanya C yang mengubah state)"
@@ -3366,7 +3385,7 @@ if ((Test-Path -LiteralPath $t47Vd) -and $t47Im -ne "") {
         if (-not (Test-Path -LiteralPath $t47Rep)) {
             $t47Probs += "diff-report.json tidak dihasilkan"
         } else {
-            $t47Json = Get-Content -LiteralPath $t47Rep -Raw | ConvertFrom-Json
+            $t47Json = Get-Content -LiteralPath $t47Rep -Raw -Encoding UTF8 | ConvertFrom-Json
             function Get-T47 { param($N)
                 return @($t47Json.files | Where-Object { $_.file -eq $N })[0]
             }
@@ -3453,7 +3472,7 @@ if (-not (Test-Path -LiteralPath $t48Tool)) {
 
         # -- kontrak 1, 3, 4: duplikat nyata terdeteksi, dot-dir & komentar tidak --
         & $t48Tool -ProjectPath $t48Dir -OutputPath $rep48 -Quiet *>$null
-        $j48 = Get-Content -LiteralPath $rep48 -Raw | ConvertFrom-Json
+        $j48 = Get-Content -LiteralPath $rep48 -Raw -Encoding UTF8 | ConvertFrom-Json
         $dup = @($j48.findings | Where-Object { $_.id -eq "class_name_ganda" })
         if ($dup.Count -eq 0) {
             $t48Probs += "duplikat di _backup\ tidak terdeteksi"
@@ -3466,7 +3485,7 @@ if (-not (Test-Path -LiteralPath $t48Tool)) {
         # -- kontrak 2: .gdignore membuat direktori itu tidak terlihat oleh Godot --
         [System.IO.File]::WriteAllText("$t48Dir\_backup\.gdignore", "diabaikan Godot", $noBom48)
         & $t48Tool -ProjectPath $t48Dir -OutputPath $rep48 -Quiet *>$null
-        $j48b = Get-Content -LiteralPath $rep48 -Raw | ConvertFrom-Json
+        $j48b = Get-Content -LiteralPath $rep48 -Raw -Encoding UTF8 | ConvertFrom-Json
         $dupB = @($j48b.findings | Where-Object { $_.id -eq "class_name_ganda" })
         if ($dupB.Count -ne 0) { $t48Probs += ".gdignore tidak dihormati -- direktori itu tidak dilihat Godot" }
 
@@ -3539,7 +3558,7 @@ if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
             if ($pr49) { $pr49.Handle | Out-Null; $pr49.WaitForExit(45000) | Out-Null; if (-not $pr49.HasExited) { $pr49.Kill() } }
 
             if (-not (Test-Path -LiteralPath $res)) { $t49Probs += "$($case.Name): tidak ada hasil"; continue }
-            $r49 = Get-Content -LiteralPath $res -Raw | ConvertFrom-Json
+            $r49 = Get-Content -LiteralPath $res -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($r49.status -ne "fail") { $t49Probs += "$($case.Name): status=$($r49.status), harus fail" }
             $hasHint = ([string]$r49.error) -match "fallback"
             if ($case.ExpectHint -and -not $hasHint) {
@@ -3561,6 +3580,262 @@ if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
         }
     }
 }
+Write-S
+
+# ── TEST 50: minimisasi jejak NAVIGASI, bukan hanya papan tombol tetap ────────
+# TEST 46 memakai tiga tombol yang selalu terlihat bersamaan -- membuang satu klik tidak
+# pernah membuat klik lain hilang. Fixture semacam itu menyembunyikan kasus yang justru
+# paling sering terjadi di game sungguhan: menu berlapis, di mana klik mengubah tombol
+# mana yang ada. Terukur pada jimat: jejak 5 klik yang seharusnya menyusut jadi 1 mentok
+# di 5 dari 5, karena membuang "masuk Candi" membuat "Back" berikutnya tidak punya tombol
+# untuk ditekan, subset ditolak, dan tidak ada satu klik pun yang bisa dibuang sendirian.
+#
+# Yang diuji di sini: pasangan navigasi ("masuk", lalu "Back") harus bisa dibuang SEKALIGUS,
+# sehingga jejak menyusut sampai hanya menyisakan klik yang benar-benar mengubah state.
+Write-T "TEST 50: minimisasi membuang pasangan navigasi, bukan hanya klik tunggal"
+$t50Tool = Join-Path $PSScriptRoot "explore-minimize.ps1"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "explore-minimize: jejak navigasi menyusut ke klik penyebab" $false "SKIP -- Godot tidak tersedia"
+} elseif (-not (Test-Path -LiteralPath $t50Tool)) {
+    Add-Result "explore-minimize: jejak navigasi menyusut ke klik penyebab" $false "explore-minimize.ps1 tidak ditemukan"
+} else {
+    $t50Dir   = Join-Path $env:TEMP "kilo_t50_$($PID)_$(Get-Date -Format 'HHmmss')"
+    $t50Shots = "$env:APPDATA\Godot\app_userdata\KiloT50\shots"
+    try {
+        $null = New-Item -ItemType Directory -Path "$t50Dir\scripts" -Force
+        $null = New-Item -ItemType Directory -Path $t50Shots -Force
+        $noBom50 = New-Object System.Text.UTF8Encoding($false)
+        $t50Tmpl = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        foreach ($tmpl in @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")) {
+            $rawT = [System.IO.File]::ReadAllBytes((Join-Path $t50Tmpl $tmpl))
+            $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF) { 3 } else { 0 }
+            [System.IO.File]::WriteAllText("$t50Dir\scripts\$tmpl",
+                [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom50)
+        }
+        [System.IO.File]::WriteAllText("$t50Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"KiloT50`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom50)
+        [System.IO.File]::WriteAllText("$t50Dir\main.tscn",
+            "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom50)
+        # Dua layar. "Menu A" pindah ke sub-layar yang HANYA punya "Back"; "Back" kembali.
+        # Hanya "Go" yang mengubah state, dan "Go" cuma ada di layar judul. Jadi:
+        #   buang "Menu A" saja -> "Back" tidak ada       -> subset ditolak
+        #   buang "Back" saja   -> "Go" tidak ada         -> subset ditolak
+        #   buang "Go" saja     -> tidak ada pelanggaran  -> subset ditolak
+        # Satu-satunya jalan ke repro minimal adalah membuang "Menu A"+"Back" sekaligus.
+        [System.IO.File]::WriteAllText("$t50Dir\main.gd", @'
+extends Node
+
+var _flag := false
+var _title: Control
+var _sub: Control
+
+func _ready() -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+	_title = Control.new()
+	_title.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(_title)
+	_sub = Control.new()
+	_sub.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(_sub)
+	_mk(_title, "Menu A", 100).pressed.connect(_go_sub)
+	_mk(_title, "Go", 200).pressed.connect(_do_go)
+	_mk(_sub, "Back", 100).pressed.connect(_go_title)
+	_sub.visible = false
+
+func _mk(parent: Control, txt: String, y: int) -> Button:
+	var b := Button.new()
+	b.text = txt
+	b.position = Vector2(100, y)
+	b.size = Vector2(200, 50)
+	parent.add_child(b)
+	return b
+
+func _go_sub() -> void:
+	_title.visible = false
+	_sub.visible = true
+
+func _go_title() -> void:
+	_sub.visible = false
+	_title.visible = true
+
+func _do_go() -> void:
+	_flag = true
+
+func _get_game_state() -> Dictionary:
+	return {"flag": _flag}
+'@, $noBom50)
+
+        $null = Start-Process $GodotExe -ArgumentList "--path", "`"$t50Dir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+
+        $t50Inv  = '"invariants":[{"id":"flag_mati","expr":"curr.flag == false","severity":"warning"}]'
+        $t50Pre  = '{"type":"wait_frames","frames":30}'
+        $t50Nav  = '{"type":"click_button","label":"Menu A","wait_frames":6}'
+        $t50Back = '{"type":"click_button","label":"Back","wait_frames":6}'
+        $t50Go   = '{"type":"click_button","label":"Go","wait_frames":6}'
+        $t50Probs = @()
+        $t50Replay = Join-Path $t50Shots "explore_replay.json"
+        $t50Repro  = Join-Path $t50Shots "explore_repro.json"
+
+        [System.IO.File]::WriteAllText($t50Replay,
+            "{`"scenario_id`":`"explore_replay`",$t50Inv,`"steps`":[$t50Pre,$t50Nav,$t50Back,$t50Go]}", $noBom50)
+        Remove-Item -LiteralPath $t50Repro -Force -ErrorAction SilentlyContinue
+        & $t50Tool -ProjectPath $t50Dir -InvariantId "flag_mati" -Timeout 45 -MaxRuns 20 *>$null
+        $exit50 = $LASTEXITCODE
+        if ($exit50 -ne 0) { $t50Probs += "minimisasi exit=$exit50, harus 0" }
+        if (-not (Test-Path -LiteralPath $t50Repro)) {
+            $t50Probs += "explore_repro.json tidak ditulis"
+        } else {
+            $rr50 = Get-Content -LiteralPath $t50Repro -Raw -Encoding UTF8 | ConvertFrom-Json
+            $cb50 = @($rr50.steps | Where-Object { $_.type -eq "click_button" })
+            if ($cb50.Count -ne 1) {
+                $lbls = ($cb50 | ForEach-Object { $_.label }) -join ", "
+                $t50Probs += "hasil $($cb50.Count) klik [$lbls], harus 1 (pasangan navigasi harus terbuang sekaligus)"
+            } elseif ($cb50[0].label -ne "Go") {
+                $t50Probs += "klik tersisa '$($cb50[0].label)', harus 'Go'"
+            }
+        }
+
+        Add-Result "explore-minimize: jejak navigasi menyusut ke klik penyebab" ($t50Probs.Count -eq 0) `
+            $(if ($t50Probs.Count -eq 0) { "3 klik (Menu A, Back, Go) -> 1 klik (Go)" } else { ($t50Probs -join " | ") })
+    } catch {
+        Add-Result "explore-minimize: jejak navigasi menyusut ke klik penyebab" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t50Dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\KiloT50" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
+# ── TEST 51: step type asing gagal, dan dokumentasinya tidak menjanjikan yang tak ada ──
+# Ditemukan saat memverifikasi hitungan step type: command/scenario.md mendokumentasikan
+# delapan type yang TIDAK ADA di dispatcher (mouse_move, touch, swipe, controller,
+# long_press, double_tap, pinch, load_scene). Agen yang membaca tabel itu akan menulis
+# {"type":"swipe"}, ScenarioRunner mem-_step_skip-nya, dan scenario berakhir "pass" tanpa
+# pernah mengirim satu pun input. Gerbang liveness tidak menolong: type asing tidak dikenali
+# sebagai langkah input, jadi gerbangnya tidak pernah aktif.
+#
+# Tiga kontrak:
+#   1. step type asing -> status fail, BUKAN pass/skip
+#   2. dispatcher dan KNOWN_STEP_TYPES sepadan -- tidak ada yang bisa diimplementasikan
+#      tanpa didaftarkan, atau didaftarkan tanpa diimplementasikan
+#   3. tabel di command/scenario.md persis sama dengan KNOWN_STEP_TYPES
+Write-T "TEST 51: step type asing gagal, dispatcher dan dokumentasi sepadan"
+$t51Probs = @()
+$t51Runner = Join-Path $env:USERPROFILE ".config\kilo\godot-templates\ScenarioRunner.gd"
+$t51Doc    = Join-Path $PSScriptRoot "..\command\scenario.md"
+if (-not (Test-Path -LiteralPath $t51Doc)) { $t51Doc = Join-Path $env:USERPROFILE ".config\kilo\command\scenario.md" }
+
+if (-not (Test-Path -LiteralPath $t51Runner)) {
+    $t51Probs += "ScenarioRunner.gd tidak ditemukan di $t51Runner"
+} else {
+    $src51 = Get-Content -LiteralPath $t51Runner -Raw -Encoding UTF8
+
+    # -- kontrak 2a: kumpulkan type dari cabang _dispatch --------------------------
+    $disp51 = @()
+    foreach ($m in [regex]::Matches($src51, 'step_type\s*==\s*"([a-z_]+)"')) {
+        $disp51 += $m.Groups[1].Value
+    }
+    $disp51 = @($disp51 | Sort-Object -Unique)
+
+    # -- kontrak 2b: kumpulkan KNOWN_STEP_TYPES ------------------------------------
+    $known51 = @()
+    $kBlock = [regex]::Match($src51, 'const\s+KNOWN_STEP_TYPES\s*:=\s*\[(?<body>[^\]]*)\]')
+    if (-not $kBlock.Success) {
+        $t51Probs += "const KNOWN_STEP_TYPES tidak ditemukan di ScenarioRunner.gd"
+    } else {
+        foreach ($m in [regex]::Matches($kBlock.Groups["body"].Value, '"([a-z_]+)"')) {
+            $known51 += $m.Groups[1].Value
+        }
+        $known51 = @($known51 | Sort-Object -Unique)
+        $onlyDisp = @($disp51 | Where-Object { $known51 -notcontains $_ })
+        $onlyKnwn = @($known51 | Where-Object { $disp51 -notcontains $_ })
+        if ($onlyDisp.Count -gt 0) { $t51Probs += "diimplementasikan tapi tidak didaftarkan: $($onlyDisp -join ', ')" }
+        if ($onlyKnwn.Count -gt 0) { $t51Probs += "didaftarkan tapi tidak diimplementasikan: $($onlyKnwn -join ', ')" }
+    }
+
+    # -- kontrak 3: tabel dokumentasi sepadan --------------------------------------
+    if (-not (Test-Path -LiteralPath $t51Doc)) {
+        $t51Probs += "command/scenario.md tidak ditemukan -- tabel step type tidak bisa diperiksa"
+    } elseif ($known51.Count -gt 0) {
+        $doc51 = @()
+        $inTable = $false
+        foreach ($line in (Get-Content -LiteralPath $t51Doc -Encoding UTF8)) {
+            if ($line -match '^## Step Types yang Didukung') { $inTable = $true; continue }
+            if ($inTable -and $line -match '^## ')            { break }
+            if ($inTable -and $line -match '^\|\s*`([a-z_]+)`\s*\|') { $doc51 += $Matches[1] }
+        }
+        $doc51 = @($doc51 | Sort-Object -Unique)
+        $onlyDoc = @($doc51   | Where-Object { $known51 -notcontains $_ })
+        $onlyRun = @($known51 | Where-Object { $doc51   -notcontains $_ })
+        if ($onlyDoc.Count -gt 0) { $t51Probs += "didokumentasikan tapi tidak ada: $($onlyDoc -join ', ')" }
+        if ($onlyRun.Count -gt 0) { $t51Probs += "ada tapi tidak didokumentasikan: $($onlyRun -join ', ')" }
+    }
+}
+
+# -- kontrak 1: perilaku sungguhan -- type asing harus membuat scenario FAIL --------
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    $t51Probs += "SKIP perilaku -- Godot tidak tersedia"
+} else {
+    $t51Dir = Join-Path $env:TEMP "kilo_t51_$($PID)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $null = New-Item -ItemType Directory -Path "$t51Dir\scripts" -Force
+        $null = New-Item -ItemType Directory -Path "$t51Dir\scenarios" -Force
+        $noBom51 = New-Object System.Text.UTF8Encoding($false)
+        $t51Tmpl = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        foreach ($tmpl in @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")) {
+            $rawT = [System.IO.File]::ReadAllBytes((Join-Path $t51Tmpl $tmpl))
+            $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF) { 3 } else { 0 }
+            [System.IO.File]::WriteAllText("$t51Dir\scripts\$tmpl",
+                [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom51)
+        }
+        [System.IO.File]::WriteAllText("$t51Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"KiloT51`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom51)
+        [System.IO.File]::WriteAllText("$t51Dir\main.tscn",
+            "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom51)
+        [System.IO.File]::WriteAllText("$t51Dir\main.gd", @'
+extends Node
+
+func _ready() -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+
+func _get_game_state() -> Dictionary:
+	return {"ok": true}
+'@, $noBom51)
+        # "swipe" ada di tabel dokumentasi LAMA tapi tidak pernah diimplementasikan --
+        # persis bentuk kesalahan yang membuat cacat ini lolos berbulan-bulan.
+        [System.IO.File]::WriteAllText("$t51Dir\scenarios\asing.json",
+            '{"scenario_id":"asing","steps":[{"type":"wait_frames","frames":10},{"type":"swipe","from_x":0,"from_y":0,"to_x":100,"to_y":100}]}', $noBom51)
+
+        $null = Start-Process $GodotExe -ArgumentList "--path", "`"$t51Dir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+        $t51Res = "$env:APPDATA\Godot\app_userdata\KiloT51\shots\scenario_result.json"
+        Remove-Item -LiteralPath $t51Res -Force -ErrorAction SilentlyContinue
+        $pr51 = Start-Process $GodotExe -ArgumentList "--path", "`"$t51Dir`"", "--", "--scenario", "res://scenarios/asing.json" `
+            -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+        if ($pr51) { $pr51.Handle | Out-Null; $pr51.WaitForExit(60000) | Out-Null; if (-not $pr51.HasExited) { $pr51.Kill() } }
+
+        if (-not (Test-Path -LiteralPath $t51Res)) {
+            $t51Probs += "scenario_result.json tidak ditulis untuk scenario step type asing"
+        } else {
+            $r51 = Get-Content -LiteralPath $t51Res -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ("$($r51.status)" -ne "fail") {
+                $t51Probs += "step type asing menghasilkan status '$($r51.status)', harus 'fail'"
+            }
+        }
+    } catch {
+        $t51Probs += "Exception: $_"
+    } finally {
+        Remove-Item -LiteralPath $t51Dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\KiloT51" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Add-Result "step type asing gagal + dispatcher/dokumentasi sepadan" ($t51Probs.Count -eq 0) `
+    $(if ($t51Probs.Count -eq 0) { "21 step type, dispatcher = KNOWN_STEP_TYPES = tabel dokumentasi; 'swipe' -> fail" } else { ($t51Probs -join " | ") })
 Write-S
 
 if (-not $KeepFixtures) {

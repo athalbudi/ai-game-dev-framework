@@ -59,7 +59,18 @@ var _invariant_checks: int = 0
 # dituntut bila scenario benar-benar mengirim input. Scenario yang isinya hanya screenshot
 # memang wajar tidak mengubah apa pun; scenario yang menekan tombol lalu tidak mengubah
 # state maupun layar tidak menguji apa-apa.
-const INPUT_STEP_TYPES := ["action", "mouse_click", "touch_tap", "controller_press", "explore"]
+const INPUT_STEP_TYPES := ["action", "mouse_click", "click_button", "touch_tap",
+	"controller_press", "explore"]
+
+# Daftar lengkap step type yang punya implementasi. Dipakai untuk menyusun pesan kesalahan
+# saat scenario memakai type asing -- lihat cabang else di _dispatch(). Urutannya sama
+# dengan tabel di command/scenario.md, dan test-pipeline memeriksa keduanya tetap cocok:
+# dokumentasi yang menjanjikan step type yang tidak ada adalah cara lain menghasilkan
+# scenario yang "lulus" tanpa menjalankan apa pun.
+const KNOWN_STEP_TYPES := ["wait_frames", "wait_scene", "wait_signal", "wait_condition",
+	"action", "mouse_click", "click_button", "touch_tap", "controller_press", "screenshot",
+	"assert_state", "assert_fps", "assert_no_error", "assert_screenshot_exists",
+	"set_state", "write_state", "repeat", "seed_override", "log", "comment", "explore"]
 
 # Field yang SELALU berubah tiap penulisan state. Tanpa dikecualikan, setiap scenario akan
 # tampak hidup dan gerbang ini jadi hiasan.
@@ -205,6 +216,8 @@ func _dispatch(step_type: String, step: Dictionary) -> void:
 		await _exec_controller_press(step)
 	elif step_type == "mouse_click":
 		await _exec_mouse_click(step)
+	elif step_type == "click_button":
+		await _exec_click_button(step)
 	elif step_type == "screenshot":
 		await _exec_screenshot(step)
 	elif step_type == "write_state":
@@ -227,8 +240,18 @@ func _dispatch(step_type: String, step: Dictionary) -> void:
 		await _exec_repeat(step)
 	elif step_type == "seed_override":
 		_exec_seed_override(step)
+	elif step_type == "comment":
+		# Anotasi murni. JSON tidak punya komentar, dan scenario panjang jadi tak terbaca
+		# tanpa penanda fase. Sengaja dijadikan type yang SAH dan lulus, bukan dilewati:
+		# yang dilewati tak bisa dibedakan dari salah ketik.
+		_step_pass({"text": str(step.get("text", ""))})
 	else:
-		_step_skip("Step type tidak dikenal: " + step_type)
+		# GAGAL, bukan skip. Skip terlihat aman tapi justru false-verify: scenario yang setiap
+		# langkahnya salah ketik akan berakhir "pass" tanpa pernah menjalankan apa pun, dan
+		# laporannya tidak bisa dibedakan dari scenario yang benar-benar lulus. Gerbang liveness
+		# pun tidak menolongnya -- type asing tidak dikenali sebagai langkah input, jadi
+		# gerbangnya tidak pernah aktif.
+		_step_fail("Step type tidak dikenal: '%s'. Yang sah: %s" % [step_type, ", ".join(KNOWN_STEP_TYPES)])
 
 
 # --- Invariant ---
@@ -481,11 +504,15 @@ func _write_explore_replay(trail: Array, seed_val: Variant, settle: int, warmup:
 		steps.append({"type": "seed_override", "seed": int(seed_val)})
 	steps.append({"type": "wait_frames", "frames": warmup,
 		"comment": "tunggu layar awal selesai dibangun sebelum klik pertama"})
+	# Ditulis sebagai click_button, BUKAN mouse_click. Jejak yang menyebut APA yang ditekan
+	# tahan terhadap pergeseran tata letak, dan -- lebih penting -- membuat minimisasi bisa
+	# membuang klik yang tidak relevan tanpa mengubah sasaran klik sesudahnya. Koordinat asli
+	# tetap disimpan sebagai catatan, bukan sebagai cara menekan.
 	for t: Variant in trail:
 		var d: Dictionary = t
 		steps.append({
-			"type": "mouse_click", "x": d["x"], "y": d["y"], "wait_frames": settle,
-			"comment": "klik: %s" % str(d["label"])
+			"type": "click_button", "label": str(d["label"]), "wait_frames": settle,
+			"recorded_x": d["x"], "recorded_y": d["y"]
 		})
 	var doc := {
 		"scenario_id": "explore_replay",
@@ -779,6 +806,76 @@ func _exec_mouse_click(step: Dictionary) -> void:
 	if wait_after > 0:
 		await _wait_frames(wait_after)
 	_step_pass({"x": x, "y": y})
+
+
+## Klik tombol berdasarkan LABEL, bukan koordinat.
+##
+## Replay berbasis koordinat rapuh dalam dua arah. Ia pecah begitu tata letak bergeser --
+## satu tombol tambahan di menu dan seluruh jejak mengenai sasaran yang salah. Dan ia membuat
+## minimisasi jejak mentok di 1-minimal: membuang satu klik di tengah menggeser layar yang
+## dikenai klik berikutnya, sehingga klik yang sebenarnya TIDAK relevan pun tidak bisa dibuang
+## tanpa merusak sisanya.
+##
+## Dengan label, tiap langkah menyebut APA yang ditekan. Membuang klik yang tidak relevan
+## tidak lagi mengubah arti klik sesudahnya, karena sasarannya dicari ulang tiap kali.
+##
+## Langkah ini GAGAL kalau tombolnya tidak ada — dan itu justru yang diinginkan: subset jejak
+## yang tidak bisa mencapai tombolnya memang bukan reproducer yang sah, dan minimizer harus
+## tahu itu alih-alih mengklik apa pun yang kebetulan ada di koordinat lama.
+func _exec_click_button(step: Dictionary) -> void:
+	var label: String = str(step.get("label", ""))
+	if label == "":
+		_step_fail("click_button: field 'label' wajib diisi")
+		return
+	var wait_after: int = int(step.get("wait_frames", 10))
+	var target := _find_button_by_label(label)
+	if target == null:
+		var avail := ", ".join(PackedStringArray(_visible_button_labels()))
+		_step_fail("click_button: tidak ada tombol berlabel '%s' yang bisa ditekan. Tombol tersedia: [%s]" % [label, avail])
+		return
+	var center := target.get_global_rect().get_center()
+	await _click_at(center, MOUSE_BUTTON_LEFT)
+	if wait_after > 0:
+		await _wait_frames(wait_after)
+	_step_pass({"label": label, "x": center.x, "y": center.y})
+
+
+func _visible_button_labels() -> Array:
+	var out: Array = []
+	for b: Variant in _find_clickable_buttons([]):
+		out.append(_button_label(b))
+	return out
+
+
+## Kunci pencocokan longgar: angka dibuang, spasi dirapikan, huruf disamakan.
+## Label game sering memuat angka yang berubah tanpa mengubah arti tombolnya
+## ("Continue the Night — step 2/9"). Pencocokan persis saja akan membuat replay pecah
+## pada perubahan yang tidak berarti apa-apa.
+func _label_key(s: String) -> String:
+	var t := ""
+	for i in s.length():
+		var ch := s[i]
+		if ch >= "0" and ch <= "9":
+			continue
+		t += ch
+	return t.strip_edges().to_lower()
+
+
+## Pencocokan bertingkat: persis, lalu abaikan besar-kecil huruf, lalu abaikan angka.
+func _find_button_by_label(label: String) -> Control:
+	var buttons := _find_clickable_buttons([])
+	for b: Variant in buttons:
+		if _button_label(b) == label:
+			return b
+	for b: Variant in buttons:
+		if _button_label(b).to_lower() == label.to_lower():
+			return b
+	var key := _label_key(label)
+	if key != "":
+		for b: Variant in buttons:
+			if _label_key(_button_label(b)) == key:
+				return b
+	return null
 
 
 func _exec_touch_tap(step: Dictionary) -> void:

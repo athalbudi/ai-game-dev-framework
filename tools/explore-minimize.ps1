@@ -73,19 +73,22 @@ if (-not (Test-Path -LiteralPath $ReplayFile)) {
     exit 1
 }
 
-$replay = Get-Content -LiteralPath $ReplayFile -Raw | ConvertFrom-Json
+$replay = Get-Content -LiteralPath $ReplayFile -Raw -Encoding UTF8 | ConvertFrom-Json
 $allSteps = @($replay.steps)
 # Langkah pembuka (seed_override, wait_frames) SELALU dipertahankan: ia bukan bagian dari
 # jejak yang diperkecil, melainkan syarat agar klik pertama mendarat di layar yang benar.
-$preamble = @($allSteps | Where-Object { $_.type -ne "mouse_click" })
-$clicks   = @($allSteps | Where-Object { $_.type -eq "mouse_click" })
-if ($clicks.Count -eq 0) { Write-Bad "Jejak tidak memuat satu pun mouse_click"; exit 1 }
+# Jejak baru ditulis sebagai click_button (menyebut APA yang ditekan); mouse_click tetap
+# didukung supaya jejak lama masih bisa diperkecil.
+$clickTypes = @("click_button", "mouse_click")
+$preamble = @($allSteps | Where-Object { $clickTypes -notcontains $_.type })
+$clicks   = @($allSteps | Where-Object { $clickTypes -contains $_.type })
+if ($clicks.Count -eq 0) { Write-Bad "Jejak tidak memuat satu pun langkah klik"; exit 1 }
 
 # ── 2. Invariant target ───────────────────────────────────────────────────────
 $resultPath = Join-Path $ShotsDir "scenario_result.json"
 if ($InvariantId -eq "") {
     if (Test-Path -LiteralPath $resultPath) {
-        $lastRes = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+        $lastRes = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $vs = @($lastRes.invariant_violations)
         if ($vs.Count -gt 0) { $InvariantId = [string]$vs[0].id }
     }
@@ -166,7 +169,7 @@ function Test-Candidate {
     $hit = $false
     if (Test-Path -LiteralPath $resultPath) {
         try {
-            $r = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+            $r = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $hit = @(@($r.invariant_violations) | Where-Object { [string]$_.id -eq $InvariantId }).Count -gt 0
         } catch { }
     }
@@ -216,17 +219,35 @@ Write-Ok "Prefix terpendek yang masih jebol: $($bestPrefix.Count) klik"
 $minimal = $bestPrefix
 if (-not $SkipGreedy -and $bestPrefix.Count -gt 1) {
     Write-Host ""
-    Write-Step "Fase 2 -- pembuangan serakah"
-    $i = 0
-    while ($i -lt $minimal.Count) {
+    Write-Step "Fase 2 -- pembuangan jendela berurutan"
+    # Membuang SATU klik saja tidak cukup begitu langkah menyebut label alih-alih koordinat.
+    # Navigasi datang berpasangan: "masuk Candi" lalu "Back". Membuang salah satunya membuat
+    # pasangannya gagal -- tombol "Back" tidak ada di layar judul -- sehingga subset ditolak
+    # dan tidak ada satu klik pun yang bisa dibuang. Terukur pada jimat: pembuangan tunggal
+    # berhenti di 5 dari 5, padahal repro sebenarnya cuma satu klik.
+    #
+    # Karena itu jendela berurutan ikut dicoba, dari yang terpendek. Ukuran dibatasi supaya
+    # biayanya tetap terkendali; jejak panjang yang butuh lebih dalam bisa menaikkan -MaxRuns.
+    $maxWindow = [math]::Min(4, $minimal.Count - 1)
+    for ($w = 1; $w -le $maxWindow; $w++) {
+        $improved = $true
+        while ($improved) {
+            $improved = $false
+            $i = 0
+            while ($i + $w -le $minimal.Count) {
+                if ($runCount -ge $MaxRuns) { break }
+                if ($minimal.Count -le 1) { break }
+                $trial = @()
+                for ($k = 0; $k -lt $minimal.Count; $k++) {
+                    if ($k -lt $i -or $k -ge ($i + $w)) { $trial += $minimal[$k] }
+                }
+                $ok = Test-Candidate -ClickSubset $trial -Label "buang ${w}x @$($i + 1)"
+                if ($null -eq $ok) { break }
+                if ($ok) { $minimal = $trial; $improved = $true } else { $i++ }
+            }
+            if ($runCount -ge $MaxRuns) { break }
+        }
         if ($runCount -ge $MaxRuns) { Write-Warn "Anggaran run habis di fase 2"; break }
-        if ($minimal.Count -le 1) { break }
-        $trial = @()
-        for ($k = 0; $k -lt $minimal.Count; $k++) { if ($k -ne $i) { $trial += $minimal[$k] } }
-        $lbl = "buang #$($i + 1)"
-        $ok = Test-Candidate -ClickSubset $trial -Label $lbl
-        if ($null -eq $ok) { break }
-        if ($ok) { $minimal = $trial } else { $i++ }   # kalau masih jebol, klik itu tak perlu
     }
 }
 
@@ -256,7 +277,10 @@ Write-Step "Urutan minimal:"
 $n = 0
 foreach ($c in $minimal) {
     $n++
-    $lbl = if (@($c.PSObject.Properties | ForEach-Object { $_.Name }) -contains "comment") { $c.comment } else { "($($c.x),$($c.y))" }
+    $names = @($c.PSObject.Properties | ForEach-Object { $_.Name })
+    $lbl = if ($names -contains "label")   { $c.label }
+      elseif ($names -contains "comment") { $c.comment }
+      else                                { "($($c.x),$($c.y))" }
     Write-Host ("   {0}. {1}" -f $n, $lbl) -ForegroundColor White
 }
 Write-Step "Repro  : $reproPath"

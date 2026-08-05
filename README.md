@@ -182,7 +182,7 @@ are hard to diagnose. `ErrorTracker` waits it out and then calls into your main 
 | `tools/run-and-analyze.ps1` | Run the game and analyze its output |
 | `tools/schema-migration.ps1` | Migrate manifest schema between versions |
 | `tools/doctor.ps1` | Health check for the **installation** |
-| `tools/test-pipeline.ps1` | Framework self-test (53 regression tests) |
+| `tools/test-pipeline.ps1` | Framework self-test (55 regression tests) |
 | `tools/_common.ps1` | Shared: Godot/ImageMagick detection, `user://` mapping, image metrics |
 
 `visual-diff` reports the kind of difference, not only its size — a percentage alone cannot
@@ -197,7 +197,7 @@ REGRESI 04_battle.png - 24.75% pixel berubah (threshold: 1%)
 
 | File | Purpose | Autoload? |
 |---|---|---|
-| `godot-templates/ScenarioRunner.gd` | Automated gameplay testing (19 step types, invariants, exploration) | **No** |
+| `godot-templates/ScenarioRunner.gd` | Automated gameplay testing (21 step types, invariants, exploration) | **No** |
 | `godot-templates/GameStateWriter.gd` | Scene tracking + writes `game_state.json` | Yes |
 | `godot-templates/ErrorTracker.gd` | Error tracking + bootstraps `--scenario` | Yes |
 | `godot-templates/InputRecorder.gd` | Records input for bug replay | Yes |
@@ -232,14 +232,15 @@ Installed to `.kilo/command/` by `-InitProject`:
 | `/ci-setup` | Generate CI workflows |
 
 Each command file carries the *reasoning* behind its capability, not only its syntax — an
-agent reading `/explore` learns that zero clicks is a failure and that trail minimization is
-1-minimal rather than globally minimal, because both change how the output should be read.
+agent reading `/explore` learns that zero clicks is a failure and that minimization only
+removes runs of up to four consecutive clicks, because both change how the output should be
+read.
 
 ---
 
 ## How this is verified
 
-The framework tests itself: `tools/test-pipeline.ps1` runs 53 regression tests covering the
+The framework tests itself: `tools/test-pipeline.ps1` runs 55 regression tests covering the
 harness, the gate, path resolution, bootstrap, project integration, invariants, exploration,
 visual verdicts, and the static game checks.
 
@@ -287,9 +288,11 @@ on Indonesian folklore, carrying it from prototype through four rounds of playte
 - **Visual verdicts need a model that can see.** The framework stores the judgment, pins it
   to the exact image, and invalidates it when that image changes. It does not make the
   judgment.
-- **Trail minimization is 1-minimal, not globally minimal.** Replay is coordinate-based, so
-  removing a click in the middle shifts what later clicks land on. It will tell you no single
-  click can be dropped; it will not always find the theoretical shortest path.
+- **Trail minimization removes runs, not arbitrary subsets.** Replay is label-based, and
+  dropping a single click is rarely enough: menu navigation comes in pairs, and removing
+  "enter" without "back" leaves the next step with no button to press. So consecutive runs of
+  up to four clicks are tried together. Runs longer than that, and non-adjacent clicks that
+  can only leave together, are still out of reach.
 - **What it finds well is infrastructure.** Non-determinism, dead input paths, clipped
   layout, encoding damage, screens that never render — these it catches reliably. Whether a
   shortcut is an exploit or an intended route is a design question, and design questions

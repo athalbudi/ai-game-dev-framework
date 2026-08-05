@@ -46,7 +46,7 @@ membaca nama lama, memindahkannya, lalu menuliskan nama baru — bukan sekadar f
 | `tools/run-and-analyze.ps1` | Loop otomatis QA: Observe, Generate, Run, Analyze, Report |
 | `tools/autonomous-qa.ps1` | Loop autonomous QA dengan anomaly detection dan iterasi mandiri |
 | `tools/feedback-bridge.ps1` | Petakan keluhan playtester ke screenshot dan lokasi kode |
-| `tools/test-pipeline.ps1` | Self-test framework (53 regression test) |
+| `tools/test-pipeline.ps1` | Self-test framework (55 regression test) |
 | `tools/_common.ps1` | Bersama: deteksi Godot/ImageMagick, pemetaan `user://`, metrik gambar |
 
 ### Commands (tersedia di semua project via global config)
@@ -83,7 +83,7 @@ membaca nama lama, memindahkannya, lalu menuliskan nama baru — bukan sekadar f
 
 | File | Deskripsi |
 |---|---|
-| `ScenarioRunner.gd` | Scenario engine (19 step type, invariant, eksplorasi, gerbang liveness) -- di-load oleh ErrorTracker, bukan Autoload |
+| `ScenarioRunner.gd` | Scenario engine (21 step type, invariant, eksplorasi, gerbang liveness) -- di-load oleh ErrorTracker, bukan Autoload |
 | `GameStateWriter.gd` | Autoload: scene tracking via `report_scene()` + `_write_game_state()` hook |
 | `InputRecorder.gd` | Autoload untuk merekam input gameplay manual ke recording JSON |
 | `RecordingConverter.gd` | Konversi file rekaman ke scenario JSON untuk bug reproduction |
@@ -322,14 +322,26 @@ dengan `seed_override` dan warmup, supaya benar-benar bisa dijalankan sendiri. I
 inline ikut disalin ke file jejak; tanpa itu replay berjalan tanpa aturan yang tadi
 dilanggarnya.
 
-`explore-minimize.ps1` memperkecilnya: bisection prefix lalu pembuangan serakah, tiap
-kandidat di proses Godot **baru** dengan state `user://` dipulihkan dari snapshot. Tanpa
-pemulihan itu run kedua berangkat dari layar yang berbeda dan koordinat yang sama mengenai
-tombol lain — hasil minimisasinya jadi dusta.
+Jejak ditulis sebagai `click_button` — **label**, bukan koordinat. Koordinat mati begitu
+layout bergeser sedikit, dan matinya diam-diam: klik mendarat di tempat kosong, langkah
+tetap PASS, repro-nya bohong. Label tidak bisa gagal diam-diam; kalau tombolnya tidak ada,
+langkahnya gagal sambil menyebut tombol apa saja yang sebenarnya ada di layar itu.
+
+`explore-minimize.ps1` memperkecilnya: bisection prefix lalu pembuangan jendela berurutan,
+tiap kandidat di proses Godot **baru** dengan state `user://` dipulihkan dari snapshot.
+Tanpa pemulihan itu run kedua berangkat dari layar yang berbeda dan hasil minimisasinya
+jadi dusta.
+
+Jendelanya sampai 4 klik, dan panjangnya bukan hiasan. Membuang satu klik saja tidak cukup
+di menu berlapis: navigasi datang berpasangan, "masuk Candi" lalu "Back", dan membuang
+salah satunya membuat pasangannya tidak punya tombol untuk ditekan — subset ditolak, tidak
+ada satu pun klik yang bisa pergi sendirian. Terukur pada jimat: pembuangan satu-satu
+berhenti di 5 dari 5 klik; berjendela menyusut ke 1, yaitu klik yang memang penyebabnya.
 
 Baseline diverifikasi lebih dulu dan **gagal tertutup**: kalau jejak penuh saja tidak
-mereproduksi, tool berhenti. Hasilnya **1-minimal, bukan minimal global** — replay berbasis
-koordinat, jadi membuang klik di tengah menggeser layar yang dikenai klik berikutnya.
+mereproduksi, tool berhenti. Batas yang tersisa: jendela lebih panjang dari 4 tidak dicoba,
+dan pembuangan hanya berurutan — dua klik tak bersebelahan yang cuma bisa pergi bersama
+tidak akan ditemukan.
 
 ### Verdict visual — aturan bawa-maju
 
