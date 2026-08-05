@@ -234,6 +234,53 @@ if (Test-Path -LiteralPath $fwTemplates) {
     }
 }
 
+# ── C9: class_name ganda di dalam satu project ────────────────────────────────
+# Godot menolak memuat DUA script yang mendaftarkan class_name sama, dan yang gagal bukan
+# hanya salinannya -- yang asli ikut mati dengan "Class X hides a global script class".
+# Konsekuensinya diam dan jauh: script yang tidak bisa dimuat membuat layar yang memakainya
+# tidak pernah terbangun, dan tur screenshot berhenti di tengah tanpa pesan yang menyebut
+# sebabnya.
+#
+# Terjadi betulan di sesi ini: folder cadangan bertanggal ditaruh DI DALAM project jimat,
+# berisi salinan ui_theme.gd dan battle_screen.gd. Sejak saat itu tur berhenti di 14 dari
+# 23 layar selama berjam-jam, dan tidak ada satu pun pemeriksaan yang menyebut penyebabnya.
+#
+# Pemindaian di sini SENGAJA tidak memakai $skipPatterns. Daftar itu ada untuk menekan
+# kebisingan doctor, sedangkan Godot tidak mengenalnya -- dan justru di folder yang doctor
+# lewati itulah duplikat biasanya bersembunyi. Yang dipakai adalah aturan Godot sendiri:
+# direktori berawalan titik diabaikan, direktori yang memuat .gdignore diabaikan.
+$gdIgnored = @(Get-ChildItem -LiteralPath $ProjectPath -Filter ".gdignore" -Recurse -File -Force -ErrorAction SilentlyContinue |
+               ForEach-Object { $_.DirectoryName })
+$godotVisible = @(Get-ChildItem -LiteralPath $ProjectPath -Filter "*.gd" -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object {
+        $rel = $_.FullName.Substring($ProjectPath.Length).TrimStart("\")
+        if ($rel -match '(^|\\)\.') { return $false }          # direktori/berkas berawalan titik
+        foreach ($ig in $gdIgnored) {
+            if ($_.FullName.StartsWith($ig, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+        }
+        return $true
+    })
+
+$classDecls = @{}
+foreach ($f in $godotVisible) {
+    foreach ($line in (Get-Content -LiteralPath $f.FullName -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+        if ($line -match '^\s*#') { continue }
+        if ($line -match '^\s*class_name\s+([A-Za-z_][A-Za-z0-9_]*)') {
+            $cn = $Matches[1]
+            if (-not $classDecls.ContainsKey($cn)) { $classDecls[$cn] = @() }
+            $classDecls[$cn] += $f.FullName.Substring($ProjectPath.Length).TrimStart("\")
+            break   # class_name hanya boleh sekali per file
+        }
+    }
+}
+foreach ($cn in ($classDecls.Keys | Sort-Object)) {
+    $where = @($classDecls[$cn])
+    if ($where.Count -le 1) { continue }
+    Add-Finding -Id "class_name_ganda" -Severity "error" -File $where[0] `
+        -Message "class_name '$cn' dideklarasikan di $($where.Count) berkas: $($where -join ', '). Godot menolak memuat keduanya -- yang ASLI ikut mati, dan layar yang memakainya tidak pernah terbangun" `
+        -Fix "Pindahkan salinan/cadangan ke LUAR direktori project, atau taruh berkas .gdignore di direktorinya supaya Godot melewatinya sama sekali."
+}
+
 # ── Laporan ───────────────────────────────────────────────────────────────────
 $nErr  = @($findings | Where-Object { $_.severity -eq "error" }).Count
 $nWarn = @($findings | Where-Object { $_.severity -eq "warning" }).Count

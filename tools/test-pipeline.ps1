@@ -3410,6 +3410,76 @@ if ((Test-Path -LiteralPath $t47Vd) -and $t47Im -ne "") {
 }
 Write-S
 
+# ── TEST 48: class_name ganda di dalam satu project ───────────────────────────
+# Godot menolak memuat dua script yang mendaftarkan class_name sama, dan yang gagal bukan
+# hanya salinannya -- yang ASLI ikut mati. Layar yang memakainya lalu tidak pernah terbangun
+# dan tur screenshot berhenti di tengah tanpa pesan yang menyebut sebabnya.
+# Terjadi betulan: folder cadangan bertanggal ditaruh di dalam project jimat, dan tur
+# berhenti di 14 dari 23 layar selama berjam-jam tanpa satu pun pemeriksaan menyebut kenapa.
+# Empat kontrak, dua di antaranya soal aturan visibilitas Godot -- bukan aturan doctor:
+#   1. duplikat di direktori biasa terdeteksi
+#   2. direktori ber-.gdignore DILEWATI (Godot melewatinya, jadi bukan duplikat)
+#   3. direktori berawalan titik DILEWATI (Godot mengabaikannya)
+#   4. class_name di dalam komentar tidak dihitung
+# Kontrak 2 yang paling mudah salah: pemindaian ini sengaja TIDAK memakai daftar
+# pengecualian doctor, karena justru di folder yang doctor lewati duplikat itu bersembunyi.
+Write-T "TEST 48: game-doctor mendeteksi class_name ganda dengan aturan visibilitas Godot"
+$t48Tool = Join-Path $PSScriptRoot "game-doctor.ps1"
+if (-not (Test-Path -LiteralPath $t48Tool)) {
+    Add-Result "class_name ganda terdeteksi (aturan Godot)" $false "game-doctor.ps1 tidak ditemukan"
+} else {
+    $t48Dir = Join-Path $env:TEMP "kilo_t48_$($PID)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $noBom48 = New-Object System.Text.UTF8Encoding($false)
+        foreach ($sub in @("scripts", "_backup", ".arsip")) {
+            $null = New-Item -ItemType Directory -Path (Join-Path $t48Dir $sub) -Force
+        }
+        [System.IO.File]::WriteAllText("$t48Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"T48`"`n`n[autoload]`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`n", $noBom48)
+        [System.IO.File]::WriteAllText("$t48Dir\scripts\asli.gd",
+            "class_name Foo`nextends Node`n`nfunc _get_game_state() -> Dictionary:`n`treturn {}`n", $noBom48)
+        # Salinan di direktori BIASA -> Godot memindainya -> duplikat sungguhan
+        [System.IO.File]::WriteAllText("$t48Dir\_backup\salinan.gd",
+            "class_name Foo`nextends Node`n", $noBom48)
+        # Direktori berawalan titik -> Godot mengabaikannya -> BUKAN duplikat
+        [System.IO.File]::WriteAllText("$t48Dir\.arsip\lama.gd",
+            "class_name Foo`nextends Node`n", $noBom48)
+        # class_name di dalam komentar -> tidak boleh dihitung
+        [System.IO.File]::WriteAllText("$t48Dir\scripts\komentar.gd",
+            "extends Node`n# class_name Foo  <- ini hanya contoh di komentar`n", $noBom48)
+
+        $t48Probs = @()
+        $rep48 = Join-Path $t48Dir "r.json"
+
+        # -- kontrak 1, 3, 4: duplikat nyata terdeteksi, dot-dir & komentar tidak --
+        & $t48Tool -ProjectPath $t48Dir -OutputPath $rep48 -Quiet *>$null
+        $j48 = Get-Content -LiteralPath $rep48 -Raw | ConvertFrom-Json
+        $dup = @($j48.findings | Where-Object { $_.id -eq "class_name_ganda" })
+        if ($dup.Count -eq 0) {
+            $t48Probs += "duplikat di _backup\ tidak terdeteksi"
+        } else {
+            if ($dup[0].message -notmatch "_backup") { $t48Probs += "temuan tidak menyebut berkas di _backup" }
+            if ($dup[0].message -match "\.arsip")    { $t48Probs += "direktori berawalan titik ikut dihitung -- Godot mengabaikannya" }
+            if ($dup[0].message -match "komentar")   { $t48Probs += "class_name di dalam komentar ikut dihitung" }
+        }
+
+        # -- kontrak 2: .gdignore membuat direktori itu tidak terlihat oleh Godot --
+        [System.IO.File]::WriteAllText("$t48Dir\_backup\.gdignore", "diabaikan Godot", $noBom48)
+        & $t48Tool -ProjectPath $t48Dir -OutputPath $rep48 -Quiet *>$null
+        $j48b = Get-Content -LiteralPath $rep48 -Raw | ConvertFrom-Json
+        $dupB = @($j48b.findings | Where-Object { $_.id -eq "class_name_ganda" })
+        if ($dupB.Count -ne 0) { $t48Probs += ".gdignore tidak dihormati -- direktori itu tidak dilihat Godot" }
+
+        Add-Result "class_name ganda terdeteksi (aturan Godot)" ($t48Probs.Count -eq 0) `
+            $(if ($t48Probs.Count -eq 0) { "duplikat terdeteksi; .gdignore, dot-dir, dan komentar dikecualikan" } else { ($t48Probs -join " | ") })
+    } catch {
+        Add-Result "class_name ganda terdeteksi (aturan Godot)" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t48Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
