@@ -927,12 +927,40 @@ func _exec_assert_state(step: Dictionary) -> void:
 	# Pesan menyebut key yang tersedia supaya penulis scenario bisa langsung membetulkan.
 	if actual == null and not (op in ["is_null", "not_null"]):
 		var available := ", ".join(PackedStringArray(state.keys()))
-		_step_fail("assert_state: field '%s' tidak ada di game_state (op=%s). Field tersedia: %s" % [key, op, available])
+		var msg := "assert_state: field '%s' tidak ada di game_state (op=%s). Field tersedia: %s" % [key, op, available]
+		# Membedakan dua sebab yang pesannya selama ini sama persis: nama field salah ketik,
+		# versus penyedia state milik GAME tidak tercapai sehingga yang tertulis hanya
+		# fallback generik GameStateWriter. Keduanya menghasilkan "field tidak ada", tetapi
+		# perbaikannya berlawanan -- yang satu betulkan nama, yang satu perbaiki jangkauan hook.
+		# Terukur pada bread-adventure: _get_game_state() ada tetapi melekat pada satu layar,
+		# jadi begitu scenario berpindah layar seluruh field game lenyap dan yang tersisa
+		# persis keenam field fallback.
+		if _is_fallback_only_state(state):
+			msg += ("\n  -> game_state HANYA berisi field fallback GameStateWriter; tidak satu pun " +
+				"field game tertulis. Penyedia state milik game tidak tercapai saat langkah ini. " +
+				"Periksa apakah node yang mengimplementasikan _get_game_state() ada di tree pada " +
+				"titik ini -- hook yang melekat pada satu layar akan hilang begitu scenario berpindah.")
+		_step_fail(msg)
 		return
 	if _evaluate_op(actual, op, expected):
 		_step_pass({"key": key, "actual": str(actual), "expected": str(expected)})
 	else:
 		_step_fail("assert_state gagal: %s = %s, expected %s %s" % [key, str(actual), op, str(expected)])
+
+
+## Enam field yang ditulis GameStateWriter tanpa bantuan game sama sekali. Kalau state HANYA
+## berisi ini, penyedia milik game tidak menyumbang apa pun -- dan itu sebab yang sangat
+## berbeda dari sekadar salah ketik nama field, meski gejalanya identik.
+const FALLBACK_STATE_FIELDS := ["schema_version", "build", "timestamp",
+	"current_scene", "frame_count", "error_log"]
+
+func _is_fallback_only_state(state: Dictionary) -> bool:
+	if state.is_empty():
+		return false
+	for k: Variant in state.keys():
+		if not (str(k) in FALLBACK_STATE_FIELDS):
+			return false
+	return true
 
 
 func _exec_assert_no_error(step: Dictionary) -> void:

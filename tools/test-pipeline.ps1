@@ -3480,6 +3480,89 @@ if (-not (Test-Path -LiteralPath $t48Tool)) {
 }
 Write-S
 
+# ── TEST 49: bedakan "salah ketik field" dari "penyedia state tak tercapai" ───
+# Keduanya menghasilkan gejala yang PERSIS sama -- "field tidak ada di game_state" --
+# tetapi perbaikannya berlawanan: yang satu betulkan nama field, yang satu perbaiki
+# jangkauan hook. Tanpa dibedakan, pembaca laporan menebak.
+# Ditemukan saat menjalankan framework pada bread-adventure, game yang tidak pernah
+# disesuaikan terhadapnya: _get_game_state() ada tetapi melekat pada satu layar, jadi
+# begitu scenario berpindah layar seluruh field game lenyap dan yang tersisa persis keenam
+# field fallback GameStateWriter.
+# Fixture memakai DUA project, bukan satu project dengan penyedia yang menyusul setelah
+# jeda. Versi berbasis waktu sempat dicoba dan salah: bootstrap ErrorTracker plus jeda
+# hot-reload sudah memakan lebih dari satu detik sebelum langkah pertama berjalan, sehingga
+# scenario "awal" pun sudah melihat state kaya (terukur: frame_count 187 di langkah pertama).
+# Fixture yang bergantung pada waktu adalah sumber tes rewel; kehadiran penyedia adalah
+# properti project, jadi bedakan di level project.
+Write-T "TEST 49: pesan assert_state membedakan field salah dari penyedia state tak tercapai"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "assert_state menandai state fallback-only" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t49Base = Join-Path $env:TEMP "kilo_t49_$($PID)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $noBom49 = New-Object System.Text.UTF8Encoding($false)
+        $t49Tmpl = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        $t49Scen = '{"scenario_id":"t49","steps":[{"type":"wait_frames","frames":10},{"type":"write_state"},{"type":"assert_state","field":"tidak_ada","op":"eq","expected":1}]}'
+
+        # Dua project identik kecuali satu hal: ada atau tidaknya _get_game_state() di main.
+        $t49Cases = @(
+            @{ Name = "KiloT49A"; ExpectHint = $true
+               Main = "extends Node`n" }
+            @{ Name = "KiloT49B"; ExpectHint = $false
+               Main = "extends Node`n`nfunc _get_game_state() -> Dictionary:`n`treturn {`"hp`": 5}`n" }
+        )
+        $t49Probs = @()
+
+        foreach ($case in $t49Cases) {
+            $dir = Join-Path $t49Base $case.Name
+            $null = New-Item -ItemType Directory -Path "$dir\scripts"   -Force
+            $null = New-Item -ItemType Directory -Path "$dir\scenarios" -Force
+            foreach ($tmpl in @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")) {
+                $rawT = [System.IO.File]::ReadAllBytes((Join-Path $t49Tmpl $tmpl))
+                $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF) { 3 } else { 0 }
+                [System.IO.File]::WriteAllText("$dir\scripts\$tmpl",
+                    [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom49)
+            }
+            [System.IO.File]::WriteAllText("$dir\project.godot",
+                "config_version=5`n`n[application]`nconfig/name=`"$($case.Name)`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom49)
+            [System.IO.File]::WriteAllText("$dir\main.tscn",
+                "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom49)
+            [System.IO.File]::WriteAllText("$dir\main.gd", $case.Main, $noBom49)
+            [System.IO.File]::WriteAllText("$dir\scenarios\t.json", $t49Scen, $noBom49)
+
+            $null = Start-Process $GodotExe -ArgumentList "--path", "`"$dir`"", "--headless", "--import", "--quit" `
+                -PassThru -NoNewWindow -Wait
+            $res = "$env:APPDATA\Godot\app_userdata\$($case.Name)\shots\scenario_result.json"
+            Remove-Item -LiteralPath $res -Force -ErrorAction SilentlyContinue
+            $pr49 = Start-Process $GodotExe -ArgumentList "--path", "`"$dir`"", "--", "--scenario", "res://scenarios/t.json" `
+                -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+            if ($pr49) { $pr49.Handle | Out-Null; $pr49.WaitForExit(45000) | Out-Null; if (-not $pr49.HasExited) { $pr49.Kill() } }
+
+            if (-not (Test-Path -LiteralPath $res)) { $t49Probs += "$($case.Name): tidak ada hasil"; continue }
+            $r49 = Get-Content -LiteralPath $res -Raw | ConvertFrom-Json
+            if ($r49.status -ne "fail") { $t49Probs += "$($case.Name): status=$($r49.status), harus fail" }
+            $hasHint = ([string]$r49.error) -match "fallback"
+            if ($case.ExpectHint -and -not $hasHint) {
+                $t49Probs += "$($case.Name): state hanya fallback tetapi pesannya tidak menyebutkannya"
+            }
+            if (-not $case.ExpectHint -and $hasHint) {
+                $t49Probs += "$($case.Name): state sudah memuat field game tetapi pesannya keliru menuduh fallback"
+            }
+        }
+
+        Add-Result "assert_state menandai state fallback-only" ($t49Probs.Count -eq 0) `
+            $(if ($t49Probs.Count -eq 0) { "fallback-only ditandai; state kaya tidak salah dituduh" } else { ($t49Probs -join " | ") })
+    } catch {
+        Add-Result "assert_state menandai state fallback-only" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t49Base -Recurse -Force -ErrorAction SilentlyContinue
+        foreach ($n in @("KiloT49A", "KiloT49B")) {
+            Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\$n" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
