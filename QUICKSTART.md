@@ -14,6 +14,12 @@ Loop kerja yang diaktifkan:
 Tulis kode → Jalankan harness → AI lihat hasil → AI analisis → AI laporkan → Developer tindak lanjut
 ```
 
+Melihat saja tidak cukup, dan sebagian kemampuan di sini ada justru karena itu: screenshot
+memberi tahu sebuah layar **tampak** seperti apa, bukan apakah ia **benar**; scenario tertulis
+hanya mengunjungi apa yang sudah dipikirkan penulisnya; dan sebagian cacat tidak pernah sampai
+ke screenshot karena ia mematikan sesuatu lebih dulu. Lihat
+[Setelah Setup Dasar](#setelah-setup-dasar--empat-langkah-yang-mengubah-nilainya).
+
 ---
 
 ## Setup untuk Project Baru (10 Menit)
@@ -230,6 +236,89 @@ Atau salin manual dari `<KILO_CONFIG>/scenarios-templates/`.
 
 ---
 
+## Setelah Setup Dasar — Empat Langkah yang Mengubah Nilainya
+
+Lima langkah di atas membuat framework bisa **melihat** game kamu. Empat berikut membuatnya
+bisa **menilai**. Urutannya bukan selera — tiap langkah membuka langkah sesudahnya.
+
+### 1. `/game-doctor` — jalankan ini lebih dulu, selalu
+
+```powershell
+& "$env:USERPROFILE\.config\kilo\tools\game-doctor.ps1" -ProjectPath "path/to/project"
+```
+
+Pemeriksaan statis, tanpa menjalankan Godot, selesai dalam hitungan detik. Ia menangkap
+cacat yang **mematikan pengujian lain lebih dulu** — `class_name` ganda, mojibake di teks UI,
+autoload yang belum terpasang, tur screenshot yang terpanggil dua kali.
+
+Menjalankan harness pada project dengan `class_name` ganda hanya menghasilkan tur terpotong
+dan waktu terbuang: Godot menolak memuat kedua script, layar tidak pernah terbangun, dan
+tidak ada pesan yang menyebut sebabnya.
+
+### 2. `/invariant init` — aturan yang berlaku sepanjang run
+
+```
+/invariant init
+```
+
+Menyalin template lalu membantu kamu menyesuaikannya ke field `game_state.json` game kamu.
+
+`assert_state` hanya memeriksa di titik tempat kamu menaruhnya. Invariant diperiksa setelah
+**setiap** langkah, di **semua** scenario yang sudah ada — tanpa satu pun scenario perlu
+diubah. Ini satu-satunya pemeriksaan yang bisa menangkap "pemain melompati sesuatu":
+
+```json
+{ "id": "progres_butuh_usaha",
+  "expr": "delta.level_selesai <= delta.musuh_dikalahkan",
+  "severity": "critical" }
+```
+
+Lima sampai sepuluh baris JSON biasanya sudah menutup sebagian besar game. Framework tidak
+bisa menebaknya — invariant menyatakan maksud desain, dan itu hanya ada di kepala kamu.
+
+### 3. `/explore` — jalur yang tidak kamu pikirkan
+
+```json
+{ "type": "explore", "iterations": 40, "seed": 20260101,
+  "avoid_text": ["Quit", "Keluar"] }
+```
+
+Mengklik tombol yang benar-benar ada di layar secara acak, dengan invariant hidup. Scenario
+tertulis hanya mengunjungi apa yang sudah kamu pikirkan — dan jalur yang bisa dilewati,
+menurut definisinya, adalah yang tidak terpikirkan.
+
+Periksa `clicked` lebih dulu sebelum melihat pelanggaran. **`clicked: 0` berarti gagal** —
+tidak ada perilaku game yang teruji sama sekali.
+
+Saat invariant jebol, jejaknya diperkecil jadi repro minimal:
+
+```powershell
+& "$env:USERPROFILE\.config\kilo\tools\explore-minimize.ps1" `
+    -ProjectPath "path/to/project" -InvariantId "progres_butuh_usaha"
+```
+
+40 klik jadi 3, dan 3 klik adalah sesuatu yang bisa dibaca manusia dan disimpan sebagai
+test regresi.
+
+### 4. `/visual-review` — penilaian yang tidak hilang
+
+```powershell
+$t = "$env:USERPROFILE\.config\kilo\tools\visual-review.ps1"
+& $t -ProjectPath "path/to/project" -Mode plan     # apa yang perlu dinilai
+& $t -ProjectPath "path/to/project" -Mode record -VerdictFile verdicts.json
+& $t -ProjectPath "path/to/project" -Mode check    # gerbang CI
+```
+
+`visual-diff` tahu sebuah layar **berubah**; ia tidak pernah tahu layar itu **benar**. Teks
+terpotong, mojibake, tombol tertutup panel — hanya bisa dinilai dengan melihat, dan
+penilaian itu dulu hilang begitu percakapan selesai.
+
+Verdict disimpan dan dipaku ke sha256 gambar yang dinilai. Kalau gambarnya berubah cukup
+jauh, verdict batal dan minta dinilai ulang. Verdict `fail` **tidak pernah** dibawa maju —
+melaporkan bug yang sudah diperbaiki merusak kepercayaan sama parahnya dengan melewatkannya.
+
+---
+
 ## Fase Telemetry
 
 | Fase | Kondisi | Kemampuan AI |
@@ -255,6 +344,13 @@ Atau salin manual dari `<KILO_CONFIG>/scenarios-templates/`.
 | `/scenario install-templates` | Salin template universal ke project |
 | `/record convert <file>` | Konversi rekaman input ke scenario |
 | `/record list` | Daftar rekaman tersedia |
+| `/game-doctor` | Pemeriksaan statis project game — jalankan lebih dulu |
+| `/invariant init` | Pasang aturan yang diperiksa tiap langkah |
+| `/invariant check` | Jalankan scenario dan baca hasil invariant |
+| `/explore` | Eksplorasi jalur tak terskrip, lalu perkecil jejaknya |
+| `/visual-review plan` | Daftar layar × klaim yang perlu dinilai |
+| `/visual-review record` | Simpan verdict visual |
+| `/visual-review check` | Gerbang: gagal bila ada verdict `fail` atau belum dinilai |
 
 ---
 
