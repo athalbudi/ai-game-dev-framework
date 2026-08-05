@@ -38,9 +38,16 @@ membaca nama lama, memindahkannya, lalu menuliskan nama baru — bukan sekadar f
 | File | Deskripsi |
 |---|---|
 | `tools/shot-harness.ps1` | Jalankan game dalam mode screenshot, hasilkan manifest telemetry |
-| `tools/visual-diff.ps1` | Bandingkan screenshot terbaru vs baseline, deteksi regresi visual |
+| `tools/visual-diff.ps1` | Bandingkan vs baseline, deteksi regresi, dan lokalisasi jenis perubahannya |
+| `tools/visual-review.ps1` | Verdict visual yang awet, dipatok ke gambar yang dinilai |
+| `tools/explore-minimize.ps1` | Perkecil jejak eksplorasi jadi repro minimal |
+| `tools/game-doctor.ps1` | Pemeriksaan statis terhadap **project game** (bukan instalasi) |
+| `tools/doctor.ps1` | Pemeriksaan kesehatan **instalasi framework** |
 | `tools/run-and-analyze.ps1` | Loop otomatis QA: Observe, Generate, Run, Analyze, Report |
 | `tools/autonomous-qa.ps1` | Loop autonomous QA dengan anomaly detection dan iterasi mandiri |
+| `tools/feedback-bridge.ps1` | Petakan keluhan playtester ke screenshot dan lokasi kode |
+| `tools/test-pipeline.ps1` | Self-test framework (53 regression test) |
+| `tools/_common.ps1` | Bersama: deteksi Godot/ImageMagick, pemetaan `user://`, metrik gambar |
 
 ### Commands (tersedia di semua project via global config)
 
@@ -76,7 +83,7 @@ membaca nama lama, memindahkannya, lalu menuliskan nama baru — bukan sekadar f
 
 | File | Deskripsi |
 |---|---|
-| `ScenarioRunner.gd` | Scenario engine (18 step types) -- di-load oleh ErrorTracker, bukan Autoload |
+| `ScenarioRunner.gd` | Scenario engine (19 step type, invariant, eksplorasi, gerbang liveness) -- di-load oleh ErrorTracker, bukan Autoload |
 | `GameStateWriter.gd` | Autoload: scene tracking via `report_scene()` + `_write_game_state()` hook |
 | `InputRecorder.gd` | Autoload untuk merekam input gameplay manual ke recording JSON |
 | `RecordingConverter.gd` | Konversi file rekaman ke scenario JSON untuk bug reproduction |
@@ -172,25 +179,205 @@ Ini berarti **ErrorTracker dan ScenarioRunner harus berada di direktori yang sam
 direktori itu bisa bernama apa saja (`scripts/`, `src/global/`, `source/common/framework/`, dll).
 Tidak perlu konfigurasi path tambahan saat memindahkan file ke layout folder non-standar.
 
-### sRGB colorspace fix di visual-diff.ps1
+### Metrik visual-diff — dan kenapa BUKAN `compare -metric AE`
 
-Screenshot yang disimpan via `get_viewport().get_texture().get_image()` di Godot menggunakan
-format warna linear (non-sRGB). Saat dibandingkan dengan ImageMagick tanpa konversi colorspace,
-pixel diff bisa menghasilkan false-positive karena perbedaan interpretasi warna.
+Screenshot yang disimpan via `get_viewport().get_texture().get_image()` di Godot memakai
+format warna linear (non-sRGB). Dibandingkan tanpa konversi colorspace, hasilnya
+false-positive karena perbedaan interpretasi warna. Karena itu setiap pembandingan diawali
+`-colorspace sRGB`, dan flag itu harus berada **di depan**: baseline Gray vs current sRGB
+terbaca identik kalau konversinya menyusul belakangan.
 
-`visual-diff.ps1` menangani ini dengan meneruskan flag `-colorspace sRGB` ke perintah
-ImageMagick `compare` saat menghitung pixel diff (`visual-diff.ps1:458,460`):
+**`compare -metric AE` TIDAK dipakai, dan jangan dikembalikan.** Pada build ImageMagick
+Q16-HDRI — build yang paling umum di Windows — AE bukan cacah pixel melainkan jumlah
+magnitudo ter-skala quantum:
 
 ```
-compare -metric AE -colorspace sRGB "baseline.png" "current.png" "diff.png"
+500 pixel berbeda  ->  AE = 32.767.500   (= 500 x 65535)
 ```
 
-Ini terjadi secara transparan — developer tidak perlu mengubah kode `_take_screenshot()`.
-Flag ini aktif untuk semua run `visual-diff.ps1` sejak commit `ce765ac`.
+Dibagi `totalPixels` lalu di-clamp ke 100, angkanya membengkak hingga 65.535× sehingga
+**setiap screenshot yang tidak identik melaporkan "100% pixel berubah"**. Efeknya bukan
+sekadar kehilangan gradasi: `Threshold`, `region_thresholds`, dan penandaan
+*intentional change* semuanya jadi mati karena tidak ada nilai yang pernah turun di bawah
+ambang. Terukur pada jimat: dari 9 file yang dilaporkan regresi, **6 sebenarnya < 1%** —
+di bawah threshold default, artinya false positive murni.
 
-Jika visual diff menghasilkan false-positive karena perbedaan colorspace antar baseline dan
-screenshot baru, pastikan ImageMagick terinstall dan kedua file dibandingkan lewat
-`visual-diff.ps1` (bukan tool diff lain yang tidak menerapkan flag ini).
+Yang dipakai sekarang menghitung fraksi pixel berbeda secara eksplisit, dan hasilnya
+identik di build Q8/Q16/HDRI:
+
+```
+-colorspace sRGB -alpha off -compose difference -composite
+-threshold 0 -separate -evaluate-sequence max   ->   %[fx:mean]
+```
+
+Tiap operator punya peran yang tidak bisa dihilangkan:
+
+| Operator | Kenapa ada |
+|---|---|
+| `-colorspace sRGB` di depan | menyamakan colorspace kedua input sebelum dibandingkan |
+| `-threshold 0` | bekerja per channel; menandai selisih sekecil apa pun |
+| `-separate -evaluate-sequence max` | pixel dihitung berbeda bila ADA channel yang berbeda, sehingga perbedaan murni warna tidak hilang saat diratakan jadi Gray |
+
+Implementasinya di `Get-ImageChangePercent` (`tools/_common.ps1`), dipakai bersama oleh
+`visual-diff.ps1` dan `visual-review.ps1` supaya keduanya tidak bisa menyimpang pada satu
+perhitungan yang sudah pernah salah.
+
+### Lokalisasi diff — JENIS perubahan, bukan besarnya
+
+Persentase saja tidak bisa membedakan dua hal yang artinya jauh berbeda: seluruh frame
+bergeser beberapa pixel (screen-shake, konten identik) versus satu panel benar-benar
+berubah. Keduanya bisa melaporkan angka yang mirip.
+
+Untuk file yang melewati threshold, `visual-diff` menambahkan diagnosis:
+
+```
+REGRESI 04_battle.png - 24.75% pixel berubah (threshold: 1%)
+   -> GESER (5,-2): konten identik, sisa selisih 0%
+```
+
+Dua sinyal, dan yang kedua hanya dijalankan bila perlu:
+
+1. **Kotak batas perubahan** (satu panggilan). Terpusat → `konten`.
+2. **Pencarian pergeseran** (hanya bila perubahannya menyebar). Kalau menggeser baseline
+   menurunkan sisa selisih ke bawah threshold → `geser` beserta offsetnya; kalau tidak →
+   `global` (periksa tema/palet/skala).
+
+Pencariannya memakai *coordinate descent*, bukan satu lintasan separabel: saat kedua sumbu
+bergeser, scan `dx` pada `dy=0` tidak punya minimum yang benar dan hasilnya meleset.
+Kedua gambar juga di-crop ke bagian dalam sebelum dibandingkan, karena `-roll` membungkus
+pixel dari sisi seberang dan pita bungkusan itu sendiri terhitung sebagai perbedaan.
+
+Field yang ditambahkan ke `diff-report.json`: `change_kind`, `change_bbox`,
+`bbox_coverage_pct`, dan — bila pergeseran dicari — `shift_dx`, `shift_dy`, `residual_pct`.
+Matikan dengan `-NoLocalize`; ubah radius pencarian dengan `-ShiftSearch`.
+
+---
+
+### Invariant — pemeriksaan yang berlaku sepanjang run
+
+`assert_state` bersifat posisional: ia hanya memeriksa di titik tempat penulis scenario
+menaruhnya, jadi bug yang terjadi di antara dua assertion tidak terlihat. Invariant
+diperiksa setelah **setiap** langkah.
+
+Dimuat dari `res://scenarios/invariants.json` (berlaku ke SEMUA scenario, tanpa satu pun
+scenario perlu diubah) dan/atau kunci `"invariants"` di dalam satu scenario. Ekspresi
+dievaluasi lewat `Expression` bawaan Godot dengan tiga variabel: `prev`, `curr`, `delta`.
+
+`delta` HANYA memuat field numerik yang hadir di `prev` DAN `curr`. Field yang baru muncul
+sengaja tidak diberi delta — kalau dipaksakan jadi 0, invariant seperti
+`delta.seals <= delta.wins` akan lolos diam-diam justru saat datanya belum ada.
+
+Perilaku saat dilanggar, dan alasannya:
+
+| Perilaku | Kenapa begitu |
+|---|---|
+| dicatat, run LANJUT | satu run harus bisa memanen semua pelanggaran; fail-fast juga akan membuat step `explore` tidak berguna karena pelanggaran pertama mengakhiri penjelajahan |
+| di-dedup per `id` | satu kondisi yang terus rusak tidak membanjiri laporan; kejadian pertama disimpan lengkap, sisanya menambah `count` |
+| `critical` → status `fail` + exit 1 | kalau hanya dicatat, exit code tetap 0 dan orchestrator yang mempercayai exit code meluluskan run yang cacat |
+| `fail_fast: true` per-invariant | opt-out untuk kasus yang memang tak bermakna dilanjutkan |
+
+Hasil di `scenario_result.json`: `invariants_total`, `invariant_checks`,
+`invariant_violations`. **`invariant_checks` = 0 berarti tidak ada yang diuji** — biasanya
+file invariant tidak ditemukan atau game tidak menyediakan penyedia state.
+
+### Gerbang liveness — status `inert`
+
+Kegagalan terburuk sebuah harness bukan melewatkan bug, melainkan melaporkan PASS atas
+**ketiadaan pengujian**. Terukur pada jimat: empat scenario hijau berminggu-minggu terhadap
+layar kosong, karena game mengambil jalur init minimal saat `--scenario`. Semua assertion di
+dalamnya memang lolos — terhadap ketiadaan.
+
+Scenario yang mengirim input lalu tidak mengubah state maupun satu pixel pun berstatus
+**`inert`** (exit 1), bukan `pass`.
+
+Dua batasan supaya gerbang ini tidak dimatikan orang:
+
+- Hanya berlaku bila scenario punya langkah input (`action`, `mouse_click`, `touch_tap`,
+  `controller_press`, `explore`) — **termasuk yang bersarang di dalam `repeat`**. Pemindaian
+  satu tingkat melewatkan justru scenario yang paling gencar mengirim input.
+- Field volatil (`timestamp`, `frame_count`, dst) dikecualikan dari pembandingan state.
+  Tanpa itu `frame_count` saja sudah membuat setiap scenario tampak hidup.
+
+Opt-out per scenario: `"allow_inert": true`. Field volatil tambahan: `"volatile_fields"`.
+
+Terkait: `steps_pass + steps_fail + steps_skip` TIDAK menjumlah ke `steps_total` saat runner
+berhenti fail-fast. Selisihnya ada di **`steps_not_run`**; `steps_skip: 0` tidak berarti
+semua langkah sempat berjalan.
+
+### Eksplorasi dan minimisasi jejak
+
+Step `explore` menelusuri scene tree mencari `BaseButton` yang benar-benar bisa ditekan
+pemain (terlihat di tree, tidak disabled, punya luas, berpotongan viewport), lalu mengklik
+titik tengahnya dengan invariant diperiksa setelah **setiap** klik.
+
+Sengaja mengklik Control, bukan mengirim `action ui_*`: tanpa Control yang fokus, `ui_*`
+tidak mengenai apa pun.
+
+**`clicked: 0` selalu FAIL.** Eksplorasi yang tidak mengklik apa pun tidak mengeksplorasi
+apa pun. Opt-out `require_clicks: false` hanya untuk game yang memang tidak digerakkan
+tombol.
+
+Saat invariant jebol, jejak klik ditulis ke `user://shots/explore_replay.json` — lengkap
+dengan `seed_override` dan warmup, supaya benar-benar bisa dijalankan sendiri. Invariant
+inline ikut disalin ke file jejak; tanpa itu replay berjalan tanpa aturan yang tadi
+dilanggarnya.
+
+`explore-minimize.ps1` memperkecilnya: bisection prefix lalu pembuangan serakah, tiap
+kandidat di proses Godot **baru** dengan state `user://` dipulihkan dari snapshot. Tanpa
+pemulihan itu run kedua berangkat dari layar yang berbeda dan koordinat yang sama mengenai
+tombol lain — hasil minimisasinya jadi dusta.
+
+Baseline diverifikasi lebih dulu dan **gagal tertutup**: kalau jejak penuh saja tidak
+mereproduksi, tool berhenti. Hasilnya **1-minimal, bukan minimal global** — replay berbasis
+koordinat, jadi membuang klik di tengah menggeser layar yang dikenai klik berikutnya.
+
+### Verdict visual — aturan bawa-maju
+
+`visual-diff` tahu sebuah layar berubah; ia tidak pernah tahu layar itu benar.
+`visual-review.ps1` menyimpan penilaian dan memaku­nya ke sha256 gambar yang dinilai.
+
+| Kondisi | Perlakuan |
+|---|---|
+| gambar identik dengan yang dinilai | verdict berlaku apa adanya |
+| berubah di bawah `threshold_pct` (default 2%) dan verdict `pass` | dibawa maju, ditandai `carried_from` + `drift_pct` |
+| verdict `fail` | **tidak pernah dibawa maju** |
+| di atas ambang | basi, wajib dinilai ulang |
+
+Dua aturan yang menentukan sistem ini berguna atau tidak:
+
+**`fail` tidak pernah dibawa maju.** Toleransi ada untuk menahan derau screen-shake, bukan
+untuk mengawetkan vonis. Sebuah perbaikan bisa menentukan secara visual namun kecil dalam
+hitungan pixel — terukur: menghapus banner yang menimpa judul modal dan mencerahkan satu
+label alasan sama-sama mengubah < 2% pixel. Melaporkan bug yang sudah diperbaiki merusak
+kepercayaan sama parahnya dengan melewatkan bug.
+
+**Penyimpangan diukur terhadap gambar yang DINILAI, bukan run sebelumnya.** Versi awal
+menyematkan ulang sha dan menimpa salinan yang dinilai setiap kali membawa maju, sehingga
+acuannya ikut bergeser dan penyimpangan menumpuk tanpa batas: 1,9% + 1,9% + 1,9% ...
+masing-masing lolos ambang, tetapi setelah puluhan run gambarnya bisa sudah sama sekali lain
+sementara verdict-nya ikut terbawa.
+
+`check` **gagal tertutup**: proyek yang belum pernah dinilai HARUS gagal. Diam bukan bukti
+bahwa tampilannya benar. Verdict `fail` tanpa `note` ditolak saat `record`.
+
+### game-doctor — dua daftar pengecualian yang JANGAN disatukan
+
+`doctor.ps1` memeriksa instalasi framework; `game-doctor.ps1` memeriksa project game.
+Delapan pemeriksaan statis, tanpa menjalankan Godot.
+
+Sebagian besar melewati direktori arsip (`.`-prefix, `_backup*`, `build`, `export`,
+`addons`) untuk menekan kebisingan — pemeriksa yang menuduh arsip cepat kehilangan
+kepercayaan, dan pemeriksa yang tidak dipercaya akan dimatikan.
+
+**Pemeriksaan `class_name_ganda` sengaja TIDAK memakai daftar itu.** Godot tidak mengenal
+daftar tersebut; ia memindai semuanya kecuali direktori berawalan titik dan direktori
+ber-`.gdignore`. Justru di folder yang doctor lewati duplikat biasanya bersembunyi — kasus
+nyata: folder cadangan bertanggal di dalam project membuat `class_name` terdaftar ganda,
+Godot menolak memuat **keduanya** (yang asli ikut mati), layar tidak pernah terbangun, dan
+tur berhenti di tengah tanpa pesan yang menyebut sebabnya.
+
+Menyatukan kedua daftar itu akan membuat pemeriksaannya melewatkan persis kasus yang
+menyebabkannya dibuat.
 
 ---
 
