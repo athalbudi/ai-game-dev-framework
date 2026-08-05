@@ -968,7 +968,18 @@ func _exec_screenshot(step: Dictionary) -> void:
 	await get_tree().process_frame
 	var img := get_viewport().get_texture().get_image()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://shots"))
-	img.save_png(ProjectSettings.globalize_path(path))
+	# save_png mengembalikan Error, dan nilai itu dulu dibuang. Langkahnya melapor PASS
+	# entah berkasnya tertulis atau tidak, lalu tetap mendaftarkan namanya ke
+	# _screenshots_taken -- sehingga laporan mengklaim screenshot yang tidak pernah ada.
+	# Direktori read-only atau disk penuh menghasilkan scenario "lulus" tanpa satu pun bukti.
+	var err := img.save_png(ProjectSettings.globalize_path(path))
+	if err != OK:
+		_step_fail("screenshot '%s' gagal disimpan ke %s (Error %d)" % [name, path, err])
+		return
+	# Kode sukses saja belum cukup: yang dipakai pembaca laporan adalah BERKASNYA.
+	if not FileAccess.file_exists(path):
+		_step_fail("screenshot '%s' melapor sukses tetapi berkasnya tidak ada di %s" % [name, path])
+		return
 	_screenshots_taken.append(name)
 	_step_pass({"name": name, "path": path})
 
@@ -1092,19 +1103,42 @@ func _exec_assert_fps(step: Dictionary) -> void:
 		_step_fail("FPS terlalu rendah: %.1f < %.1f" % [fps, min_fps])
 
 
+## Yang diverifikasi bukan "ada berkas bernama itu", melainkan "run INI menghasilkannya".
+## Keduanya terlihat sama di disk, dan hanya yang kedua yang jadi bukti. Sebelumnya cukup
+## keberadaan berkas, sehingga PNG sisa run sebelumnya membuat langkah ini lulus -- persis
+## kelas kesalahan yang sudah diperbaiki di shot-harness ("hitung yang dihasilkan run ini,
+## bukan yang tergeletak di folder") tapi belum diterapkan di sini. Template
+## input_methods.json bahkan sudah menjanjikan perilaku yang benar: "memverifikasi step
+## screenshot sebelumnya BERHASIL DISIMPAN ke disk".
 func _exec_assert_screenshot_exists(step: Dictionary) -> void:
 	var name: String = step.get("name", "")
 	if name.is_empty():
 		_step_fail("assert_screenshot_exists tidak punya field 'name'")
 		return
-	var path1 := "user://shots/scenario_" + name + ".png"
-	var path2 := "user://shots/" + name + ".png"
-	if FileAccess.file_exists(path1):
-		_step_pass({"found": path1})
-	elif FileAccess.file_exists(path2):
-		_step_pass({"found": path2})
-	else:
+	var found := ""
+	for p: String in ["user://shots/scenario_" + name + ".png", "user://shots/" + name + ".png"]:
+		if FileAccess.file_exists(p):
+			found = p
+			break
+	if found == "":
 		_step_fail("Screenshot tidak ditemukan: " + name)
+		return
+	# Opt-out untuk kasus sah "berkas ini memang dibuat di luar scenario" (mis. tur
+	# screenshot game). Harus diminta eksplisit -- diam-diam menerima yang basi adalah
+	# bentuk lain dari melaporkan sukses atas ketiadaan bukti.
+	if bool(step.get("allow_stale", false)):
+		_step_pass({"found": found, "stale_diizinkan": true})
+		return
+	var mtime := float(FileAccess.get_modified_time(found))
+	if mtime > 0.0 and mtime + 2.0 < _scenario_start_time:
+		# Dua sebab yang gejalanya sama sekali berbeda tapi mudah tertukar: "screenshot
+		# tidak pernah dibuat" vs "ada, tapi milik run lain". Pesan menyebut yang mana.
+		_step_fail(("Screenshot '%s' ADA tetapi berasal dari sebelum scenario ini mulai " +
+			"(berkas: %d, mulai: %d) -- run ini tidak menghasilkannya. " +
+			"Kalau memang dibuat di luar scenario, pakai \"allow_stale\": true.")
+			% [name, int(mtime), int(_scenario_start_time)])
+		return
+	_step_pass({"found": found, "modified": int(mtime)})
 
 
 func _exec_set_state(step: Dictionary) -> void:

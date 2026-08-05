@@ -252,7 +252,7 @@ Jika scenario yang dibuat gagal dijalankan (harness error):
 | `assert_state` | Validasi game_state.json (field: `key`, `op`, `expected`) |
 | `assert_fps` | Verifikasi FPS tidak di bawah threshold (field: `min_fps`, `sample_frames`) |
 | `assert_no_error` | Verifikasi tidak ada error dalam N frame (field: `window_frames`) |
-| `assert_screenshot_exists` | Verifikasi file screenshot benar-benar ada (field: `name`) |
+| `assert_screenshot_exists` | Verifikasi screenshot dihasilkan run INI, bukan sekadar ada (field: `name`, `allow_stale`) |
 | `set_state` | Set nilai game state (field: `key`, `value`) |
 | `write_state` | Minta game tulis game_state.json ke disk |
 | `repeat` | Ulangi steps N kali (field: `count`, `steps`) |

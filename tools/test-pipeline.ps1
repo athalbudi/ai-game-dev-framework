@@ -3971,6 +3971,146 @@ func _get_game_state() -> Dictionary:
 }
 Write-S
 
+# ── TEST 53: screenshot -- bukti harus dihasilkan run INI, dan benar-benar tertulis ──
+# Dua kebocoran dengan bentuk sama, ditemukan dengan mengarahkan aturan framework ke dirinya:
+#
+#   1. _exec_screenshot membuang nilai kembali save_png(). Langkahnya melapor PASS entah
+#      berkasnya tertulis atau tidak, lalu tetap mendaftarkan namanya ke _screenshots_taken --
+#      laporan mengklaim screenshot yang tidak pernah ada.
+#   2. assert_screenshot_exists cuma memeriksa berkas ADA. PNG sisa run sebelumnya membuatnya
+#      lulus, padahal template input_methods.json menjanjikan ia "memverifikasi step screenshot
+#      sebelumnya BERHASIL DISIMPAN ke disk". Ini kelas kesalahan yang sudah diperbaiki di
+#      shot-harness ("hitung yang dihasilkan run ini, bukan yang tergeletak di folder") tapi
+#      belum diterapkan di sini.
+#
+# Empat kontrak: basi -> fail, basi+allow_stale -> pass, segar -> pass, gagal simpan -> fail.
+# Kontrak "segar" bukan pelengkap: tanpa itu, implementasi yang menolak SEMUA screenshot juga
+# akan lolos tiga kontrak lainnya.
+Write-T "TEST 53: screenshot harus dihasilkan run ini dan benar-benar tertulis"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "screenshot: bukti dari run ini + gagal-simpan terdeteksi" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t53Dir   = Join-Path $env:TEMP "kilo_t53_$($PID)_$(Get-Date -Format 'HHmmss')"
+    $t53Shots = "$env:APPDATA\Godot\app_userdata\KiloT53\shots"
+    $t53Res   = Join-Path $t53Shots "scenario_result.json"
+    $t53Probs = @()
+    try {
+        $null = New-Item -ItemType Directory -Path "$t53Dir\scripts" -Force
+        $null = New-Item -ItemType Directory -Path "$t53Dir\scenarios" -Force
+        $null = New-Item -ItemType Directory -Path $t53Shots -Force
+        $noBom53 = New-Object System.Text.UTF8Encoding($false)
+        $t53Tmpl = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        foreach ($tmpl in @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")) {
+            $rawT = [System.IO.File]::ReadAllBytes((Join-Path $t53Tmpl $tmpl))
+            $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF) { 3 } else { 0 }
+            [System.IO.File]::WriteAllText("$t53Dir\scripts\$tmpl",
+                [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom53)
+        }
+        [System.IO.File]::WriteAllText("$t53Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"KiloT53`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom53)
+        [System.IO.File]::WriteAllText("$t53Dir\main.tscn",
+            "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom53)
+        [System.IO.File]::WriteAllText("$t53Dir\main.gd", @'
+extends Node
+
+func _ready() -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+
+func _get_game_state() -> Dictionary:
+	return {"ok": true}
+'@, $noBom53)
+
+        $t53Cases = @{
+            "basi"       = '{"scenario_id":"basi","steps":[{"type":"wait_frames","frames":15},{"type":"assert_screenshot_exists","name":"lama"}]}'
+            "diizinkan"  = '{"scenario_id":"diizinkan","steps":[{"type":"wait_frames","frames":15},{"type":"assert_screenshot_exists","name":"lama","allow_stale":true}]}'
+            "segar"      = '{"scenario_id":"segar","steps":[{"type":"wait_frames","frames":15},{"type":"screenshot","name":"baru"},{"type":"assert_screenshot_exists","name":"baru"}]}'
+            "terblokir"  = '{"scenario_id":"terblokir","steps":[{"type":"wait_frames","frames":15},{"type":"screenshot","name":"terblokir"}]}'
+        }
+        foreach ($k in $t53Cases.Keys) {
+            [System.IO.File]::WriteAllText("$t53Dir\scenarios\$k.json", $t53Cases[$k], $noBom53)
+        }
+
+        $null = Start-Process $GodotExe -ArgumentList "--path", "`"$t53Dir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+
+        # Berkas "lama": isinya tidak perlu PNG sah -- yang diuji keberadaan + mtime, dan
+        # memakai byte biasa membuat fixture ini tidak bergantung pada ImageMagick.
+        $t53Lama = Join-Path $t53Shots "scenario_lama.png"
+        [System.IO.File]::WriteAllBytes($t53Lama, [byte[]](0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A))
+        (Get-Item -LiteralPath $t53Lama).LastWriteTime = (Get-Date).AddHours(-2)
+
+        # save_png ke path yang sebenarnya DIREKTORI pasti gagal -- cara deterministik
+        # memaksa kegagalan simpan tanpa mengutak-atik izin berkas.
+        $null = New-Item -ItemType Directory -Path (Join-Path $t53Shots "scenario_terblokir.png") -Force
+
+        function Invoke-T53([string] $Name) {
+            Remove-Item -LiteralPath $t53Res -Force -ErrorAction SilentlyContinue
+            $p = Start-Process $GodotExe -ArgumentList "--path", "`"$t53Dir`"", "--", "--scenario", "res://scenarios/$Name.json" `
+                -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+            if ($p) { $p.Handle | Out-Null; $p.WaitForExit(60000) | Out-Null; if (-not $p.HasExited) { $p.Kill() } }
+            if (-not (Test-Path -LiteralPath $t53Res)) { return $null }
+            return (Get-Content -LiteralPath $t53Res -Raw -Encoding UTF8 | ConvertFrom-Json)
+        }
+
+        # -- kontrak 1: berkas basi -> FAIL, dan pesannya menyebut sebab yang benar --------
+        $r53a = Invoke-T53 "basi"
+        if ($null -eq $r53a) {
+            $t53Probs += "basi: scenario_result.json tidak ditulis"
+        } else {
+            if ("$($r53a.status)" -ne "fail") {
+                $t53Probs += "basi: status '$($r53a.status)', harus 'fail' (PNG dari run lain bukan bukti run ini)"
+            }
+            # Langkah yang LULUS tidak punya field 'reason', dan StrictMode melempar saat
+            # properti tak ada dibaca -- exception itu akan terbaca sebagai kegagalan test,
+            # bukan sebagai kegagalan yang sedang diuji.
+            $reasons53 = (@($r53a.step_results | ForEach-Object {
+                if (@($_.PSObject.Properties | ForEach-Object { $_.Name }) -contains "reason") { "$($_.reason)" }
+            }) -join " ")
+            if ($reasons53 -notmatch "sebelum scenario ini mulai") {
+                $t53Probs += "basi: pesan tidak membedakan 'ada tapi basi' dari 'tidak ditemukan'"
+            }
+        }
+
+        # -- kontrak 2: allow_stale -> PASS -------------------------------------------
+        $r53b = Invoke-T53 "diizinkan"
+        if ($null -eq $r53b) { $t53Probs += "diizinkan: scenario_result.json tidak ditulis" }
+        elseif ("$($r53b.status)" -ne "pass") {
+            $t53Probs += "diizinkan: status '$($r53b.status)', harus 'pass' (opt-out eksplisit)"
+        }
+
+        # -- kontrak 3: screenshot segar -> PASS (jaga agar fix tidak menolak semuanya) ---
+        $r53c = Invoke-T53 "segar"
+        if ($null -eq $r53c) { $t53Probs += "segar: scenario_result.json tidak ditulis" }
+        elseif ("$($r53c.status)" -ne "pass") {
+            $t53Probs += "segar: status '$($r53c.status)', harus 'pass' -- screenshot yang dibuat run ini harus diterima"
+        }
+
+        # -- kontrak 4: simpan gagal -> FAIL, bukan pass diam-diam ----------------------
+        $r53d = Invoke-T53 "terblokir"
+        if ($null -eq $r53d) {
+            $t53Probs += "terblokir: scenario_result.json tidak ditulis"
+        } else {
+            if ("$($r53d.status)" -ne "fail") {
+                $t53Probs += "terblokir: status '$($r53d.status)', harus 'fail' -- save_png gagal tapi langkah melapor lulus"
+            }
+            if (@($r53d.screenshots) -contains "terblokir") {
+                $t53Probs += "terblokir: nama terdaftar di 'screenshots' padahal berkasnya tidak pernah ada"
+            }
+        }
+
+        Add-Result "screenshot: bukti dari run ini + gagal-simpan terdeteksi" ($t53Probs.Count -eq 0) `
+            $(if ($t53Probs.Count -eq 0) { "basi->fail, allow_stale->pass, segar->pass, gagal-simpan->fail" } else { ($t53Probs -join " | ") })
+    } catch {
+        Add-Result "screenshot: bukti dari run ini + gagal-simpan terdeteksi" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t53Dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\KiloT53" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
