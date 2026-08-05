@@ -191,7 +191,17 @@ foreach ($png in $pngs) {
         if ($magick -ne "" -and (Test-Path -LiteralPath $judgedCopy)) {
             $delta = Get-ImageChangePercent -PathA $judgedCopy -PathB $png.FullName -ImageMagickExe $magick
         }
-        if ($delta -ge 0 -and $delta -le $Threshold) {
+        # Verdict FAIL tidak pernah dibawa maju. Bawa-maju ada untuk menahan derau -- game
+        # dengan screen-shake menghasilkan gambar sedikit berbeda tiap run, dan tanpa
+        # toleransi semua verdict batal terus. Tapi toleransi yang sama akan mempertahankan
+        # vonis yang sudah usang, karena SEBUAH PERBAIKAN BISA MENENTUKAN SECARA VISUAL
+        # NAMUN KECIL DALAM HITUNGAN PIXEL. Terukur pada jimat: menghapus banner yang
+        # menimpa judul modal dan mencerahkan satu label alasan keduanya mengubah < 2%
+        # pixel, sehingga kedua verdict 'fail' bertahan padahal bug-nya sudah hilang.
+        # Melaporkan bug yang sudah diperbaiki merusak kepercayaan sama parahnya dengan
+        # melewatkan bug. Jadi: pass boleh dibawa maju, fail selalu dinilai ulang.
+        $bolehBawaMaju = ($delta -ge 0 -and $delta -le $Threshold -and [string]$prev.verdict -ne "fail")
+        if ($bolehBawaMaju) {
             # Perubahan di bawah ambang -- penilaian lama masih masuk akal. Bawa maju,
             # tapi CATAT bahwa ia dibawa maju supaya tidak terlihat seperti penilaian baru.
             $carried = [ordered]@{

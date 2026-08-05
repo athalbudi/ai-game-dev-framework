@@ -2707,13 +2707,38 @@ if ((Test-Path -LiteralPath $t41Vr) -and $t41Im -ne "") {
         & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode check -AllowUnjudged *>$null
         $t41ExitFail = $LASTEXITCODE
 
-        # -- kontrak 3: bawa-maju (ubah 100 pixel = 0.25%, di bawah 2%) ---------
+        # -- kontrak 3: bawa-maju berlaku untuk PASS (ubah 100 pixel = 0.25%) ---
+        [System.IO.File]::WriteAllText($t41Verd,
+            '{"verdicts":[{"file":"layar.png","claim_id":"klaim_a","verdict":"pass","note":"terlihat benar"}]}', $noBom41)
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode record -VerdictFile $t41Verd *>$null
         & $t41Im "-size" "200x200" "xc:white" "-fill" "black" "-draw" "rectangle 0,0 9,9" `
                  (Join-Path $t41Shots "layar.png") 2>$null
         & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode plan *>$null
         $t41Rev = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw | ConvertFrom-Json
         $t41Carried  = [int]$t41Rev.summary.carried_forward
         $t41StaleKcl = [int]$t41Rev.summary.stale
+
+        # -- kontrak 3b: verdict FAIL tidak pernah dibawa maju ------------------
+        # Toleransi ada untuk menahan derau (screen-shake), bukan untuk mengawetkan vonis.
+        # Sebuah perbaikan bisa menentukan secara visual namun kecil dalam hitungan pixel:
+        # terukur pada jimat, menghapus banner yang menimpa judul modal dan mencerahkan satu
+        # label alasan sama-sama mengubah < 2% pixel, sehingga kedua verdict 'fail' bertahan
+        # padahal bug-nya sudah hilang. Melaporkan bug yang sudah diperbaiki merusak
+        # kepercayaan sama parahnya dengan melewatkan bug.
+        [System.IO.File]::WriteAllText($t41Verd,
+            '{"verdicts":[{"file":"layar.png","claim_id":"klaim_a","verdict":"fail","note":"ada yang salah"}]}', $noBom41)
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode record -VerdictFile $t41Verd *>$null
+        & $t41Im "-size" "200x200" "xc:white" "-fill" "black" "-draw" "rectangle 0,0 19,4" `
+                 (Join-Path $t41Shots "layar.png") 2>$null
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode plan *>$null
+        $t41RevF = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw | ConvertFrom-Json
+        $t41FailCarried = [int]$t41RevF.summary.carried_forward
+        $t41FailStale   = [int]$t41RevF.summary.stale
+
+        # Pulihkan verdict pass supaya kontrak 4 menguji jalur basi milik PASS
+        [System.IO.File]::WriteAllText($t41Verd,
+            '{"verdicts":[{"file":"layar.png","claim_id":"klaim_a","verdict":"pass","note":"terlihat benar"}]}', $noBom41)
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode record -VerdictFile $t41Verd *>$null
 
         # -- kontrak 4: basi (ubah 10.000 pixel = 25%, di atas 2%) --------------
         & $t41Im "-size" "200x200" "xc:white" "-fill" "black" "-draw" "rectangle 0,0 99,99" `
@@ -2726,8 +2751,10 @@ if ((Test-Path -LiteralPath $t41Vr) -and $t41Im -ne "") {
         if ($t41ExitKosong -ne 1)    { $t41Probs += "check tanpa verdict exit=$t41ExitKosong, harus 1 (fail-closed)" }
         if ($t41ExitTanpaNote -ne 0) { $t41Probs += "verdict fail tanpa note seharusnya DITOLAK (exit=$t41ExitTanpaNote)" }
         if ($t41ExitFail -ne 1)      { $t41Probs += "check dengan verdict fail exit=$t41ExitFail, harus 1" }
-        if ($t41Carried -lt 1)       { $t41Probs += "perubahan 0.25% seharusnya dibawa maju (carried=$t41Carried)" }
-        if ($t41StaleKcl -ne 0)      { $t41Probs += "perubahan 0.25% tidak boleh jadi basi (stale=$t41StaleKcl)" }
+        if ($t41Carried -lt 1)       { $t41Probs += "verdict pass + perubahan 0.25% seharusnya dibawa maju (carried=$t41Carried)" }
+        if ($t41StaleKcl -ne 0)      { $t41Probs += "verdict pass + perubahan 0.25% tidak boleh jadi basi (stale=$t41StaleKcl)" }
+        if ($t41FailCarried -ne 0)   { $t41Probs += "verdict FAIL tidak boleh pernah dibawa maju (carried=$t41FailCarried)" }
+        if ($t41FailStale -lt 1)     { $t41Probs += "verdict FAIL harus jadi basi begitu gambar berubah (stale=$t41FailStale)" }
         if ($t41StaleBesar -lt 1)    { $t41Probs += "perubahan 25% harus jadi basi (stale=$t41StaleBesar)" }
 
         Add-Result "visual-review: fail-closed + bawa-maju + pembatalan" ($t41Probs.Count -eq 0) `
