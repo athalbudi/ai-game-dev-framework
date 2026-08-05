@@ -77,7 +77,13 @@ param(
     [double] $Threshold           = 1.0,
     [string] $ImageMagick         = "",
     [string] $IgnoreConfig        = "",
-    [string] $NormalizeResolution = ""
+    [string] $NormalizeResolution = "",
+    # Lokalisasi menjawab JENIS perubahan (geser / konten / global), bukan sekadar besarnya.
+    # Hanya berjalan pada file yang sudah melewati threshold. Pencarian pergeseran memakai
+    # coordinate descent, biayanya linier terhadap radius -- naikkan hanya bila game punya
+    # getaran kamera lebih besar dari 8 pixel.
+    [switch] $NoLocalize,
+    [int]    $ShiftSearch         = 8
 )
 
 Set-StrictMode -Version Latest
@@ -537,6 +543,49 @@ foreach ($cur in $currentPngs) {
                     $countReg++
                     $ignoreNote = if (@($fileIgnoreRegions).Count -gt 0) { " [$(@($fileIgnoreRegions).Count) region diabaikan]" } else { "" }
                     Write-Reg ("$($cur.Name) - " + $changePct + "% pixel berubah (threshold: " + $effectiveThreshold + "%)$ignoreNote$thresholdNote")
+
+                    # --- Lokalisasi: JENIS perubahan, bukan sekadar besarnya ---------
+                    # Angka persen saja tidak bisa membedakan dua hal yang artinya jauh
+                    # berbeda: seluruh frame bergeser beberapa pixel (screen-shake, konten
+                    # identik) versus satu panel benar-benar berubah. Keduanya bisa sama-sama
+                    # melaporkan 25%. Sepertiga awal sesi audit jimat habis untuk menjawab
+                    # pertanyaan itu secara manual; di bawah ini dijawab otomatis.
+                    #
+                    # Dijalankan HANYA pada file yang sudah melewati threshold, supaya
+                    # biayanya tidak dibebankan ke layar yang memang tidak berubah.
+                    if (-not $NoLocalize -and $isV7) {
+                        $bb = Get-ImageChangeBBox -PathA $basePathForDiff -PathB $curPathForDiff -ImageMagickExe $ImageMagick
+                        if ($bb.coverage_pct -ge 0) {
+                            $entry["change_bbox"]         = $bb.bbox
+                            $entry["bbox_coverage_pct"]   = $bb.coverage_pct
+                            if ($bb.coverage_pct -lt 70.0) {
+                                # Perubahan terkurung di satu area -> hampir pasti konten.
+                                $entry["change_kind"] = "konten"
+                                Write-Host ("         -> KONTEN: perubahan terpusat di $($bb.bbox) (" +
+                                            $bb.coverage_pct + "% luas frame)") -ForegroundColor DarkGray
+                            } else {
+                                $sh = Find-ImageShift -PathA $basePathForDiff -PathB $curPathForDiff `
+                                                      -ImageMagickExe $ImageMagick -MaxShift $ShiftSearch
+                                $entry["shift_dx"]     = $sh.dx
+                                $entry["shift_dy"]     = $sh.dy
+                                $entry["residual_pct"] = $sh.residual_pct
+                                # Pergeseran dianggap menjelaskan perbedaannya bila menggeser
+                                # baseline menurunkan sisa selisih ke bawah threshold.
+                                if (($sh.dx -ne 0 -or $sh.dy -ne 0) -and $sh.residual_pct -ge 0 `
+                                    -and $sh.residual_pct -le $effectiveThreshold) {
+                                    $entry["change_kind"] = "geser"
+                                    Write-Host ("         -> GESER ($($sh.dx),$($sh.dy)): konten identik, " +
+                                                "sisa selisih " + $sh.residual_pct + "% -- kemungkinan besar " +
+                                                "screen-shake/animasi, bukan regresi") -ForegroundColor DarkGray
+                                } else {
+                                    $entry["change_kind"] = "global"
+                                    Write-Host ("         -> GLOBAL: menyebar ke seluruh frame dan tidak " +
+                                                "dijelaskan pergeseran (sisa terbaik " + $sh.residual_pct +
+                                                "% pada $($sh.dx),$($sh.dy)) -- periksa tema/palet/skala") -ForegroundColor DarkGray
+                                }
+                            }
+                        }
+                    }
                 }
             } else {
                 $entry.status = "OK"

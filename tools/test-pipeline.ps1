@@ -3309,6 +3309,107 @@ func _get_game_state() -> Dictionary:
 }
 Write-S
 
+# ── TEST 47: lokalisasi diff -- JENIS perubahan, bukan sekadar besarnya ───────
+# "04_battle berubah 24.75%" tidak memberi tahu apakah seluruh layar bergeser beberapa
+# pixel (screen-shake, konten identik) atau satu panel benar-benar berubah. Keduanya bisa
+# menghasilkan persen yang mirip, dan sepertiga awal sesi audit jimat habis untuk menjawab
+# pertanyaan itu secara manual. Tiga klasifikasi diuji dengan jawaban yang diketahui:
+#   geser  -- seluruh frame digeser (+5,-2); harus terdeteksi offsetnya dan residual ~0
+#   konten -- satu kotak berubah; kotak batasnya harus kecil dan terpusat
+#   global -- kecerahan seluruh frame berubah; menyebar penuh TAPI bukan pergeseran
+# Yang terakhir paling mudah salah: %@ menghitung batas dengan memangkas tepi seragam,
+# dan saat SELURUH frame berubah tidak ada tepi tersisa sehingga hasilnya menyusut ke 0x0 --
+# terbaca sebagai cakupan 0% dan salah digolongkan 'konten'.
+Write-T "TEST 47: visual-diff membedakan geser / konten / global"
+$t47Vd = Join-Path $PSScriptRoot "visual-diff.ps1"
+$t47Im = ""
+foreach ($cand47 in @("magick", "convert")) {
+    $f47 = Get-Command $cand47 -ErrorAction SilentlyContinue
+    if ($f47) { $t47Im = $f47.Source; break }
+}
+if ((Test-Path -LiteralPath $t47Vd) -and $t47Im -ne "") {
+    $t47Dir = Join-Path $env:TEMP "kilo_t47_$($PID)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $t47Base = Join-Path $t47Dir "baseline"
+        $t47Cur  = Join-Path $t47Dir "shots"
+        $null = New-Item -ItemType Directory -Path $t47Base -Force
+        $null = New-Item -ItemType Directory -Path $t47Cur  -Force
+
+        # Pola berstruktur dan TIDAK periodik. Periodik (mis. checkerboard) berbahaya di sini:
+        # pergeseran sebesar kelipatan periodenya menghasilkan citra identik, sehingga
+        # pencarian offset punya banyak minimum yang sama benarnya dan hasilnya ambigu.
+        $t47Src = Join-Path $t47Dir "src.png"
+        $t47Draw = @(
+            "rectangle 10,12 70,58",    "rectangle 95,20 130,140",  "rectangle 150,8 260,44",
+            "rectangle 30,90 88,180",   "rectangle 190,70 250,120", "rectangle 275,30 340,96",
+            "rectangle 120,160 210,205","rectangle 300,140 380,190","rectangle 45,215 150,262",
+            "rectangle 230,215 300,275","rectangle 330,210 392,268","rectangle 160,120 178,150",
+            "rectangle 260,150 285,200","rectangle 8,190 34,240",   "rectangle 355,100 385,130"
+        ) | ForEach-Object { "-draw `"$_`"" }
+        # Midtone, BUKAN hitam-putih murni. Pada kanvas putih dengan kotak hitam,
+        # -modulate tidak mengubah apa pun (putih sudah maksimum, hitam tetap nol),
+        # sehingga kasus 'global' tidak menghasilkan perubahan sama sekali dan tidak pernah
+        # sampai ke tahap lokalisasi -- fixture-nya yang diam, bukan tool-nya yang salah.
+        $t47Args = "-size 400x300 xc:gray85 -fill gray30 " + ($t47Draw -join " ") + " `"$t47Src`""
+        $null = Invoke-Magick -Exe $t47Im -MagickArgs $t47Args
+
+        Copy-Item -LiteralPath $t47Src -Destination (Join-Path $t47Base "a_geser.png")  -Force
+        Copy-Item -LiteralPath $t47Src -Destination (Join-Path $t47Base "b_konten.png") -Force
+        Copy-Item -LiteralPath $t47Src -Destination (Join-Path $t47Base "c_global.png") -Force
+        $null = Invoke-Magick -Exe $t47Im -MagickArgs "`"$t47Src`" -roll +5-2 `"$(Join-Path $t47Cur 'a_geser.png')`""
+        $null = Invoke-Magick -Exe $t47Im -MagickArgs "`"$t47Src`" -fill red -draw `"rectangle 200,200 320,270`" `"$(Join-Path $t47Cur 'b_konten.png')`""
+        $null = Invoke-Magick -Exe $t47Im -MagickArgs "`"$t47Src`" -modulate 118 `"$(Join-Path $t47Cur 'c_global.png')`""
+
+        & $t47Vd -ShotsDir $t47Cur -BaselineDir $t47Base -Threshold 1 *>$null
+        $t47Rep = Join-Path $t47Cur "diff\diff-report.json"
+        $t47Probs = @()
+        if (-not (Test-Path -LiteralPath $t47Rep)) {
+            $t47Probs += "diff-report.json tidak dihasilkan"
+        } else {
+            $t47Json = Get-Content -LiteralPath $t47Rep -Raw | ConvertFrom-Json
+            function Get-T47 { param($N)
+                return @($t47Json.files | Where-Object { $_.file -eq $N })[0]
+            }
+            $g = Get-T47 "a_geser.png"
+            if ($null -eq $g) { $t47Probs += "a_geser tidak ada di laporan" }
+            else {
+                $gn = @($g.PSObject.Properties | ForEach-Object { $_.Name })
+                if (($gn -contains "change_kind") -and $g.change_kind -ne "geser") { $t47Probs += "a_geser kind=$($g.change_kind), harus 'geser'" }
+                elseif (-not ($gn -contains "change_kind")) { $t47Probs += "a_geser tidak dilokalisasi sama sekali" }
+                elseif ([int]$g.shift_dx -ne 5 -or [int]$g.shift_dy -ne -2) {
+                    $t47Probs += "a_geser offset=($($g.shift_dx),$($g.shift_dy)), harus (5,-2)"
+                }
+            }
+            $k = Get-T47 "b_konten.png"
+            if ($null -eq $k) { $t47Probs += "b_konten tidak ada di laporan" }
+            else {
+                $kn = @($k.PSObject.Properties | ForEach-Object { $_.Name })
+                if (-not ($kn -contains "change_kind")) { $t47Probs += "b_konten tidak dilokalisasi" }
+                elseif ($k.change_kind -ne "konten") { $t47Probs += "b_konten kind=$($k.change_kind), harus 'konten'" }
+                elseif ([double]$k.bbox_coverage_pct -ge 70) { $t47Probs += "b_konten cakupan=$($k.bbox_coverage_pct)%, harus < 70" }
+            }
+            $gl = Get-T47 "c_global.png"
+            if ($null -eq $gl) { $t47Probs += "c_global tidak ada di laporan" }
+            else {
+                $gln = @($gl.PSObject.Properties | ForEach-Object { $_.Name })
+                if (-not ($gln -contains "change_kind")) { $t47Probs += "c_global tidak dilokalisasi" }
+                elseif ($gl.change_kind -ne "global") {
+                    $t47Probs += "c_global kind=$($gl.change_kind), harus 'global' (kotak batas 0x0 salah dibaca sebagai cakupan 0%?)"
+                }
+            }
+        }
+        Add-Result "visual-diff membedakan geser/konten/global" ($t47Probs.Count -eq 0) `
+            $(if ($t47Probs.Count -eq 0) { "geser (5,-2) terdeteksi, konten terpusat, global tidak salah digolongkan" } else { ($t47Probs -join " | ") })
+    } catch {
+        Add-Result "visual-diff membedakan geser/konten/global" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t47Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    Add-Result "visual-diff membedakan geser/konten/global" $false "SKIP -- ImageMagick/visual-diff tidak tersedia"
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
