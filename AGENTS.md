@@ -137,6 +137,42 @@ Pastikan juga fixture-nya tidak meniru lingkungan Anda sendiri. Test yang hanya 
 pada satu bentuk konfigurasi akan meloloskan bug pada bentuk lain: satu-agent vs dua-agent,
 nama direktori yang kebetulan sama dengan `config/name`, layout folder yang berbeda.
 
+**Setiap perbaikan butuh kontrol negatif.** Kalau sebuah pemeriksaan baru menolak masukan
+yang salah, harus ada kontrak lain yang membuktikan ia masih MENERIMA masukan yang benar.
+Tanpa itu, implementasi yang menolak segalanya akan lolos semua kontrak lainnya — dan itu
+kegagalan yang tidak terlihat sampai seseorang mencoba memakainya sungguhan.
+
+---
+
+## Cara menemukan cacat yang sudah lama hijau
+
+Metode yang paling produktif di proyek ini bukan membaca kode dari atas ke bawah,
+melainkan mengarahkan aturan framework ke dirinya sendiri. Ambil SATU permukaan pada satu
+waktu, lalu tanyakan:
+
+> Seperti apa rupanya **PASS palsu** di sini?
+
+Lalu bangun kondisi itu dan lihat apa yang dilaporkan. Yang ditemukan dengan cara ini
+antara lain: delapan step type yang didokumentasikan tapi tidak pernah ada dan di-skip
+diam-diam; `save_png()` yang nilai baliknya dibuang; `assert_state` yang lulus terhadap
+`game_state.json` milik run sebelumnya; `assert_no_error` yang lulus di atas error engine;
+klaim visual yang lenyap karena layarnya berhenti dihasilkan; dan pemeriksa yang kehilangan
+temuannya sendiri karena satu salah ketik severity.
+
+Semuanya berbentuk sama: **sesuatu yang tidak terjadi dilaporkan seolah terjadi**, dan
+laporannya tetap terlihat masuk akal. Semuanya sudah hijau berbulan-bulan.
+
+Tiga pertanyaan turunan yang sering langsung berbuah:
+
+1. **Apakah berkas ini bisa berasal dari run lain?** `game_state.json`, screenshot, dan
+   `scenario_result.json` bertahan antar-run dan terlihat identik entah dihasilkan run ini
+   atau bulan lalu. Setiap tempat yang membacanya butuh pemeriksaan kesegaran.
+2. **Apakah nilai balik ini diperiksa?** `save_png`, penulisan berkas, peluncuran proses —
+   kode sukses yang dibuang menghasilkan langkah yang lulus atas ketiadaan hasil.
+3. **Ke mana perginya kasus yang tidak cocok?** Yang di-`skip`, yang tidak masuk pencacah
+   mana pun, yang severity-nya tidak dikenali. Yang hilang diam-diam tidak bisa dibedakan
+   dari yang tidak bermasalah.
+
 ---
 
 ## Aturan Umum
