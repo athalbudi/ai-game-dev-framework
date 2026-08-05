@@ -651,11 +651,51 @@ if ($NoRun) {
 if (-not (Test-Path -LiteralPath $ShotsDir)) {
     Write-Fail "Folder shots tidak ditemukan: $ShotsDir`nPastikan kode game menyimpan PNG ke user://shots/"
 }
-        $pngFiles = @(Get-ChildItem -LiteralPath $ShotsDir -Filter "*.png" | Sort-Object Name)
+$pngFiles = @(Get-ChildItem -LiteralPath $ShotsDir -Filter "*.png" | Sort-Object Name)
 if ($pngFiles.Count -eq 0) {
     Write-Fail "Tidak ada PNG di $ShotsDir - harness berjalan tapi tidak menghasilkan screenshot."
 }
-Write-Ok "$($pngFiles.Count) PNG ditemukan di $ShotsDir"
+
+# Membedakan PNG yang DIHASILKAN RUN INI dari sisa run sebelumnya.
+#
+# Menghitung seluruh isi folder membuat tur yang mati di tengah terlihat lengkap: file lama
+# menambal kekurangannya. Terukur pada jimat -- tur berhenti setelah 14 dari 23 layar karena
+# sebuah script gagal di-reload, tetapi harness melaporkan "23 PNG ditemukan" dan coverage
+# "23/23 (100%)" karena sembilan file sisa run sebelumnya masih ada di disk.
+#
+# Ini pola yang sama dengan yang ditutup gerbang liveness: KETIADAAN BUKTI disamarkan
+# menjadi BUKTI BAHWA BENAR. Angka yang benar harus dihitung terhadap waktu run, bukan
+# terhadap isi folder.
+#
+# Toleransi 2 detik: mtime ditulis Godot, jam sistem dan granularitas filesystem tidak
+# selalu sejalan dengan $ts_start milik PowerShell.
+if (-not $NoRun) {
+    $freshCutoff = $ts_start.AddSeconds(-2)
+    # Artefak buatan framework dikecualikan. zoom_* dihasilkan tahap post-process yang
+    # berjalan SETELAH pemeriksaan ini, jadi ia selalu tampak basi; scenario_*/aq_*/diff_*
+    # memang bukan bagian dari tur. Peringatan yang menyala di setiap run akan diabaikan
+    # orang, dan peringatan yang diabaikan sama tidak bergunanya dengan tidak ada.
+    $tourPng  = @($pngFiles | Where-Object { $_.Name -notmatch "^(zoom_|scenario_|aq_|diff_)" })
+    $freshPng = @($tourPng  | Where-Object { $_.LastWriteTime -ge $freshCutoff })
+    $stalePng = @($tourPng  | Where-Object { $_.LastWriteTime -lt $freshCutoff })
+
+    if ($freshPng.Count -eq 0) {
+        Write-Fail ("Tidak ada satu pun PNG yang dihasilkan run ini ($($pngFiles.Count) file di folder, " +
+                    "semuanya dari run sebelumnya).`nTur screenshot tidak menulis apa pun -- periksa apakah " +
+                    "_shot_tour benar-benar dipanggil dan game tidak gagal saat startup.")
+    }
+    Write-Ok "$($freshPng.Count) PNG dihasilkan run ini di $ShotsDir"
+    if ($stalePng.Count -gt 0) {
+        Write-Warn ("$($stalePng.Count) PNG lain di folder ini BUKAN dari run barusan. Kalau tur seharusnya " +
+                    "menghasilkannya juga, tur berhenti di tengah dan file lama sedang menutupi kekurangannya.")
+        foreach ($sp in ($stalePng | Select-Object -First 8)) {
+            Write-Warn ("   basi: $($sp.Name) (" + [math]::Round(((Get-Date) - $sp.LastWriteTime).TotalHours, 1) + " jam lalu)")
+        }
+        if ($stalePng.Count -gt 8) { Write-Warn "   ... dan $($stalePng.Count - 8) lagi" }
+    }
+} else {
+    Write-Ok "$($pngFiles.Count) PNG ditemukan di $ShotsDir (-NoRun: kesegaran tidak diperiksa)"
+}
 
 # -- 6. Deteksi PNG hitam (headless guard) -------------------------------------
 # Dijalankan selalu - termasuk saat -NoRun - agar shots lama yang hitam terdeteksi

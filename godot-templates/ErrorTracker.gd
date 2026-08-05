@@ -134,31 +134,62 @@ func _shot_quit_watchdog() -> void:
 	main_node.call_deferred("_shot_tour")
 
 	# Tunggu shot tour selesai (maksimum 5 menit)
-	var shotsDir := "user://shots"
-	var lastCount := 0
+	#
+	# Kemajuan TIDAK boleh diukur dari cacah file saja. Tur menimpa nama file yang sama pada
+	# setiap run, jadi cacahnya tidak pernah bertambah dan watchdog menyimpulkan "tidak ada
+	# kemajuan" sejak detik pertama. Dulu lastCount juga dimulai dari 0, sehingga iterasi
+	# pertama menganggap file-file LAMA sebagai kemajuan, lalu 300 frame berikutnya diam dan
+	# game dimatikan ~5 detik kemudian -- sebelum tur sempat menulis apa pun.
+	#
+	# Efeknya: watchdog hanya andal kalau folder shots kebetulan kosong. Setiap run kedua ke
+	# folder yang sama terpotong diam-diam, dan file lama membuat hasilnya tetap terlihat
+	# lengkap. Terukur pada jimat: tur dipanggil, langsung dinyatakan "selesai (25 PNG)",
+	# dan nol file baru tertulis.
+	#
+	# Sekarang dipakai DUA sinyal -- cacah file bertambah ATAU ada file yang mtime-nya maju --
+	# dan keduanya di-baseline ke keadaan SEBELUM tur mulai, supaya isi folder lama tidak
+	# pernah terhitung sebagai kemajuan.
+	var lastCount := _count_shot_pngs()
+	var lastStamp := _latest_shot_mtime()
 	var noProgressFrames := 0
 	for _i in range(18000):  # 5 menit di 60fps
 		await get_tree().process_frame
-		var dir := DirAccess.open(shotsDir)
-		var count := 0
-		if dir != null:
-			dir.list_dir_begin()
-			var f := dir.get_next()
-			while f != "":
-				if f.ends_with(".png"): count += 1
-				f = dir.get_next()
-			dir.list_dir_end()
-		if count > lastCount:
+		var count := _count_shot_pngs()
+		var stamp := _latest_shot_mtime()
+		if count > lastCount or stamp > lastStamp:
 			lastCount = count
+			lastStamp = stamp
 			noProgressFrames = 0
 		else:
 			noProgressFrames += 1
-		if noProgressFrames >= 300:
+		# 600 frame (~10 detik): mtime hanya berbutir detik, dan sebagian layar butuh
+		# beberapa detik disiapkan sebelum screenshot berikutnya tertulis.
+		if noProgressFrames >= 600:
 			print("[ErrorTracker] --shot watchdog: shot tour selesai (%d PNG)" % lastCount)
 			get_tree().quit(0)
 			return
 	print("[ErrorTracker] --shot watchdog: timeout 5 menit")
 	get_tree().quit(0)
+
+
+## mtime terbaru di antara seluruh PNG di user://shots, dalam detik unix; 0 kalau tidak ada.
+## Diperlukan karena tur MENIMPA nama file yang sama -- tanpa sinyal waktu, penulisan ulang
+## tidak terlihat sebagai kemajuan sama sekali.
+func _latest_shot_mtime() -> int:
+	var dir := DirAccess.open("user://shots")
+	if dir == null:
+		return 0
+	var newest := 0
+	dir.list_dir_begin()
+	var f := dir.get_next()
+	while f != "":
+		if f.ends_with(".png"):
+			var t := int(FileAccess.get_modified_time("user://shots/" + f))
+			if t > newest:
+				newest = t
+		f = dir.get_next()
+	dir.list_dir_end()
+	return newest
 
 ## Menghitung PNG di user://shots. Satu-satunya kegunaannya: mendeteksi tur screenshot yang
 ## sudah terlanjur berjalan sebelum watchdog memanggilnya.
