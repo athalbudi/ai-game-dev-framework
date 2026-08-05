@@ -2740,6 +2740,35 @@ if ((Test-Path -LiteralPath $t41Vr) -and $t41Im -ne "") {
             '{"verdicts":[{"file":"layar.png","claim_id":"klaim_a","verdict":"pass","note":"terlihat benar"}]}', $noBom41)
         & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode record -VerdictFile $t41Verd *>$null
 
+        # -- kontrak 3c: penyimpangan diukur terhadap gambar yang DINILAI -------
+        # Kanvas 200x200 = 40.000 pixel, threshold 2% = 800 pixel.
+        # Langkah 1 mengubah 600 pixel (1,5%) -> harus dibawa maju.
+        # Langkah 2 memperbesar jadi 1.200 pixel (3,0% terhadap gambar yang DINILAI) ->
+        # harus jadi basi, meski terhadap run SEBELUMNYA selisihnya cuma 1,5%.
+        # Versi lama menyematkan ulang sha dan menimpa salinan yang dinilai setiap kali
+        # membawa maju, sehingga titik acuan ikut bergeser dan penyimpangan menumpuk tanpa
+        # batas -- verdict bisa terbawa melewati gambar yang sudah sama sekali lain.
+        [System.IO.File]::WriteAllText($t41Verd,
+            '{"verdicts":[{"file":"layar.png","claim_id":"klaim_a","verdict":"pass","note":"acuan drift"}]}', $noBom41)
+        & $t41Im "-size" "200x200" "xc:white" (Join-Path $t41Shots "layar.png") 2>$null
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode record -VerdictFile $t41Verd *>$null
+        & $t41Im "-size" "200x200" "xc:white" "-fill" "black" "-draw" "rectangle 0,0 29,19" `
+                 (Join-Path $t41Shots "layar.png") 2>$null
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode plan *>$null
+        $t41D1 = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw | ConvertFrom-Json
+        $t41Drift1Carried = [int]$t41D1.summary.carried_forward
+        & $t41Im "-size" "200x200" "xc:white" "-fill" "black" "-draw" "rectangle 0,0 29,39" `
+                 (Join-Path $t41Shots "layar.png") 2>$null
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode plan *>$null
+        $t41D2 = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw | ConvertFrom-Json
+        $t41Drift2Stale = [int]$t41D2.summary.stale
+
+        # Pulihkan acuan bersih untuk kontrak 4
+        [System.IO.File]::WriteAllText($t41Verd,
+            '{"verdicts":[{"file":"layar.png","claim_id":"klaim_a","verdict":"pass","note":"terlihat benar"}]}', $noBom41)
+        & $t41Im "-size" "200x200" "xc:white" (Join-Path $t41Shots "layar.png") 2>$null
+        & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode record -VerdictFile $t41Verd *>$null
+
         # -- kontrak 4: basi (ubah 10.000 pixel = 25%, di atas 2%) --------------
         & $t41Im "-size" "200x200" "xc:white" "-fill" "black" "-draw" "rectangle 0,0 99,99" `
                  (Join-Path $t41Shots "layar.png") 2>$null
@@ -2755,6 +2784,8 @@ if ((Test-Path -LiteralPath $t41Vr) -and $t41Im -ne "") {
         if ($t41StaleKcl -ne 0)      { $t41Probs += "verdict pass + perubahan 0.25% tidak boleh jadi basi (stale=$t41StaleKcl)" }
         if ($t41FailCarried -ne 0)   { $t41Probs += "verdict FAIL tidak boleh pernah dibawa maju (carried=$t41FailCarried)" }
         if ($t41FailStale -lt 1)     { $t41Probs += "verdict FAIL harus jadi basi begitu gambar berubah (stale=$t41FailStale)" }
+        if ($t41Drift1Carried -lt 1) { $t41Probs += "drift 1,5% seharusnya dibawa maju (carried=$t41Drift1Carried)" }
+        if ($t41Drift2Stale -lt 1)   { $t41Probs += "drift kumulatif 3% terhadap gambar yang DINILAI harus jadi basi (stale=$t41Drift2Stale) -- titik acuan ikut bergeser?" }
         if ($t41StaleBesar -lt 1)    { $t41Probs += "perubahan 25% harus jadi basi (stale=$t41StaleBesar)" }
 
         Add-Result "visual-review: fail-closed + bawa-maju + pembatalan" ($t41Probs.Count -eq 0) `

@@ -204,18 +204,26 @@ foreach ($png in $pngs) {
         if ($bolehBawaMaju) {
             # Perubahan di bawah ambang -- penilaian lama masih masuk akal. Bawa maju,
             # tapi CATAT bahwa ia dibawa maju supaya tidak terlihat seperti penilaian baru.
+            #
+            # judged_sha256 TIDAK diperbarui, dan salinan yang dinilai TIDAK ditimpa.
+            # Versi sebelumnya melakukan keduanya, dan itu memindahkan titik acuan setiap
+            # kali membawa maju -- sehingga penyimpangan menumpuk tanpa batas: 1,9% + 1,9%
+            # + 1,9% ... masing-masing lolos ambang, tetapi setelah puluhan run gambarnya
+            # bisa sudah sama sekali lain sementara verdict-nya ikut terbawa. Itu
+            # meniadakan seluruh guna penyematan sha. Sekarang selisih SELALU diukur
+            # terhadap gambar yang benar-benar pernah dinilai, sehingga penyimpangan
+            # terkurung permanen di bawah threshold.
             $carried = [ordered]@{
-                verdict       = [string]$prev.verdict
-                note          = [string]$prev.note
-                judged_at     = [string]$prev.judged_at
-                judged_sha256 = $sha
-                carried_from  = $prevSha
-                carried_delta_pct = $delta
+                verdict           = [string]$prev.verdict
+                note              = [string]$prev.note
+                judged_at         = [string]$prev.judged_at
+                judged_sha256     = $prevSha   # tetap: gambar yang BENAR-BENAR dinilai
+                applies_to_sha256 = $sha       # gambar terkini yang masih tercakup verdict ini
+                drift_pct         = $delta     # selisih terhadap gambar yang dinilai, bukan terhadap run sebelumnya
             }
             $fileClaims[$cid] = [pscustomobject]$carried
             $nJudged++; $nCarried++
             if ([string]$prev.verdict -eq "fail") { $nFailed++ }
-            Copy-Item -LiteralPath $png.FullName -Destination $judgedCopy -Force -ErrorAction SilentlyContinue
         } else {
             $nStale++
             $reasonTxt = if ($delta -lt 0) { "gambar_berubah" } else { "berubah_melebihi_threshold" }
