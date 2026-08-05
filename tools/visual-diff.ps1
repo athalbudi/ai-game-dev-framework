@@ -107,7 +107,7 @@ function Write-Fail { param($msg) Write-Host "[diff] FAIL $msg"    -ForegroundCo
 if ($ShotsDir -eq "") {
     $manifestPath = Join-Path (Get-Location).Path "shots-manifest.json"
     if (Test-Path -LiteralPath $manifestPath) {
-        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $ShotsDir = $manifest.shots_dir
         Write-Step "ShotsDir dari manifest: $ShotsDir"
     } else {
@@ -142,7 +142,7 @@ if (-not (Test-Path -LiteralPath $BaselineDir -PathType Container)) {
 $baselineManifestPath = Join-Path $BaselineDir "baseline-manifest.json"
 if (Test-Path -LiteralPath $baselineManifestPath) {
     try {
-        $bm = Get-Content -LiteralPath $baselineManifestPath -Raw | ConvertFrom-Json
+        $bm = Get-Content -LiteralPath $baselineManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $setAt = if ($bm.PSObject.Properties.Name -contains "baseline_set_at") { $bm.baseline_set_at } `
                  elseif ($bm.PSObject.Properties.Name -contains "timestamp") { $bm.timestamp } `
                  else { "unknown" }
@@ -171,7 +171,7 @@ if ($IgnoreConfig -ne "") {
     # Parameter eksplisit
     if (Test-Path -LiteralPath $IgnoreConfig) {
         try {
-            $ic = Get-Content -LiteralPath $IgnoreConfig -Raw | ConvertFrom-Json
+            $ic = Get-Content -LiteralPath $IgnoreConfig -Raw -Encoding UTF8 | ConvertFrom-Json
             $cfgObj = $ic   # simpan full object untuk region_thresholds (nama berbeda dari param $IgnoreConfig)
             if ($ic.PSObject.Properties.Name -contains "ignore_regions") {
                 $ignoreRegions = @($ic.ignore_regions)
@@ -195,7 +195,7 @@ if ($IgnoreConfig -ne "") {
     foreach ($candidate in $autoZoomCandidates) {
         if (Test-Path -LiteralPath $candidate) {
             try {
-                $ic = Get-Content -LiteralPath $candidate -Raw | ConvertFrom-Json
+                $ic = Get-Content -LiteralPath $candidate -Raw -Encoding UTF8 | ConvertFrom-Json
                 if ($ic.PSObject.Properties.Name -contains "ignore_regions") {
                     $cfgObj  = $ic   # simpan full object
                     $ignoreRegions = @($ic.ignore_regions)

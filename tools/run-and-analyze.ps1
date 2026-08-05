@@ -289,7 +289,7 @@ function Test-ScopeViolation {
         return $result
     }
     try {
-        $fixReqData = Get-Content -LiteralPath $FixRequestPath -Raw | ConvertFrom-Json
+        $fixReqData = Get-Content -LiteralPath $FixRequestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     } catch {
         $result.error = "fix-request.json tidak bisa di-parse: $_"
         return $result
@@ -459,7 +459,7 @@ function Invoke-SchemaMigrationIfNeeded {
     param([string]$manifestPath)
     if (-not (Test-Path -LiteralPath $manifestPath)) { return }
     try {
-        $m = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $sv = if ($m.PSObject.Properties["schema_version"]) { $m.schema_version } else { "1.0" }
         if ($sv -ne "1.1") {
             $migScript = Join-Path $kiloConfig "tools\schema-migration.ps1"
@@ -616,7 +616,7 @@ $shotsDir = ""
 $projectGodot = Join-Path $worktreeProjectPath "project.godot"
 if (Test-Path -LiteralPath $projectGodot) {
     try {
-        $content = Get-Content -LiteralPath $projectGodot -Raw
+        $content = Get-Content -LiteralPath $projectGodot -Raw -Encoding UTF8
         if ($content -match 'config/name="([^"]+)"') {
             $appName = $Matches[1]
             # Cek apakah project menggunakan custom user dir
@@ -703,7 +703,7 @@ if (-not $SkipHarness) {
 # Baca manifest
 if (Test-Path -LiteralPath $manifestPath) {
     try {
-        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $telemetryPhase = $manifest.telemetry_phase
         $pngCount       = $manifest.png_count
         Write-Ok "Manifest: $pngCount PNG, fase=$telemetryPhase"
@@ -865,7 +865,7 @@ if (Test-Path -LiteralPath $scenarioResultPath) {
     }
     if ($phase3Status -ne "stale_result") {
         try {
-            $scenarioResult = Get-Content -LiteralPath $scenarioResultPath -Raw | ConvertFrom-Json
+            $scenarioResult = Get-Content -LiteralPath $scenarioResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
             # Suport kedua kontrak field: steps_pass/steps_fail/steps_skip (ScenarioRunner v1)
             # dan passed/failed/skipped (format lama)
             $passed  = if ($scenarioResult.PSObject.Properties["steps_pass"])  { $scenarioResult.steps_pass }  `
@@ -899,7 +899,7 @@ $phase4aStatus  = "no_baseline"
 
 if (Test-Path -LiteralPath $diffReportPath) {
     try {
-        $diffReport = Get-Content -LiteralPath $diffReportPath -Raw | ConvertFrom-Json
+        $diffReport = Get-Content -LiteralPath $diffReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $regressions = @($diffReport.files | Where-Object { $_.status -eq "REGRESI" })
         $newFiles    = @($diffReport.files | Where-Object { $_.status -eq "FILE_BARU" })
         $missing     = @($diffReport.files | Where-Object { $_.status -eq "HILANG" })
@@ -973,7 +973,7 @@ if ($scenarioResult -ne $null) {
 $gameStatePath = Join-Path $shotsDir "game_state.json"
 if (Test-Path -LiteralPath $gameStatePath) {
     try {
-        $gameState = Get-Content -LiteralPath $gameStatePath -Raw | ConvertFrom-Json
+        $gameState = Get-Content -LiteralPath $gameStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
         Write-Ok "game_state.json tersedia — fase mature"
     } catch {
         Write-Warn "game_state.json tidak bisa dibaca"

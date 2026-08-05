@@ -76,7 +76,7 @@ function Invoke-SchemaMigrationIfNeeded {
     param([string]$manifestPath)
     if (-not (Test-Path -LiteralPath $manifestPath)) { return }
     try {
-        $m  = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $m  = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $sv = if ($m.PSObject.Properties["schema_version"]) { $m.schema_version } else { "1.0" }
         if ($sv -ne "1.1") {
             $migScript = Join-Path $kiloConfig "tools\schema-migration.ps1"
@@ -150,7 +150,7 @@ function Read-Manifest {
     $mPath = Join-Path $shotsDir "shots-manifest.json"
     if (Test-Path -LiteralPath $mPath) {
         Invoke-SchemaMigrationIfNeeded -manifestPath $mPath
-        try { return Get-Content -LiteralPath $mPath -Raw | ConvertFrom-Json }
+        try { return Get-Content -LiteralPath $mPath -Raw -Encoding UTF8 | ConvertFrom-Json }
         catch { }
     }
     return $null
@@ -235,7 +235,7 @@ function Detect-Anomalies {
     $diffPath = Join-Path $shotsDir "diff\diff-report.json"
     if (Test-Path -LiteralPath $diffPath) {
         try {
-            $diff = Get-Content -LiteralPath $diffPath -Raw | ConvertFrom-Json
+            $diff = Get-Content -LiteralPath $diffPath -Raw -Encoding UTF8 | ConvertFrom-Json
             foreach ($f in @($diff.files)) {
                 if (-not $f) { continue }
                 $id = "regression_$($f.file -replace '[^a-zA-Z0-9]','_')"
@@ -352,9 +352,9 @@ function Detect-ScenarioDrift {
     $phase = if ($manifest -and $manifest.PSObject.Properties["telemetry_phase"]) { $manifest.telemetry_phase } else { "unknown" }
     foreach ($sf in $scenarioFiles) {
         try {
-            $scenario   = Get-Content -LiteralPath $sf.FullName -Raw | ConvertFrom-Json
+            $scenario   = Get-Content -LiteralPath $sf.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
             $steps      = @($scenario.steps)
-            $rawContent = Get-Content -LiteralPath $sf.FullName -Raw
+            $rawContent = Get-Content -LiteralPath $sf.FullName -Raw -Encoding UTF8
             $issues     = [System.Collections.Generic.List[string]]::new()
             $assertCount = @($steps | Where-Object { $_.type -eq "assert_state" }).Count
             $writeCount  = @($steps | Where-Object { $_.type -eq "write_state" }).Count
@@ -510,7 +510,7 @@ function Run-Scenario {
             return $null
         }
         try {
-            $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+            $result = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
             # Archive result
             $archiveResult = Join-Path $OutputDir "result_iter${iteration}_${ts_session}.json"
             Copy-Item -LiteralPath $resultPath -Destination $archiveResult -Force
@@ -569,7 +569,7 @@ if (-not $SkipInitialHarness -and (Test-Path -LiteralPath $diffPs1) -and $shotsD
             & $diffPs1 -ShotsDir $shotsDir -BaselineDir $baselineDir 2>&1 | Out-Null
             $diffReport = Join-Path $shotsDir "diff\diff-report.json"
             if (Test-Path -LiteralPath $diffReport) {
-                $dr = Get-Content -LiteralPath $diffReport -Raw | ConvertFrom-Json
+                $dr = Get-Content -LiteralPath $diffReport -Raw -Encoding UTF8 | ConvertFrom-Json
                 $regCount = @($dr.files | Where-Object { $_.status -eq "REGRESI" }).Count
                 $okCount  = @($dr.files | Where-Object { $_.status -eq "OK" }).Count
                 Write-Ok "Visual diff: $okCount OK, $regCount regresi"

@@ -211,7 +211,7 @@ $telemetryPhase = if ($pngCount -eq 0) { "prototype" } else { "developing" }
 
 if (Test-Path -LiteralPath $gameStatePath) {
     try {
-        $gameState      = Get-Content -LiteralPath $gameStatePath -Raw | ConvertFrom-Json
+        $gameState      = Get-Content -LiteralPath $gameStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
         $telemetryPhase = "mature"
         Write-Ok "game_state.json ditemukan — fase: mature"
     } catch {
@@ -251,7 +251,7 @@ $baselineDir      = Join-Path $OutputDir "baseline"
 $baselineManifest = Join-Path $baselineDir "baseline-manifest.json"
 if (Test-Path -LiteralPath $baselineManifest) {
     try {
-        $bm = Get-Content -LiteralPath $baselineManifest -Raw | ConvertFrom-Json
+        $bm = Get-Content -LiteralPath $baselineManifest -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($bm.generated_at) {
             $baselineDate = [datetime]::ParseExact($bm.generated_at, "yyyy-MM-dd HH:mm:ss", $null)
             $manifestData.baseline_age_days = [Math]::Round(($ts_end - $baselineDate).TotalDays, 1)

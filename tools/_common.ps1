@@ -127,7 +127,7 @@ function Get-GodotUserDirInfo {
     $projectGodot = Join-Path $ProjectPath "project.godot"
     if (Test-Path -LiteralPath $projectGodot) {
         try {
-            $content = Get-Content -LiteralPath $projectGodot -Raw
+            $content = Get-Content -LiteralPath $projectGodot -Raw -Encoding UTF8
             if ($content -match 'config/name="([^"]+)"') {
                 $info.ProjectName   = $Matches[1]
                 $info.UsesCustomDir = [bool]($content -match 'config/use_custom_user_dir=true')

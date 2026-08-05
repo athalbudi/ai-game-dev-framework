@@ -136,7 +136,7 @@ if (-not $skipProjectCheck) {
 if ($ShotsDir -eq "") {
     $projectGodot = Join-Path $ProjectPath "project.godot"
     $projectName  = ""
-    $rawContent   = Get-Content -LiteralPath $projectGodot -Raw
+    $rawContent   = Get-Content -LiteralPath $projectGodot -Raw -Encoding UTF8
     if ($rawContent -match 'config/name="([^"]+)"') {
         $projectName = $Matches[1]
     }
@@ -324,7 +324,7 @@ function Invoke-HotReloadRiskCheck {
 
     # Cari main scene dari project.godot
     $mainScene = ""
-    $projContent = Get-Content -LiteralPath $projectGodot -Raw -ErrorAction SilentlyContinue
+    $projContent = Get-Content -LiteralPath $projectGodot -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
     if ($projContent -match 'run/main_scene="([^"]+)"') {
         $mainScene = $Matches[1] -replace '^res://', ''
     }
@@ -334,7 +334,7 @@ function Invoke-HotReloadRiskCheck {
     $mainScenePath = Join-Path $projectPath $mainScene
     if (-not (Test-Path -LiteralPath $mainScenePath)) { return }
 
-    $sceneContent = Get-Content -LiteralPath $mainScenePath -Raw -ErrorAction SilentlyContinue
+    $sceneContent = Get-Content -LiteralPath $mainScenePath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
     $scriptFile   = ""
     if ($sceneContent -match 'script = ExtResource\("[^"]+"\)') {
         # Cari external resource yang merupakan GDScript
@@ -721,7 +721,7 @@ if ($ZoomConfig -eq "") {
 
 if (Test-Path -LiteralPath $ZoomConfig) {
     Write-Step "Membaca konfigurasi zoom: $ZoomConfig"
-    $zoomDefs  = Get-Content -LiteralPath $ZoomConfig -Raw | ConvertFrom-Json
+    $zoomDefs  = Get-Content -LiteralPath $ZoomConfig -Raw -Encoding UTF8 | ConvertFrom-Json
     $zoomCount = 0
     foreach ($z in $zoomDefs) {
         # Validasi field wajib - cegah crash dengan pesan jelas
@@ -819,7 +819,7 @@ $telemetryPhase = "prototype"
 
 if (Test-Path -LiteralPath $gameStateJson) {
     try {
-        $gameState = Get-Content -LiteralPath $gameStateJson -Raw | ConvertFrom-Json
+        $gameState = Get-Content -LiteralPath $gameStateJson -Raw -Encoding UTF8 | ConvertFrom-Json
         $telemetryPhase = "mature"
         Write-Ok "Game state terbaca dari game_state.json (fase: mature)"
     } catch {
@@ -887,7 +887,7 @@ $baselineAge      = $null
 $baselineDate     = $null
 if (Test-Path -LiteralPath $baselineManifest) {
     try {
-        $bm = Get-Content -LiteralPath $baselineManifest -Raw | ConvertFrom-Json
+        $bm = Get-Content -LiteralPath $baselineManifest -Raw -Encoding UTF8 | ConvertFrom-Json
         # Suport field: generated_at (format lama) dan baseline_set_at (format /baseline set)
         $bmTimestamp = if ($bm.PSObject.Properties["generated_at"]) { $bm.generated_at } `
                        elseif ($bm.PSObject.Properties["baseline_set_at"]) { $bm.baseline_set_at } `
@@ -1057,7 +1057,7 @@ if ($gameState -ne $null) {
 # Tambahkan coverage ke manifest yang sudah ditulis
 if (Test-Path -LiteralPath $manifestPath) {
     try {
-        $mUpdate = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $mUpdate = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $mUpdate | Add-Member -NotePropertyName "coverage" -NotePropertyValue $coverageResult -Force
         $mUpdate | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
     } catch {
@@ -1151,7 +1151,7 @@ if ($gameState -ne $null -and
     # Update manifest dengan assertion_results
     if (Test-Path -LiteralPath $manifestPath) {
         try {
-            $mUpdate2 = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            $mUpdate2 = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $mUpdate2 | Add-Member -NotePropertyName "assertion_results" -NotePropertyValue $assertionResults -Force
             $mUpdate2 | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
         } catch {
@@ -1182,7 +1182,7 @@ if ($telemetryPhase -eq "prototype") {
 $scenarioResultPath = Join-Path $ShotsDir "scenario_result.json"
 if (Test-Path -LiteralPath $scenarioResultPath) {
     try {
-        $scenarioResult = Get-Content -LiteralPath $scenarioResultPath -Raw | ConvertFrom-Json
+        $scenarioResult = Get-Content -LiteralPath $scenarioResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $scStatus = if ($scenarioResult.PSObject.Properties.Name -contains "status")      { $scenarioResult.status }      else { "unknown" }
         $scPassed = if ($scenarioResult.PSObject.Properties.Name -contains "steps_pass") { $scenarioResult.steps_pass }  `
                     elseif ($scenarioResult.PSObject.Properties.Name -contains "passed") { $scenarioResult.passed }      else { 0 }
@@ -1213,7 +1213,7 @@ if (Test-Path -LiteralPath $scenarioResultPath) {
         # Embed ke manifest
         if (Test-Path -LiteralPath $manifestPath) {
             try {
-                $mUpdate3 = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+                $mUpdate3 = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
                 $mUpdate3 | Add-Member -NotePropertyName "scenario_result" -NotePropertyValue $scenarioResult -Force
                 $mUpdate3 | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
             } catch {
@@ -1312,7 +1312,7 @@ if ($coverageResult -ne $null -and $coverageResult.enabled -eq $true -and $Shots
     $history = $null
     if (Test-Path -LiteralPath $historyPath) {
         try {
-            $history = Get-Content -LiteralPath $historyPath -Raw | ConvertFrom-Json
+            $history = Get-Content -LiteralPath $historyPath -Raw -Encoding UTF8 | ConvertFrom-Json
         } catch {
             $history = $null
         }

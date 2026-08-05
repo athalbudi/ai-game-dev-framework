@@ -90,7 +90,7 @@ if (-not (Test-Path -LiteralPath $ClaimsFile)) {
     exit 1
 }
 try {
-    $claimsDoc = Get-Content -LiteralPath $ClaimsFile -Raw | ConvertFrom-Json
+    $claimsDoc = Get-Content -LiteralPath $ClaimsFile -Raw -Encoding UTF8 | ConvertFrom-Json
 } catch {
     Write-Bad "visual-claims.json tidak valid: $_"; exit 1
 }
@@ -125,7 +125,7 @@ function Test-ClaimApplies {
 # -- 4. Muat state sebelumnya --------------------------------------------------
 $review = $null
 if (Test-Path -LiteralPath $reviewPath) {
-    try { $review = Get-Content -LiteralPath $reviewPath -Raw | ConvertFrom-Json }
+    try { $review = Get-Content -LiteralPath $reviewPath -Raw -Encoding UTF8 | ConvertFrom-Json }
     catch { Write-Warn "visual-review.json rusak -- dianggap kosong"; $review = $null }
 }
 
@@ -246,7 +246,7 @@ if ($Mode -eq "record") {
     if ($VerdictFile -eq "" -or -not (Test-Path -LiteralPath $VerdictFile)) {
         Write-Bad "-Mode record membutuhkan -VerdictFile yang ada"; exit 1
     }
-    try { $vdoc = Get-Content -LiteralPath $VerdictFile -Raw | ConvertFrom-Json }
+    try { $vdoc = Get-Content -LiteralPath $VerdictFile -Raw -Encoding UTF8 | ConvertFrom-Json }
     catch { Write-Bad "File verdict tidak valid: $_"; exit 1 }
     if (-not ($vdoc.PSObject.Properties.Name -contains "verdicts")) {
         Write-Bad "File verdict tidak punya field 'verdicts'"; exit 1
