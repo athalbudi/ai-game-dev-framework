@@ -60,15 +60,23 @@ $results   = [System.Collections.Generic.List[hashtable]]::new()
 function Write-T { param($msg) Write-Host "[test]      $msg" -ForegroundColor Cyan   }
 function Write-S { Write-Host "[test] ---------------------------------------------------" -ForegroundColor DarkGray }
 
+# Durasi tiap test ikut dicatat. Suite ini berjalan belasan menit dan sebelumnya tidak ada
+# yang tahu ke mana waktunya pergi -- tebakan yang paling masuk akal ("import Godot")
+# ternyata bukan yang paling mahal. Tanpa angka, optimasi apa pun cuma menebak.
+$script:lastResultAt = Get-Date
+
 function Add-Result {
     param([string]$name, [bool]$pass, [string]$detail)
-    $script:results.Add(@{ name = $name; pass = $pass; detail = $detail })
+    $now     = Get-Date
+    $elapsed = [math]::Round(($now - $script:lastResultAt).TotalSeconds, 1)
+    $script:lastResultAt = $now
+    $script:results.Add(@{ name = $name; pass = $pass; detail = $detail; sec = $elapsed })
     if ($pass) {
         $script:passed++
-        Write-Host ("[test] PASS " + $name) -ForegroundColor Green
+        Write-Host ("[test] PASS " + $name + "  (${elapsed}s)") -ForegroundColor Green
     } else {
         $script:failed++
-        Write-Host ("[test] FAIL " + $name + " -- " + $detail) -ForegroundColor Red
+        Write-Host ("[test] FAIL " + $name + " -- " + $detail + "  (${elapsed}s)") -ForegroundColor Red
     }
 }
 
@@ -454,7 +462,7 @@ if ($GodotExe -ne "" -and (Test-Path -LiteralPath $GodotExe)) {
             -ArgumentList "--path", "`"$strictDir`"", "--headless", "--quit" `
             -PassThru -NoNewWindow -RedirectStandardError $logPath -Wait
 
-        $logLines = @(Get-Content $logPath -ErrorAction SilentlyContinue)
+        $logLines = @(Get-Content $logPath -Encoding UTF8 -ErrorAction SilentlyContinue)
         # Cari Parse Error yang berasal dari template framework (bukan dari hot-reload main scene)
         $templateErrors = @($logLines | Where-Object {
             $_ -match "Parse Error" -and
@@ -505,8 +513,8 @@ if ($GodotExe -ne "" -and (Test-Path -LiteralPath $GodotExe)) {
         $proc2.WaitForExit(30000)
         if (-not $proc2.HasExited) { $proc2.Kill() }
 
-        $scenarioLines    = @(Get-Content $scenarioLog    -ErrorAction SilentlyContinue)
-        $scenarioOutLines = @(Get-Content $scenarioOutLog -ErrorAction SilentlyContinue)
+        $scenarioLines    = @(Get-Content $scenarioLog    -Encoding UTF8 -ErrorAction SilentlyContinue)
+        $scenarioOutLines = @(Get-Content $scenarioOutLog -Encoding UTF8 -ErrorAction SilentlyContinue)
         # Filter: cek SEMUA SCRIPT ERROR di stderr (Parse Error, runtime crash, dll)
         # tidak mensyaratkan nama file tertentu di baris yang sama.
         $scenarioParseErrors = @($scenarioLines | Where-Object {
@@ -597,8 +605,8 @@ try {
     #
     # Test yang bisa kita jalankan murni di PS: verifikasi bahwa manifest valid JSON
     # dan scenario valid JSON, lalu verifikasi struktur fix-request-template.json
-    $manifestOk   = $null -ne (Get-Content (Join-Path $anomalyShots "shots-manifest.json") -Raw | ConvertFrom-Json -ErrorAction SilentlyContinue)
-    $scenarioOk   = $null -ne (Get-Content (Join-Path $anomalyScenarios "smoke.json") -Raw | ConvertFrom-Json -ErrorAction SilentlyContinue)
+    $manifestOk   = $null -ne (Get-Content (Join-Path $anomalyShots "shots-manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction SilentlyContinue)
+    $scenarioOk   = $null -ne (Get-Content (Join-Path $anomalyScenarios "smoke.json") -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction SilentlyContinue)
 
     # Verifikasi fix-request-template.json di root repo punya schema yang benar
     # Prioritaskan kilo config (lokasi paling reliable -- sync.ps1 selalu menyalinnya ke sana)
@@ -956,7 +964,7 @@ if (Test-Path -LiteralPath $raPs1Deployed) {
         $ErrorActionPreference = $savedEAP13
 
         if (Test-Path -LiteralPath $reportPath) {
-            $rpt = Get-Content $reportPath -Raw | ConvertFrom-Json
+            $rpt = Get-Content $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $runPhase = $rpt.phases.run
             # Guard bekerja jika run = "stale_result" -- overall_status bisa "run_failed"
             # atau "escalation_required" (gate fail-closed di folder non-git, keduanya valid)
@@ -999,7 +1007,7 @@ if (Test-Path -LiteralPath $raPs1Deployed) {
         $ErrorActionPreference = $savedEAP14
 
         if (Test-Path -LiteralPath $reportPath) {
-            $rpt = Get-Content $reportPath -Raw | ConvertFrom-Json
+            $rpt = Get-Content $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $runPhase = $rpt.phases.run
             # Jika run = timeout/error/stale_result -> overall_status harus "run_failed", bukan "clean"
             $runFailed = $runPhase -in @("timeout", "error", "stale_result", "skip_no_godot", "skip_no_project")
@@ -1057,7 +1065,7 @@ if ((Test-Path -LiteralPath $vdPs1Deployed) -and $imExe -ne "") {
 
         $diffReport = Join-Path $t15Current "diff\diff-report.json"
         if (Test-Path -LiteralPath $diffReport) {
-            $dr  = Get-Content $diffReport -Raw | ConvertFrom-Json
+            $dr  = Get-Content $diffReport -Raw -Encoding UTF8 | ConvertFrom-Json
             $reg = @($dr.files | Where-Object { $_.status -eq "REGRESI" })
             # Fix C bekerja jika merah vs putih-Gray terdeteksi sebagai regresi
             Add-Result "Fix C: visual-diff mendeteksi regresi Gray vs sRGB" `
@@ -1227,7 +1235,7 @@ func _ready() -> void:
         # Parse hasil
         $vanillaFails = @()
         if (Test-Path -LiteralPath $vanillaLog) {
-            $vanillaFails = @(Get-Content $vanillaLog -ErrorAction SilentlyContinue | Where-Object { $_ -match "COMPILE_FAIL|Parse Error|Compile Error" -and $_ -notmatch "GDScript::reload" })
+            $vanillaFails = @(Get-Content $vanillaLog -Encoding UTF8 -ErrorAction SilentlyContinue | Where-Object { $_ -match "COMPILE_FAIL|Parse Error|Compile Error" -and $_ -notmatch "GDScript::reload" })
             Remove-Item -LiteralPath $vanillaLog -ErrorAction SilentlyContinue
         }
 
@@ -1253,7 +1261,7 @@ func _ready() -> void:
 
         $strictFails = @()
         if (Test-Path -LiteralPath $strictLog) {
-            $strictFails = @(Get-Content $strictLog -ErrorAction SilentlyContinue | Where-Object { $_ -match "COMPILE_FAIL|Parse Error|Compile Error" -and $_ -notmatch "GDScript::reload" })
+            $strictFails = @(Get-Content $strictLog -Encoding UTF8 -ErrorAction SilentlyContinue | Where-Object { $_ -match "COMPILE_FAIL|Parse Error|Compile Error" -and $_ -notmatch "GDScript::reload" })
             Remove-Item -LiteralPath $strictLog -ErrorAction SilentlyContinue
         }
 
@@ -1281,7 +1289,7 @@ Write-S
 Write-T "TEST 18: Fix Q -- ScenarioRunner._evaluate_op memanggil push_warning untuk operator tak dikenal"
 $srPs1Deployed = Join-Path $env:USERPROFILE ".config\kilo\godot-templates\ScenarioRunner.gd"
 if (Test-Path -LiteralPath $srPs1Deployed) {
-    $srContent = Get-Content $srPs1Deployed -Raw
+    $srContent = Get-Content $srPs1Deployed -Raw -Encoding UTF8
     # Verifikasi push_warning ada di default case _evaluate_op -- cek dengan regex yang ketat:
     # push_warning harus muncul SETELAH deklarasi _evaluate_op dan SEBELUM akhir fungsi
     $evalOpMatch  = [regex]::Match($srContent, '(?s)func _evaluate_op.*?(?=\nfunc |\Z)')
@@ -1901,8 +1909,17 @@ exit 1
     } else {
         $rep29    = Get-Content -LiteralPath $t29Report -Raw -Encoding UTF8 | ConvertFrom-Json
         $phase1   = if ($rep29.PSObject.Properties["phases"]) { $rep29.phases.observe } else { "" }
-        Add-Result "run-and-analyze mendeteksi harness gagal" ($phase1 -ne "ok") `
-            "phase observe='$phase1' (tidak boleh 'ok' saat harness exit 1)"
+        # Fixture ini sengaja tidak punya run/main_scene. Godot TIDAK keluar sendiri untuk
+        # project semacam itu -- ia mencetak "no main scene defined" lalu menunggu selamanya,
+        # sehingga fase RUN dulu membakar $Timeout penuh: terukur 180 detik, 27% dari seluruh
+        # waktu self-test, untuk mengamati sesuatu yang sudah pasti dari satu baris
+        # project.godot. Kontrak kedua memastikan penjagaan itu tidak diam-diam dicabut lagi.
+        $phase3   = if ($rep29.PSObject.Properties["phases"]) { "$($rep29.phases.run)" } else { "" }
+        $p29      = @()
+        if ($phase1 -eq "ok")                { $p29 += "phase observe='$phase1' (tidak boleh 'ok' saat harness exit 1)" }
+        if ($phase3 -ne "skip_no_main_scene") { $p29 += "phase run='$phase3', harus 'skip_no_main_scene' -- tanpa main scene Godot tidak akan pernah keluar" }
+        Add-Result "run-and-analyze mendeteksi harness gagal" ($p29.Count -eq 0) `
+            $(if ($p29.Count -eq 0) { "observe='$phase1', run di-skip tanpa menunggu timeout" } else { ($p29 -join " | ") })
     }
 } catch {
     Add-Result "run-and-analyze mendeteksi harness gagal" $false ("Exception: " + $_)
@@ -1983,7 +2000,7 @@ if ($setupSrc -eq "" -or -not (Test-Path -LiteralPath $setupSrc)) {
             "config_version=5`n`n[application]`nconfig/name=`"Keep`"`n`n[autoload]`n`nMyThing=`"*res://scripts/my_thing.gd`"`n`n[display]`n`nwindow/size/viewport_width=640`n",
             (New-Object System.Text.UTF8Encoding($false)))
         & $setupSrc -InitProject $p1 *>&1 | Out-Null
-        $after1 = Get-Content -LiteralPath (Join-Path $p1 "project.godot") -Raw
+        $after1 = Get-Content -LiteralPath (Join-Path $p1 "project.godot") -Raw -Encoding UTF8
         if ($after1 -notmatch 'MyThing=')        { $t31Fails += "a: autoload developer hilang" }
         if ($after1 -notmatch '\[display\]')      { $t31Fails += "a: section [display] hilang" }
         if ($after1 -notmatch 'ErrorTracker=')    { $t31Fails += "a: ErrorTracker tidak ditambahkan" }
@@ -1991,7 +2008,7 @@ if ($setupSrc -eq "" -or -not (Test-Path -LiteralPath $setupSrc)) {
 
         # (b) idempotensi -- jalan kedua tidak boleh menduplikasi
         & $setupSrc -InitProject $p1 *>&1 | Out-Null
-        $after2 = Get-Content -LiteralPath (Join-Path $p1 "project.godot") -Raw
+        $after2 = Get-Content -LiteralPath (Join-Path $p1 "project.godot") -Raw -Encoding UTF8
         $nET = ([regex]::Matches($after2, 'ErrorTracker=')).Count
         if ($nET -ne 1) { $t31Fails += "b: ErrorTracker muncul $nET kali (harus 1)" }
 
@@ -2018,7 +2035,7 @@ if ($setupSrc -eq "" -or -not (Test-Path -LiteralPath $setupSrc)) {
             "config_version=5`n`n[application]`nconfig/name=`"NoSection`"`n`n[rendering]`n`nrenderer/rendering_method=`"mobile`"`n",
             (New-Object System.Text.UTF8Encoding($false)))
         & $setupSrc -InitProject $p3 *>&1 | Out-Null
-        $after3 = Get-Content -LiteralPath (Join-Path $p3 "project.godot") -Raw
+        $after3 = Get-Content -LiteralPath (Join-Path $p3 "project.godot") -Raw -Encoding UTF8
         if ($after3 -notmatch '\[autoload\]')  { $t31Fails += "d: section [autoload] tidak dibuat" }
         if ($after3 -notmatch '\[rendering\]') { $t31Fails += "d: section [rendering] hilang" }
         if ($after3 -notmatch 'GameStateWriter=') { $t31Fails += "d: autoload tidak ditambahkan" }
@@ -2808,7 +2825,7 @@ if ((Test-Path -LiteralPath $t41Vr) -and $t41Im -ne "") {
         & $t41Im "-size" "200x200" "xc:white" "-fill" "black" "-draw" "rectangle 0,0 9,9" `
                  (Join-Path $t41Shots "layar.png") 2>$null
         & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode plan *>$null
-        $t41Rev = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw | ConvertFrom-Json
+        $t41Rev = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $t41Carried  = [int]$t41Rev.summary.carried_forward
         $t41StaleKcl = [int]$t41Rev.summary.stale
 
@@ -2825,7 +2842,7 @@ if ((Test-Path -LiteralPath $t41Vr) -and $t41Im -ne "") {
         & $t41Im "-size" "200x200" "xc:white" "-fill" "black" "-draw" "rectangle 0,0 19,4" `
                  (Join-Path $t41Shots "layar.png") 2>$null
         & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode plan *>$null
-        $t41RevF = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw | ConvertFrom-Json
+        $t41RevF = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $t41FailCarried = [int]$t41RevF.summary.carried_forward
         $t41FailStale   = [int]$t41RevF.summary.stale
 
@@ -2849,12 +2866,12 @@ if ((Test-Path -LiteralPath $t41Vr) -and $t41Im -ne "") {
         & $t41Im "-size" "200x200" "xc:white" "-fill" "black" "-draw" "rectangle 0,0 29,19" `
                  (Join-Path $t41Shots "layar.png") 2>$null
         & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode plan *>$null
-        $t41D1 = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw | ConvertFrom-Json
+        $t41D1 = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $t41Drift1Carried = [int]$t41D1.summary.carried_forward
         & $t41Im "-size" "200x200" "xc:white" "-fill" "black" "-draw" "rectangle 0,0 29,39" `
                  (Join-Path $t41Shots "layar.png") 2>$null
         & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode plan *>$null
-        $t41D2 = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw | ConvertFrom-Json
+        $t41D2 = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $t41Drift2Stale = [int]$t41D2.summary.stale
 
         # Pulihkan acuan bersih untuk kontrak 4
@@ -2867,7 +2884,7 @@ if ((Test-Path -LiteralPath $t41Vr) -and $t41Im -ne "") {
         & $t41Im "-size" "200x200" "xc:white" "-fill" "black" "-draw" "rectangle 0,0 99,99" `
                  (Join-Path $t41Shots "layar.png") 2>$null
         & $t41Vr -ShotsDir $t41Shots -ClaimsFile $t41Claims -Mode plan *>$null
-        $t41Rev2 = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw | ConvertFrom-Json
+        $t41Rev2 = Get-Content -LiteralPath (Join-Path $t41Shots "visual-review.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $t41StaleBesar = [int]$t41Rev2.summary.stale
 
         $t41Probs = @()
@@ -3280,7 +3297,7 @@ try {
         # yang terpecah beberapa baris terbaca sebagai satu perintah utuh.
         $t45Join = @()
         $t45Acc = ""
-        foreach ($ln in (Get-Content -LiteralPath $t45File.FullName)) {
+        foreach ($ln in (Get-Content -LiteralPath $t45File.FullName -Encoding UTF8)) {
             $trimmed = $ln.TrimEnd()
             if ($trimmed.EndsWith('`')) { $t45Acc += $trimmed.TrimEnd('`') + " "; continue }
             $t45Join += ($t45Acc + $trimmed)
@@ -4573,6 +4590,84 @@ if (-not (Test-Path -LiteralPath $t57Tool)) {
 }
 Write-S
 
+# ── TEST 58: klaim visual tanpa screenshot tidak boleh lenyap dari laporan ───
+# Pencacah visual-review dibangun dengan mengiterasi SCREENSHOT lalu mencari klaim yang
+# berlaku. Konsekuensinya klaim yang tidak punya berkas sama sekali tidak pernah masuk
+# pencacah mana pun: ia muncul di angka "Klaim: N" lalu lenyap. Terukur -- dua klaim, satu
+# screenshot: "Dinilai: 1 | Belum: 0", dan check keluar 0 dengan "semua klaim punya verdict
+# yang berlaku".
+#
+# Pemicunya kondisi yang paling sering terjadi di proyek ini: tur screenshot berhenti di
+# tengah jalan, layar yang dijanjikan tidak pernah ditulis, dan klaim tentangnya diam-diam
+# berhenti diperiksa -- tepat saat verifikasi visual paling dibutuhkan.
+#
+# Kontrak kedua adalah opt-out: layar yang memang tidak selalu muncul berhak ditandai
+# "optional": true. Tanpa itu, pemeriksaan ini akan menghukum project yang sah dan cepat
+# dimatikan orang.
+Write-T "TEST 58: klaim tanpa screenshot yang cocok menggagalkan check"
+$t58Tool = Join-Path $PSScriptRoot "visual-review.ps1"
+$t58Magick = Resolve-ImageMagick
+if (-not (Test-Path -LiteralPath $t58Tool)) {
+    Add-Result "visual-review: klaim yatim tidak lenyap" $false "visual-review.ps1 tidak ditemukan"
+} elseif ($t58Magick -eq "") {
+    Add-Result "visual-review: klaim yatim tidak lenyap" $false "SKIP -- ImageMagick tidak tersedia"
+} else {
+    $t58Probs = @()
+    $t58Dir   = Join-Path $env:TEMP "kilo_t58_$($PID)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $t58Shots = Join-Path $t58Dir "shots"
+        $null = New-Item -ItemType Directory -Path $t58Shots -Force
+        $noBom58 = New-Object System.Text.UTF8Encoding($false)
+        & $t58Magick -size 64x64 "xc:gray50" (Join-Path $t58Shots "01_title.png") | Out-Null
+
+        # Klaim kedua menunjuk layar yang TIDAK PERNAH dihasilkan.
+        $claimsYatim = '{"claims":[' +
+            '{"id":"judul","applies_to":"01_title.png","question":"Judul terbaca?"},' +
+            '{"id":"battle","applies_to":"04_battle.png","question":"Panel battle rapi?"}]}'
+        $claimsOpt   = '{"claims":[' +
+            '{"id":"judul","applies_to":"01_title.png","question":"Judul terbaca?"},' +
+            '{"id":"battle","applies_to":"04_battle.png","optional":true,"question":"Panel battle rapi?"}]}'
+        $verdicts    = '{"verdicts":[{"file":"01_title.png","claim_id":"judul","verdict":"pass","note":"ok"}]}'
+        [System.IO.File]::WriteAllText("$t58Dir\verdicts.json", $verdicts, $noBom58)
+
+        foreach ($case in @(
+            @{ n = "yatim";    json = $claimsYatim; exit = 1 },
+            @{ n = "optional"; json = $claimsOpt;   exit = 0 }
+        )) {
+            $cf = Join-Path $t58Dir "claims_$($case.n).json"
+            [System.IO.File]::WriteAllText($cf, $case.json, $noBom58)
+            # record dulu supaya klaim yang ADA sudah punya verdict -- kalau tidak, check
+            # akan gagal karena "belum dinilai" dan kontraknya diuji terhadap sebab lain.
+            & $t58Tool -Mode record -ShotsDir $t58Shots -ClaimsFile $cf -VerdictFile "$t58Dir\verdicts.json" *>$null
+            & $t58Tool -Mode check  -ShotsDir $t58Shots -ClaimsFile $cf *>$null
+            $ec58 = $LASTEXITCODE
+            if ($ec58 -ne $case.exit) {
+                $t58Probs += "$($case.n): exit=$ec58, harus $($case.exit)"
+            }
+        }
+
+        # Laporan harus MENYEBUT klaim mana yang yatim, bukan sekadar menghitungnya.
+        $rev58 = Join-Path $t58Shots "visual-review.json"
+        if (Test-Path -LiteralPath $rev58) {
+            $j58 = Get-Content -LiteralPath $rev58 -Raw -Encoding UTF8 | ConvertFrom-Json
+            $sumNames = @($j58.summary.PSObject.Properties | ForEach-Object { $_.Name })
+            if ($sumNames -notcontains "orphan_claims") {
+                $t58Probs += "summary tidak memuat orphan_claims -- pembaca laporan tidak tahu klaim mana yang berhenti diperiksa"
+            }
+        } else {
+            $t58Probs += "visual-review.json tidak ditulis"
+        }
+
+        Add-Result "visual-review: klaim yatim tidak lenyap" ($t58Probs.Count -eq 0) `
+            $(if ($t58Probs.Count -eq 0) { "klaim tanpa berkas -> exit 1 dan disebut namanya; 'optional' -> exit 0" } else { ($t58Probs -join " | ") })
+    } catch {
+        Add-Result "visual-review: klaim yatim tidak lenyap" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t58Dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."
@@ -4600,6 +4695,20 @@ $col = if ($failed -eq 0) { "Green" } else { "Red" }
 $summary = "[test]  " + $passed + "/" + $totalTests + " PASS"
 if ($failed -gt 0) { $summary += "  (" + $failed + " FAIL)" }
 Write-Host $summary -ForegroundColor $col
+
+# Lima test paling lambat. Ditampilkan selalu, bukan di balik flag: biaya yang tidak
+# terlihat tidak akan pernah diperbaiki, dan suite yang pelan pelan-pelan berhenti
+# dijalankan orang -- lalu berhenti menemukan apa pun.
+$totalSec = [math]::Round((@($results | ForEach-Object { $_.sec }) | Measure-Object -Sum).Sum, 1)
+$slowest  = @($results | Sort-Object { $_.sec } -Descending | Select-Object -First 5)
+if ($slowest.Count -gt 0 -and $totalSec -gt 0) {
+    Write-Host "[test] ---------------------------------------------" -ForegroundColor DarkGray
+    Write-Host ("[test]  Total " + $totalSec + "s. Paling lambat:") -ForegroundColor DarkGray
+    foreach ($r in $slowest) {
+        $pct = [math]::Round(100.0 * $r.sec / $totalSec, 1)
+        Write-Host ("[test]    " + $r.sec.ToString().PadLeft(6) + "s  " + $pct.ToString().PadLeft(5) + "%  " + $r.name) -ForegroundColor DarkGray
+    }
+}
 Write-Host "[test] =============================================" -ForegroundColor Cyan
 Write-Host ""
 

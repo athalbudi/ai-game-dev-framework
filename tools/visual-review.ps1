@@ -159,6 +159,31 @@ $newFiles = [ordered]@{}
 $work     = [System.Collections.Generic.List[object]]::new()
 $nJudged = 0; $nStale = 0; $nUnjudged = 0; $nFailed = 0; $nCarried = 0
 
+# Klaim yang polanya tidak cocok dengan SATU PUN screenshot yang ada.
+#
+# Pencacah di bawah dibangun dengan mengiterasi screenshot lalu mencari klaim yang berlaku.
+# Konsekuensinya, klaim yang tidak punya berkas sama sekali tidak pernah masuk pencacah mana
+# pun -- ia hanya muncul di angka "Klaim: N" di header lalu lenyap. Terukur: dua klaim, satu
+# screenshot, hasilnya "Dinilai: 1 | Belum: 0" dan `check` keluar 0 dengan "semua klaim punya
+# verdict yang berlaku".
+#
+# Pemicunya justru kondisi yang sering terjadi di proyek ini: tur screenshot berhenti di
+# tengah jalan, layar yang dijanjikan tidak pernah ditulis, dan klaim tentangnya diam-diam
+# berhenti diperiksa. Itu persis saat verifikasi visual paling dibutuhkan.
+#
+# Opt-out per klaim: "optional": true, untuk layar yang memang tidak selalu muncul.
+$orphanClaims = @()
+foreach ($c in $claims) {
+    $isOptional = (($c.PSObject.Properties | ForEach-Object { $_.Name }) -contains "optional") -and [bool]$c.optional
+    if ($isOptional) { continue }
+    $matched = $false
+    foreach ($png in $pngs) {
+        if (Test-ClaimApplies -Claim $c -FileName $png.Name) { $matched = $true; break }
+    }
+    if (-not $matched) { $orphanClaims += [string]$c.id }
+}
+$nOrphan = $orphanClaims.Count
+
 foreach ($png in $pngs) {
     $sha = (Get-FileHash -LiteralPath $png.FullName -Algorithm SHA256).Hash
     $fileClaims = [ordered]@{}
@@ -311,6 +336,7 @@ $out = [ordered]@{
     summary        = [ordered]@{
         total = $total; judged = $nJudged; carried_forward = $nCarried
         stale = $nStale; unjudged = $nUnjudged; failed = $nFailed
+        orphan = $nOrphan; orphan_claims = @($orphanClaims)
     }
     files = $newFiles
 }
@@ -319,7 +345,11 @@ $out | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $reviewPath -Encoding
 # -- 8. Keluaran per mode ------------------------------------------------------
 Write-Host ""
 Write-Step "Klaim  : $($claims.Count) | Screenshot: $($pngs.Count) | Threshold bawa-maju: $Threshold%"
-Write-Step "Dinilai: $nJudged (dibawa maju: $nCarried) | Basi: $nStale | Belum: $nUnjudged | GAGAL: $nFailed"
+Write-Step "Dinilai: $nJudged (dibawa maju: $nCarried) | Basi: $nStale | Belum: $nUnjudged | GAGAL: $nFailed | Tanpa berkas: $nOrphan"
+if ($nOrphan -gt 0) {
+    Write-Warn "Klaim tanpa screenshot yang cocok: $($orphanClaims -join ', ')"
+    Write-Warn "Layar yang dijanjikan klaim itu tidak ada di ShotsDir -- tur screenshot mungkin berhenti di tengah jalan."
+}
 Write-Host ""
 
 if ($Mode -eq "plan") {
@@ -350,6 +380,10 @@ if ($Mode -eq "plan") {
 if ($Mode -eq "check") {
     $problems = @()
     if ($nFailed -gt 0)   { $problems += "$nFailed klaim ber-verdict FAIL" }
+    # Klaim tanpa berkas TIDAK ikut -AllowUnjudged: "belum sempat dinilai" dan "layarnya
+    # tidak pernah dihasilkan" adalah dua masalah berbeda, dan yang kedua biasanya berarti
+    # tur screenshot rusak. Opt-out-nya per klaim ("optional": true), bukan per run.
+    if ($nOrphan -gt 0)   { $problems += "$nOrphan klaim tidak punya screenshot yang cocok ($($orphanClaims -join ', '))" }
     if (-not $AllowUnjudged) {
         if ($nUnjudged -gt 0) { $problems += "$nUnjudged klaim belum pernah dinilai" }
         if ($nStale -gt 0)    { $problems += "$nStale klaim basi (gambar berubah melebihi threshold)" }

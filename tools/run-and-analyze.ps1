@@ -798,7 +798,26 @@ if ($GodotExe -eq "") {
     Write-Warn "Gunakan -GodotExe untuk specify path, atau pastikan godot ada di PATH"
 }
 
+# Project tanpa run/main_scene tidak bisa dijalankan, dan Godot TIDAK keluar sendiri saat
+# diminta menjalankannya: ia mencetak "Can't run project: no main scene defined" lalu
+# menunggu selamanya. Tanpa penjagaan ini setiap run semacam itu membakar $Timeout penuh --
+# terukur 180 detik, 27% dari seluruh waktu self-test, untuk mengamati sesuatu yang sudah
+# bisa dipastikan dari satu baris di project.godot. Pelajaran yang sama sudah dipetik saat
+# --import di worktree dilewati untuk direktori yang bukan project Godot.
 if ($phase3Status -ne "skip_no_godot" -and (Test-Path -LiteralPath $projectGodot)) {
+    $mainSceneDefined = $false
+    try {
+        $pgContent = Get-Content -LiteralPath $projectGodot -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+        $mainSceneDefined = ($null -ne $pgContent -and $pgContent -match 'run/main_scene\s*=\s*"[^"]+"')
+    } catch { $mainSceneDefined = $false }
+    if (-not $mainSceneDefined) {
+        Write-Warn "project.godot tidak mendefinisikan run/main_scene -- fase RUN di-skip"
+        Write-Warn "Godot tidak akan keluar sendiri untuk project yang tidak bisa dijalankan; menunggunya hanya membakar timeout."
+        $phase3Status = "skip_no_main_scene"
+    }
+}
+
+if ($phase3Status -notin @("skip_no_godot", "skip_no_main_scene") -and (Test-Path -LiteralPath $projectGodot)) {
     $ts_run = Get-Date
     $scenarioLog = "$env:TEMP\kilo_scenario_stderr_$(Get-Date -Format 'yyyyMMddHHmmss').txt"
     try {
@@ -857,7 +876,7 @@ if ($phase3Status -ne "skip_no_godot" -and (Test-Path -LiteralPath $projectGodot
         } catch { }
     }
 
-} elseif ($phase3Status -ne "skip_no_godot") {
+} elseif ($phase3Status -notin @("skip_no_godot", "skip_no_main_scene")) {
     Write-Warn "project.godot tidak ditemukan — skip fase RUN"
     $phase3Status = "skip_no_project"
 }

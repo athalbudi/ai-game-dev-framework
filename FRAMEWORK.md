@@ -46,7 +46,7 @@ membaca nama lama, memindahkannya, lalu menuliskan nama baru — bukan sekadar f
 | `tools/run-and-analyze.ps1` | Loop otomatis QA: Observe, Generate, Run, Analyze, Report |
 | `tools/autonomous-qa.ps1` | Loop autonomous QA dengan anomaly detection dan iterasi mandiri |
 | `tools/feedback-bridge.ps1` | Petakan keluhan playtester ke screenshot dan lokasi kode |
-| `tools/test-pipeline.ps1` | Self-test framework (62 regression test) |
+| `tools/test-pipeline.ps1` | Self-test framework (63 regression test) |
 | `tools/_common.ps1` | Bersama: deteksi Godot/ImageMagick, pemetaan `user://`, metrik gambar |
 
 ### Commands (tersedia di semua project via global config)
