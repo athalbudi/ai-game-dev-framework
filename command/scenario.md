@@ -262,6 +262,38 @@ Jika scenario yang dibuat gagal dijalankan (harness error):
 | `repeat` | Ulangi steps N kali (field: `count`, `steps`) |
 | `seed_override` | Override random seed untuk determinisme (field: `seed`) |
 | `log` | Tulis pesan ke log scenario (field: `message`) |
+| `explore` | Klik tombol nyata di layar secara acak dengan invariant hidup — lihat `/explore` |
+
+## Status hasil: `pass`, `fail`, dan `inert`
+
+Selain `pass`/`fail`, scenario bisa berakhir **`inert`** (exit 1).
+
+Artinya scenario MENGIRIM INPUT tetapi tidak ada yang berubah: `game_state` identik dari
+awal sampai akhir (di luar field volatil seperti `timestamp`/`frame_count`) dan semua
+screenshot byte-identik. Scenario semacam itu tidak menguji apa pun, dan melabelinya `pass`
+adalah false-verify yang paling merugikan — ia bukan cuma gagal menemukan bug, ia memberi
+lampu hijau atas ketiadaan pengujian.
+
+Penyebab tersering: game mengambil jalur init minimal saat `--scenario` dan menampilkan
+layar kosong. Pastikan dengan `/game-doctor` dan step `explore`.
+
+Gerbang ini HANYA berlaku bila scenario punya langkah input (`action`, `mouse_click`,
+`touch_tap`, `controller_press`, `explore`) — termasuk yang bersarang di dalam `repeat`.
+Scenario yang isinya cuma screenshot tidak dikenainya. Opt-out per scenario:
+`"allow_inert": true`.
+
+## Membaca jumlah langkah
+
+`steps_pass + steps_fail + steps_skip` TIDAK menjumlah ke `steps_total` saat runner
+berhenti fail-fast. Selisihnya ada di **`steps_not_run`** — langkah yang tidak pernah
+dijalankan karena satu langkah sebelumnya gagal. Pakai field itu saat menghitung cakupan;
+`steps_skip: 0` tidak berarti semua langkah sempat berjalan.
+
+## Invariant
+
+Scenario juga bisa memuat kunci `"invariants"`, dan file `scenarios/invariants.json`
+berlaku untuk SEMUA scenario. Hasilnya muncul di `invariants_total`, `invariant_checks`,
+dan `invariant_violations`. Lihat `/invariant`.
 
 ## Operator assert_state
 
