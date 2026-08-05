@@ -46,6 +46,57 @@ and source locations they refer to.
 
 ---
 
+## What seeing alone cannot do
+
+Screenshots tell you what a screen looks like. They do not tell you whether it is *right*,
+and they never reach the paths nobody scripted. Four capabilities close those gaps.
+
+**Invariants** — claims checked after *every* step, not at the one point someone happened to
+put an assertion. `assert_state` is positional; a bug occurring between two assertions is
+invisible to it. Invariants are how the framework can catch "the player skipped something":
+progress rising without the effort that should have preceded it.
+
+```json
+{ "id": "progress_needs_effort",
+  "expr": "delta.levels_cleared <= delta.enemies_defeated",
+  "severity": "critical" }
+```
+
+**Exploration** — clicks real buttons found in the scene tree, at random, with invariants
+live. A written scenario only visits what its author already imagined, and the skippable
+path is by definition the one nobody imagined. When an invariant breaks, the click trail is
+minimized to the shortest sequence that still reproduces it — 40 clicks become 3, and 3 is
+something a human can read and a test can keep.
+
+**Visual verdicts** — a diff knows a screen *changed*; it never knows the screen is
+*correct*. Clipped text, mojibake, a button hidden behind a panel — only looking catches
+those, and that judgment used to evaporate when the conversation ended. Verdicts are now
+stored and pinned to the image that was judged, so they survive into the next session with
+a different model.
+
+**Static game checks** — some defects never reach a screenshot because they kill something
+first. Two scripts declaring the same `class_name` make Godot refuse to load *both*; the
+screen never builds, and the tour stops mid-way with nothing naming the cause.
+
+### A pass has to mean something
+
+The worst thing a harness can do is not missing a bug. It is reporting PASS over the absence
+of testing — because that failure is silent, and it compounds. Several checks exist only to
+make it impossible:
+
+- A scenario that sends input and changes neither state nor a single pixel reports `inert`,
+  never `pass`.
+- An exploration that clicked nothing **fails**. It explored nothing.
+- The harness counts screenshots produced by *this run*, not files sitting in the folder —
+  a tour that stops halfway can no longer be patched over by yesterday's leftovers.
+- `visual-review check` fails on a project that has never been judged. Silence is not
+  evidence that the screens are right.
+
+Every one of these was added after the framework reported success over nothing, on a real
+game, and the reports looked entirely reasonable at the time.
+
+---
+
 ## Quick start
 
 ### 0. Bootstrap (once per machine)
@@ -122,20 +173,31 @@ are hard to diagnose. `ErrorTracker` waits it out and then calls into your main 
 |---|---|
 | `tools/shot-harness.ps1` | Automated screenshot tour via the `--shot` flag |
 | `tools/shot-harness-unity.ps1` | Unity adapter |
-| `tools/visual-diff.ps1` | Visual regression comparison between builds |
+| `tools/visual-diff.ps1` | Visual regression, and *which kind* of change it is |
+| `tools/visual-review.ps1` | Durable visual verdicts, pinned to the judged image |
+| `tools/explore-minimize.ps1` | Shrink an exploration trail to a minimal reproducer |
+| `tools/game-doctor.ps1` | Static checks on the **game** project |
 | `tools/feedback-bridge.ps1` | Map playtester feedback to screenshots + code |
 | `tools/autonomous-qa.ps1` | Autonomous QA loop: observe → analyze → report |
 | `tools/run-and-analyze.ps1` | Run the game and analyze its output |
 | `tools/schema-migration.ps1` | Migrate manifest schema between versions |
-| `tools/doctor.ps1` | Health check for the installation |
-| `tools/test-pipeline.ps1` | Framework self-test (36 regression tests) |
-| `tools/_common.ps1` | Shared: Godot/ImageMagick detection, `user://` mapping |
+| `tools/doctor.ps1` | Health check for the **installation** |
+| `tools/test-pipeline.ps1` | Framework self-test (53 regression tests) |
+| `tools/_common.ps1` | Shared: Godot/ImageMagick detection, `user://` mapping, image metrics |
+
+`visual-diff` reports the kind of difference, not only its size — a percentage alone cannot
+separate a camera shake from a real regression:
+
+```
+REGRESI 04_battle.png - 24.75% pixel berubah (threshold: 1%)
+   -> GESER (5,-2): konten identik, sisa selisih 0%
+```
 
 ### Godot templates
 
 | File | Purpose | Autoload? |
 |---|---|---|
-| `godot-templates/ScenarioRunner.gd` | Automated gameplay testing (18 step types) | **No** |
+| `godot-templates/ScenarioRunner.gd` | Automated gameplay testing (19 step types, invariants, exploration) | **No** |
 | `godot-templates/GameStateWriter.gd` | Scene tracking + writes `game_state.json` | Yes |
 | `godot-templates/ErrorTracker.gd` | Error tracking + bootstraps `--scenario` | Yes |
 | `godot-templates/InputRecorder.gd` | Records input for bug replay | Yes |
@@ -158,17 +220,28 @@ Installed to `.kilo/command/` by `-InitProject`:
 |---|---|
 | `/shot` | Run the screenshot harness |
 | `/scenario` | Run automated scenario testing |
+| `/invariant` | Declare and check rules that hold across the whole run |
+| `/explore` | Explore unscripted paths, then minimize the failing trail |
+| `/visual-review` | Judge screens, record verdicts, gate on them |
+| `/game-doctor` | Static checks on the game project |
 | `/analisis-feedback` | Analyze playtester feedback through the bridge |
 | `/analisis-shot` | Analyze screenshots for visual QA |
 | `/baseline` | Set the visual regression baseline |
 | `/record` | Record a gameplay session for bug replay |
+| `/autonomous-qa` | Run the autonomous observe → analyze → report loop |
+| `/ci-setup` | Generate CI workflows |
+
+Each command file carries the *reasoning* behind its capability, not only its syntax — an
+agent reading `/explore` learns that zero clicks is a failure and that trail minimization is
+1-minimal rather than globally minimal, because both change how the output should be read.
 
 ---
 
 ## How this is verified
 
-The framework tests itself: `tools/test-pipeline.ps1` runs 36 regression tests covering the
-harness, the gate, path resolution, bootstrap, and project integration.
+The framework tests itself: `tools/test-pipeline.ps1` runs 53 regression tests covering the
+harness, the gate, path resolution, bootstrap, project integration, invariants, exploration,
+visual verdicts, and the static game checks.
 
 One rule governs every test, and it is the reason to trust the number:
 
@@ -207,6 +280,20 @@ on Indonesian folklore, carrying it from prototype through four rounds of playte
 - **The screenshot tour is yours to write.** No tool can know which screens matter in your
   game or how to navigate to them. Everything mechanical around it is automated; that part
   is not.
+- **Invariants cannot be inferred.** They state design intent, and that only exists in your
+  head. The framework can check a rule relentlessly; it cannot guess the rule. The cost is
+  small — five to ten lines of JSON usually covers most of a game — and they then apply to
+  every scenario you already have.
+- **Visual verdicts need a model that can see.** The framework stores the judgment, pins it
+  to the exact image, and invalidates it when that image changes. It does not make the
+  judgment.
+- **Trail minimization is 1-minimal, not globally minimal.** Replay is coordinate-based, so
+  removing a click in the middle shifts what later clicks land on. It will tell you no single
+  click can be dropped; it will not always find the theoretical shortest path.
+- **What it finds well is infrastructure.** Non-determinism, dead input paths, clipped
+  layout, encoding damage, screens that never render — these it catches reliably. Whether a
+  shortcut is an exploit or an intended route is a design question, and design questions
+  still need you.
 
 ---
 
