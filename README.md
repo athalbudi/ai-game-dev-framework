@@ -187,7 +187,7 @@ are hard to diagnose. `ErrorTracker` waits it out and then calls into your main 
 | `tools/run-and-analyze.ps1` | Run the game and analyze its output |
 | `tools/schema-migration.ps1` | Migrate manifest schema between versions |
 | `tools/doctor.ps1` | Health check for the **installation** |
-| `tools/test-pipeline.ps1` | Framework self-test (58 regression tests) |
+| `tools/test-pipeline.ps1` | Framework self-test (59 regression tests) |
 | `tools/_common.ps1` | Shared: Godot/ImageMagick detection, `user://` mapping, image metrics |
 
 `visual-diff` reports the kind of difference, not only its size — a percentage alone cannot
@@ -245,7 +245,7 @@ read.
 
 ## How this is verified
 
-The framework tests itself: `tools/test-pipeline.ps1` runs 58 regression tests covering the
+The framework tests itself: `tools/test-pipeline.ps1` runs 59 regression tests covering the
 harness, the gate, path resolution, bootstrap, project integration, invariants, exploration,
 visual verdicts, and the static game checks.
 

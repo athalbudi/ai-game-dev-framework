@@ -4111,6 +4111,172 @@ func _get_game_state() -> Dictionary:
 }
 Write-S
 
+# ── TEST 54: game_state.json dari run LAIN bukan bukti tentang run ini ───────
+# Temuan terberat dari sapuan "seperti apa rupanya PASS palsu di sini": game_state.json
+# bertahan antar-run, dan _read_game_state() tidak pernah memeriksa kesegarannya. Kalau
+# penulis state run ini tidak berjalan, berkas run SEBELUMNYA terbaca seolah keadaan
+# sekarang. Terukur terhadap kode ter-commit: project tanpa penyedia state sama sekali,
+# game_state.json berumur 2 jam berisi {"score": 999} -> assert_state score==999 PASS,
+# scenario PASS. Mekanisme kebenaran utama framework meng-assert terhadap data run lain.
+#
+# Empat kontrak. Yang ketiga dan keempat menjaga perbaikannya sendiri: state SEGAR harus
+# tetap diterima, dan berkas yang MEMANG belum pernah ada tetap skip -- itu fase prototype
+# yang sengaja didukung, dan mengubahnya jadi fail akan menghukum project yang sah.
+Write-T "TEST 54: state basi ditolak, state segar diterima, fase prototype tetap skip"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "game_state basi ditolak + prototype tetap skip" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t54Base  = Join-Path $env:TEMP "kilo_t54_$($PID)_$(Get-Date -Format 'HHmmss')"
+    $t54Probs = @()
+    $noBom54  = New-Object System.Text.UTF8Encoding($false)
+    $t54Tmpl  = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+    try {
+        function New-T54Project {
+            param([string] $Name, [string] $MainGd, [bool] $WithWriter)
+            $d = Join-Path $t54Base $Name
+            $null = New-Item -ItemType Directory -Path "$d\scripts"   -Force
+            $null = New-Item -ItemType Directory -Path "$d\scenarios" -Force
+            $tmpls = if ($WithWriter) { @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd") }
+                     else             { @("ErrorTracker.gd", "ScenarioRunner.gd") }
+            foreach ($t in $tmpls) {
+                $raw = [System.IO.File]::ReadAllBytes((Join-Path $t54Tmpl $t))
+                $off = if ($raw.Length -ge 3 -and $raw[0] -eq 0xEF) { 3 } else { 0 }
+                [System.IO.File]::WriteAllText("$d\scripts\$t",
+                    [System.Text.Encoding]::UTF8.GetString($raw, $off, $raw.Length - $off), $noBom54)
+            }
+            $auto = if ($WithWriter) { "GameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n" }
+                    else             { "ErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n" }
+            [System.IO.File]::WriteAllText("$d\project.godot",
+                "config_version=5`n`n[application]`nconfig/name=`"$Name`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`n$auto", $noBom54)
+            [System.IO.File]::WriteAllText("$d\main.tscn",
+                "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom54)
+            [System.IO.File]::WriteAllText("$d\main.gd", $MainGd, $noBom54)
+            $null = Start-Process $GodotExe -ArgumentList "--path", "`"$d`"", "--headless", "--import", "--quit" `
+                -PassThru -NoNewWindow -Wait
+            return $d
+        }
+        function Invoke-T54 {
+            param([string] $Dir, [string] $Name, [string] $Scenario)
+            $shots = "$env:APPDATA\Godot\app_userdata\$Name\shots"
+            $res   = Join-Path $shots "scenario_result.json"
+            Remove-Item -LiteralPath $res -Force -ErrorAction SilentlyContinue
+            $p = Start-Process $GodotExe -ArgumentList "--path", "`"$Dir`"", "--", "--scenario", "res://scenarios/$Scenario.json" `
+                -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+            if ($p) { $p.Handle | Out-Null; $p.WaitForExit(60000) | Out-Null; if (-not $p.HasExited) { $p.Kill() } }
+            if (-not (Test-Path -LiteralPath $res)) { return $null }
+            return (Get-Content -LiteralPath $res -Raw -Encoding UTF8 | ConvertFrom-Json)
+        }
+
+        # ── P1: TANPA penyedia state apa pun ──────────────────────────────────
+        $mainKosong = @'
+extends Node
+
+func _ready() -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+'@
+        $d1 = New-T54Project -Name "KiloT54A" -MainGd $mainKosong -WithWriter $false
+        [System.IO.File]::WriteAllText("$d1\scenarios\cek.json",
+            '{"scenario_id":"cek","steps":[{"type":"wait_frames","frames":20},{"type":"assert_state","key":"score","op":"eq","expected":999}]}', $noBom54)
+        $shots1 = "$env:APPDATA\Godot\app_userdata\KiloT54A\shots"
+        $null   = New-Item -ItemType Directory -Path $shots1 -Force
+
+        # -- kontrak 1: berkas BASI -> fail ----------------------------------------
+        $gs1 = Join-Path $shots1 "game_state.json"
+        [System.IO.File]::WriteAllText($gs1, '{"schema_version":"1.0","score":999}', $noBom54)
+        (Get-Item -LiteralPath $gs1).LastWriteTime = (Get-Date).AddHours(-2)
+        $r1 = Invoke-T54 -Dir $d1 -Name "KiloT54A" -Scenario "cek"
+        if ($null -eq $r1) {
+            $t54Probs += "basi: scenario_result.json tidak ditulis"
+        } else {
+            if ("$($r1.status)" -ne "fail") {
+                $t54Probs += "basi: status '$($r1.status)', harus 'fail' -- state run lain bukan bukti run ini"
+            }
+            $rs1 = (@($r1.step_results | ForEach-Object {
+                if (@($_.PSObject.Properties | ForEach-Object { $_.Name }) -contains "reason") { "$($_.reason)" }
+            }) -join " ")
+            if ($rs1 -notmatch "tidak ditulis run ini") {
+                $t54Probs += "basi: pesan tidak membedakan 'basi' dari 'belum ada'"
+            }
+        }
+
+        # -- kontrak 2: berkas TIDAK ADA -> tetap skip (fase prototype) -------------
+        Remove-Item -LiteralPath $gs1 -Force -ErrorAction SilentlyContinue
+        $r2 = Invoke-T54 -Dir $d1 -Name "KiloT54A" -Scenario "cek"
+        if ($null -eq $r2) {
+            $t54Probs += "kosong: scenario_result.json tidak ditulis"
+        } elseif ([int]$r2.steps_skip -lt 1) {
+            $t54Probs += "kosong: steps_skip=$($r2.steps_skip), harus >=1 -- fase prototype tidak boleh berubah jadi fail"
+        }
+
+        # ── P2: penulis yang TIDAK menulis apa-apa ────────────────────────────
+        # _write_game_state() milik game menang atas GameStateWriter, jadi ini persis
+        # bentuk "_get_game_state() melempar sebelum sempat menulis".
+        $mainBohong = @'
+extends Node
+
+func _ready() -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+
+func _write_game_state() -> void:
+	pass
+'@
+        $d2 = New-T54Project -Name "KiloT54B" -MainGd $mainBohong -WithWriter $true
+        [System.IO.File]::WriteAllText("$d2\scenarios\tulis.json",
+            '{"scenario_id":"tulis","steps":[{"type":"wait_frames","frames":20},{"type":"write_state"}]}', $noBom54)
+        $shots2 = "$env:APPDATA\Godot\app_userdata\KiloT54B\shots"
+        $null   = New-Item -ItemType Directory -Path $shots2 -Force
+        $gs2 = Join-Path $shots2 "game_state.json"
+        [System.IO.File]::WriteAllText($gs2, '{"schema_version":"1.0","score":1}', $noBom54)
+        (Get-Item -LiteralPath $gs2).LastWriteTime = (Get-Date).AddHours(-2)
+        $r3 = Invoke-T54 -Dir $d2 -Name "KiloT54B" -Scenario "tulis"
+        if ($null -eq $r3) {
+            $t54Probs += "penulis-bohong: scenario_result.json tidak ditulis"
+        } elseif ("$($r3.status)" -ne "fail") {
+            $t54Probs += "penulis-bohong: status '$($r3.status)', harus 'fail' -- write_state dipanggil tapi berkas tak berubah"
+        }
+
+        # ── P3: penyedia state SEHAT -> harus lulus ───────────────────────────
+        $mainSehat = @'
+extends Node
+
+func _ready() -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+
+func _get_game_state() -> Dictionary:
+	return {"schema_version": "1.0", "score": 999}
+'@
+        $d3 = New-T54Project -Name "KiloT54C" -MainGd $mainSehat -WithWriter $true
+        [System.IO.File]::WriteAllText("$d3\scenarios\sehat.json",
+            '{"scenario_id":"sehat","steps":[{"type":"wait_frames","frames":20},{"type":"write_state"},{"type":"assert_state","key":"score","op":"eq","expected":999}]}', $noBom54)
+        $r4 = Invoke-T54 -Dir $d3 -Name "KiloT54C" -Scenario "sehat"
+        if ($null -eq $r4) {
+            $t54Probs += "sehat: scenario_result.json tidak ditulis"
+        } elseif ("$($r4.status)" -ne "pass") {
+            $rs4 = (@($r4.step_results | ForEach-Object {
+                if (@($_.PSObject.Properties | ForEach-Object { $_.Name }) -contains "reason") { "$($_.reason)" }
+            }) -join " ")
+            $t54Probs += "sehat: status '$($r4.status)', harus 'pass' -- state yang ditulis run ini harus diterima [$rs4]"
+        }
+
+        Add-Result "game_state basi ditolak + prototype tetap skip" ($t54Probs.Count -eq 0) `
+            $(if ($t54Probs.Count -eq 0) { "basi->fail, tidak-ada->skip, penulis-bohong->fail, sehat->pass" } else { ($t54Probs -join " | ") })
+    } catch {
+        Add-Result "game_state basi ditolak + prototype tetap skip" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t54Base -Recurse -Force -ErrorAction SilentlyContinue
+        foreach ($n in @("KiloT54A", "KiloT54B", "KiloT54C")) {
+            Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\$n" -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."

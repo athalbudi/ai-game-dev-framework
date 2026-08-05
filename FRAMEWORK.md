@@ -46,7 +46,7 @@ membaca nama lama, memindahkannya, lalu menuliskan nama baru — bukan sekadar f
 | `tools/run-and-analyze.ps1` | Loop otomatis QA: Observe, Generate, Run, Analyze, Report |
 | `tools/autonomous-qa.ps1` | Loop autonomous QA dengan anomaly detection dan iterasi mandiri |
 | `tools/feedback-bridge.ps1` | Petakan keluhan playtester ke screenshot dan lokasi kode |
-| `tools/test-pipeline.ps1` | Self-test framework (58 regression test) |
+| `tools/test-pipeline.ps1` | Self-test framework (59 regression test) |
 | `tools/_common.ps1` | Bersama: deteksi Godot/ImageMagick, pemetaan `user://`, metrik gambar |
 
 ### Commands (tersedia di semua project via global config)
@@ -347,6 +347,31 @@ memberi rasa aman yang tidak pernah diperiksa. Versi pertama fungsi ini melangga
 ia mencari field bernama `steps` padahal ScenarioRunner menulis `step_results`, lalu melapor
 `captured: true, count: 0`. Sekarang daftar langkah yang tidak ketemu menghasilkan
 `captured: false` beserta catatan sebabnya.
+
+### Bukti harus berasal dari run ini
+
+Tiga berkas bertahan antar-run — `game_state.json`, screenshot, dan `scenario_result.json` —
+dan ketiganya terlihat persis sama entah dihasilkan run ini atau run bulan lalu. Hanya yang
+pertama yang jadi bukti.
+
+| Permukaan | Dulu | Sekarang |
+|---|---|---|
+| `assert_state` / `wait_condition` / invariant / liveness | membaca `game_state.json` apa adanya | berkas yang lebih tua dari waktu mulai scenario diperlakukan sebagai TIDAK ADA |
+| `write_state` | memanggil penulis lalu lulus | berkasnya wajib benar-benar berubah |
+| `screenshot` | `save_png()` diabaikan nilai baliknya | gagal simpan = langkah gagal |
+| `assert_screenshot_exists` | berkas ada = lulus | wajib dihasilkan run ini, kecuali `allow_stale` |
+| harness | menghitung PNG di folder | menghitung yang dihasilkan run ini |
+
+Yang `game_state.json` paling berat, dan penjagaannya sengaja ditaruh di dalam
+`_read_game_state()` alih-alih di tiap pemanggil — keenam konsumen state lewat sana, jadi
+satu titik melindungi semuanya. Terukur terhadap kode sebelum perbaikan: project tanpa
+penyedia state sama sekali, `game_state.json` berumur dua jam berisi `{"score": 999}`, dan
+`assert_state score == 999` **PASS**. Mekanisme kebenaran utama framework meng-assert
+terhadap data run lain lalu melapor sukses.
+
+Dua sebab dibedakan karena perbaikannya berlawanan: berkas yang **belum pernah ada** tetap
+`skip` (fase prototype memang didukung), berkas yang **ada tapi basi** `fail` — ia terlihat
+seperti bukti, dan justru itu yang membuatnya berbahaya.
 
 ### Eksplorasi dan minimisasi jejak
 

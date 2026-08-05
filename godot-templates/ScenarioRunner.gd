@@ -1013,6 +1013,21 @@ func _exec_write_state(step: Dictionary) -> void:
 		return
 	writer.call("_write_game_state")
 	await _wait_frames(1)
+	# Memanggil penulisnya bukan bukti berkasnya tertulis. Kalau _get_game_state() milik game
+	# melempar di tengah jalan, panggilan ini tetap "berhasil" dan berkas lama dari run
+	# sebelumnya tetap di tempatnya -- lalu seluruh assert_state sesudahnya meng-assert
+	# terhadap data run lain. Langkah ini yang paling murah untuk menangkapnya.
+	var path := "user://shots/game_state.json"
+	if not FileAccess.file_exists(path):
+		_step_fail("write_state: %s memang dipanggil tetapi game_state.json tidak ada" % writer.name)
+		return
+	var mtime := float(FileAccess.get_modified_time(path))
+	if mtime > 0.0 and mtime + 2.0 < _scenario_start_time:
+		_step_fail(("write_state: %s dipanggil tetapi game_state.json tidak berubah -- " +
+			"isinya masih dari run sebelumnya (berkas: %d, mulai: %d). " +
+			"Periksa apakah _get_game_state() melempar sebelum sempat menulis.")
+			% [writer.name, int(mtime), int(_scenario_start_time)])
+		return
 	_step_pass({"writer": writer.name})
 
 
@@ -1026,6 +1041,15 @@ func _exec_assert_state(step: Dictionary) -> void:
 		await _wait_frames(1)
 	var state := _read_game_state()
 	if state.is_empty():
+		# Dua sebab, gejalanya sama-sama "tidak ada state", perbaikannya berlawanan.
+		# Yang basi HARUS gagal: berkasnya ada, terlihat seperti bukti, dan bukan bukti.
+		# Yang belum pernah ada tetap skip -- itu fase prototype yang memang didukung.
+		if _state_stale_path != "":
+			_step_fail(("game_state.json ADA tetapi tidak ditulis run ini -- isinya dari run " +
+				"sebelumnya, jadi bukan bukti apa pun tentang run ini. " +
+				"Penyebab tersering: GameStateWriter tidak terdaftar sebagai autoload, atau " +
+				"_get_game_state() milik game melempar sebelum sempat menulis."))
+			return
 		_step_skip("game_state.json belum ada")
 		return
 	var actual: Variant = _resolve_dot_key(state, key)
@@ -1295,9 +1319,30 @@ func _wait_frames(count: int) -> void:
 		await get_tree().process_frame
 
 
+## Dibaca oleh assert_state, wait_condition, invariant, dan gerbang liveness -- karena itu
+## penjagaannya ditaruh di SINI, bukan di masing-masing pemanggil.
+##
+## game_state.json bertahan antar-run. Kalau penulis state run ini tidak berjalan (autoload
+## tidak terdaftar, atau _get_game_state() milik game melempar di tengah jalan), berkas dari
+## run SEBELUMNYA masih tergeletak di sana dan terbaca seolah keadaan sekarang. Terukur:
+## project tanpa penyedia state sama sekali, game_state.json berumur 2 jam berisi
+## {"score": 999} -> `assert_state score == 999` PASS, scenario PASS. Mekanisme kebenaran
+## utama framework meng-assert terhadap data run lain lalu melapor sukses.
+##
+## Pelajaran yang sama sudah dipetik dua kali (harness menghitung screenshot yang dihasilkan
+## run ini; assert_screenshot_exists menolak PNG basi) tapi belum pernah diterapkan ke state.
+var _state_stale_path: String = ""
+
 func _read_game_state() -> Dictionary:
 	var path := "user://shots/game_state.json"
+	_state_stale_path = ""
 	if not FileAccess.file_exists(path):
+		return {}
+	# Toleransi 2 detik: get_modified_time bergranularitas detik, dan langkah pertama bisa
+	# berjalan pada detik yang sama dengan waktu mulai scenario.
+	var mtime := float(FileAccess.get_modified_time(path))
+	if mtime > 0.0 and mtime + 2.0 < _scenario_start_time:
+		_state_stale_path = path
 		return {}
 	var f := FileAccess.open(path, FileAccess.READ)
 	if not f:
