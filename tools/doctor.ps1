@@ -245,7 +245,7 @@ func _ready() -> void:
 
             $fails = @()
             if (Test-Path -LiteralPath $checkLog) {
-                $fails = @(Get-Content $checkLog -ErrorAction SilentlyContinue | Where-Object {
+                $fails = @(Get-Content $checkLog -Encoding UTF8 -ErrorAction SilentlyContinue | Where-Object {
                     $_ -match "COMPILE_FAIL|Parse Error|Compile Error" -and $_ -notmatch "GDScript::reload"
                 })
                 Remove-Item -LiteralPath $checkLog -ErrorAction SilentlyContinue
@@ -259,7 +259,7 @@ func _ready() -> void:
             $ranProof   = $false
             $resultLine = ""
             if (Test-Path -LiteralPath $checkOut) {
-                $outLines   = @(Get-Content $checkOut -ErrorAction SilentlyContinue)
+                $outLines   = @(Get-Content $checkOut -Encoding UTF8 -ErrorAction SilentlyContinue)
                 $resultLine = ($outLines | Where-Object { $_ -match "^RESULT:\s*(\d+)\s+failures" } | Select-Object -First 1)
                 $okCount    = @($outLines | Where-Object { $_ -match "^COMPILE_OK:" }).Count
                 # Checker dianggap benar-benar jalan hanya jika ia sempat mencetak RESULT

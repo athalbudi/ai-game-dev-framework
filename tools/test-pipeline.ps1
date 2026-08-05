@@ -3838,6 +3838,139 @@ Add-Result "step type asing gagal + dispatcher/dokumentasi sepadan" ($t51Probs.C
     $(if ($t51Probs.Count -eq 0) { "21 step type, dispatcher = KNOWN_STEP_TYPES = tabel dokumentasi; 'swipe' -> fail" } else { ($t51Probs -join " | ") })
 Write-S
 
+# ── TEST 52: diagnostik engine menempel pada langkah yang menghasilkannya ────
+# scenario_result.json ditulis dari DALAM Godot, dan GDScript tidak punya kait untuk error
+# engine. Akibatnya laporan hanya memuat gejala. Fixture ini kasus lengkapnya:
+#
+#   step 2 click_button  -> PASS, padahal handler-nya crash (akses properti pada Nil)
+#   step 3 assert_state  -> FAIL "score = 0.0, expected gt 100.0"
+#
+# Pembaca laporan lama hanya melihat "score = 0" dan tidak punya jalan ke sebabnya. Yang
+# menempel bukan cuma pada langkah yang GAGAL -- error selama langkah yang LULUS justru
+# yang paling tak terlihat, dan itulah kasus di sini.
+#
+# Kontrak ketiga yang paling mudah dilanggar diam-diam: kalau log tidak tertangkap, itu
+# harus TERCATAT. Laporan tanpa error dan laporan yang tidak pernah melihat error tidak
+# boleh terbaca sama.
+Write-T "TEST 52: diagnostik engine menempel ke langkah, dan log tak tertangkap dicatat"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "log Godot menempel ke langkah + fail-closed saat tak tertangkap" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t52Dir = Join-Path $env:TEMP "kilo_t52_$($PID)_$(Get-Date -Format 'HHmmss')"
+    $t52Probs = @()
+    try {
+        $null = New-Item -ItemType Directory -Path "$t52Dir\scripts" -Force
+        $null = New-Item -ItemType Directory -Path "$t52Dir\scenarios" -Force
+        $noBom52 = New-Object System.Text.UTF8Encoding($false)
+        $t52Tmpl = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+        foreach ($tmpl in @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd")) {
+            $rawT = [System.IO.File]::ReadAllBytes((Join-Path $t52Tmpl $tmpl))
+            $offT = if ($rawT.Length -ge 3 -and $rawT[0] -eq 0xEF) { 3 } else { 0 }
+            [System.IO.File]::WriteAllText("$t52Dir\scripts\$tmpl",
+                [System.Text.Encoding]::UTF8.GetString($rawT, $offT, $rawT.Length - $offT), $noBom52)
+        }
+        [System.IO.File]::WriteAllText("$t52Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"KiloT52`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`nGameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n", $noBom52)
+        [System.IO.File]::WriteAllText("$t52Dir\main.tscn",
+            "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom52)
+        [System.IO.File]::WriteAllText("$t52Dir\main.gd", @'
+extends Node
+
+var _boomed := false
+
+func _ready() -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+	var b := Button.new()
+	b.text = "Boom"
+	b.position = Vector2(100, 100)
+	b.size = Vector2(200, 50)
+	root.add_child(b)
+	b.pressed.connect(_on_boom)
+
+func _on_boom() -> void:
+	_boomed = true
+	var n: Node = null
+	print("child: ", n.get_child_count())
+
+func _get_game_state() -> Dictionary:
+	return {"boomed": _boomed, "score": 0}
+'@, $noBom52)
+        [System.IO.File]::WriteAllText("$t52Dir\scenarios\boom.json",
+            '{"scenario_id":"boom","steps":[{"type":"wait_frames","frames":30},{"type":"click_button","label":"Boom","wait_frames":10},{"type":"assert_state","key":"score","op":"gt","expected":100}]}', $noBom52)
+
+        $null = Start-Process $GodotExe -ArgumentList "--path", "`"$t52Dir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+
+        $t52Log = Join-Path $t52Dir "run.log"
+        $t52Res = "$env:APPDATA\Godot\app_userdata\KiloT52\shots\scenario_result.json"
+        Remove-Item -LiteralPath $t52Res -Force -ErrorAction SilentlyContinue
+        $pr52 = Start-Process $GodotExe `
+            -ArgumentList "--path", "`"$t52Dir`"", "--log-file", "`"$t52Log`"", "--", "--scenario", "res://scenarios/boom.json" `
+            -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+        if ($pr52) { $pr52.Handle | Out-Null; $pr52.WaitForExit(60000) | Out-Null; if (-not $pr52.HasExited) { $pr52.Kill() } }
+
+        if (-not (Test-Path -LiteralPath $t52Log)) {
+            $t52Probs += "--log-file tidak menghasilkan berkas -- korelasi tidak mungkin"
+        }
+        if (-not (Test-Path -LiteralPath $t52Res)) {
+            $t52Probs += "scenario_result.json tidak ditulis"
+        } else {
+            $ok52 = Add-GodotLogToScenarioResult -LogPath $t52Log -ResultPath $t52Res
+            if (-not $ok52) { $t52Probs += "Add-GodotLogToScenarioResult melapor gagal padahal log ada" }
+            $r52 = Get-Content -LiteralPath $t52Res -Raw -Encoding UTF8 | ConvertFrom-Json
+            $names52 = @($r52.PSObject.Properties | ForEach-Object { $_.Name })
+            if ($names52 -notcontains "godot_log_captured" -or -not $r52.godot_log_captured) {
+                $t52Probs += "godot_log_captured tidak true"
+            }
+            # -- kontrak 1: SCRIPT ERROR menempel pada langkah 1 (click_button), yang LULUS --
+            $steps52 = @($r52.step_results)
+            $s1 = @($steps52 | Where-Object { [int]$_.step -eq 1 })
+            if ($s1.Count -ne 1) {
+                $t52Probs += "langkah index 1 tidak ada di step_results"
+            } else {
+                $n1 = @($s1[0].PSObject.Properties | ForEach-Object { $_.Name })
+                if ($n1 -notcontains "godot_log") {
+                    $t52Probs += "SCRIPT ERROR tidak menempel pada langkah 1 (click_button)"
+                } elseif (($s1[0].godot_log -join "`n") -notmatch "SCRIPT ERROR.*get_child_count") {
+                    $t52Probs += "godot_log langkah 1 tidak memuat SCRIPT ERROR yang diharapkan"
+                }
+                if ("$($s1[0].status)" -ne "pass") {
+                    $t52Probs += "prasyarat fixture hilang: langkah 1 harus 'pass' (status: $($s1[0].status))"
+                }
+            }
+            # -- kontrak 2: penunjuk ke diagnostik paling awal --------------------------
+            if ($names52 -notcontains "godot_log_first_step" -or [int]$r52.godot_log_first_step -ne 1) {
+                $t52Probs += "godot_log_first_step harus 1 (langkah tempat error pertama terjadi)"
+            }
+        }
+
+        # -- kontrak 3: log hilang -> DICATAT, bukan diam-diam terlihat bersih ----------
+        if (Test-Path -LiteralPath $t52Res) {
+            $t52Res2 = Join-Path $t52Dir "hasil_tanpa_log.json"
+            Copy-Item -LiteralPath $t52Res -Destination $t52Res2 -Force
+            $ok52b = Add-GodotLogToScenarioResult -LogPath (Join-Path $t52Dir "tidak_ada.log") -ResultPath $t52Res2
+            if ($ok52b) { $t52Probs += "log hilang tetap melapor sukses" }
+            $r52b = Get-Content -LiteralPath $t52Res2 -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($r52b.godot_log_captured) {
+                $t52Probs += "godot_log_captured tetap true padahal log tidak ada -- terbaca seperti 'tidak ada error'"
+            }
+            $n52b = @($r52b.PSObject.Properties | ForEach-Object { $_.Name })
+            if ($n52b -notcontains "godot_log_note") { $t52Probs += "tidak ada godot_log_note yang menjelaskan sebabnya" }
+        }
+
+        Add-Result "log Godot menempel ke langkah + fail-closed saat tak tertangkap" ($t52Probs.Count -eq 0) `
+            $(if ($t52Probs.Count -eq 0) { "SCRIPT ERROR menempel di langkah 1 yang LULUS; log hilang -> captured=false + catatan" } else { ($t52Probs -join " | ") })
+    } catch {
+        Add-Result "log Godot menempel ke langkah + fail-closed saat tak tertangkap" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t52Dir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\KiloT52" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+Write-S
+
 if (-not $KeepFixtures) {
     try { Remove-Item -LiteralPath $tmpBase -Recurse -Force -ErrorAction SilentlyContinue } catch { }
     Write-T "Fixture dihapus."

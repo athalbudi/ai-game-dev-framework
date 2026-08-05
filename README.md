@@ -91,9 +91,14 @@ make it impossible:
   a tour that stops halfway can no longer be patched over by yesterday's leftovers.
 - `visual-review check` fails on a project that has never been judged. Silence is not
   evidence that the screens are right.
+- A step type the runner does not implement **fails**. It used to be skipped — so a scenario
+  whose every step was a typo finished `pass` without sending a single input.
+- Engine errors are attached to the step that produced them, and a report that could not read
+  the engine log says so. "No errors found" and "never looked" must not read the same.
 
 Every one of these was added after the framework reported success over nothing, on a real
-game, and the reports looked entirely reasonable at the time.
+game, and the reports looked entirely reasonable at the time. The last two were found in the
+framework's own code, by turning its rules on itself.
 
 ---
 
@@ -182,7 +187,7 @@ are hard to diagnose. `ErrorTracker` waits it out and then calls into your main 
 | `tools/run-and-analyze.ps1` | Run the game and analyze its output |
 | `tools/schema-migration.ps1` | Migrate manifest schema between versions |
 | `tools/doctor.ps1` | Health check for the **installation** |
-| `tools/test-pipeline.ps1` | Framework self-test (55 regression tests) |
+| `tools/test-pipeline.ps1` | Framework self-test (57 regression tests) |
 | `tools/_common.ps1` | Shared: Godot/ImageMagick detection, `user://` mapping, image metrics |
 
 `visual-diff` reports the kind of difference, not only its size — a percentage alone cannot
@@ -240,7 +245,7 @@ read.
 
 ## How this is verified
 
-The framework tests itself: `tools/test-pipeline.ps1` runs 55 regression tests covering the
+The framework tests itself: `tools/test-pipeline.ps1` runs 57 regression tests covering the
 harness, the gate, path resolution, bootstrap, project integration, invariants, exploration,
 visual verdicts, and the static game checks.
 

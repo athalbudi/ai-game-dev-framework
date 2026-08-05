@@ -364,3 +364,135 @@ function Get-ImageChangePercent {
     } catch { }
     return -1.0
 }
+
+
+# ── Diagnostik engine ditempelkan ke langkah yang menghasilkannya ─────────────
+# scenario_result.json ditulis DARI DALAM Godot, dan GDScript tidak punya kait untuk
+# error engine. Akibatnya keluhan engine hanya ada di konsol dan hilang dari laporan --
+# yang tersisa cuma gejala. Terukur pada fixture:
+#
+#   [scenario] step 2/3: click_button
+#   SCRIPT ERROR: Cannot call method 'get_child_count' on a null value.
+#   [scenario] PASS: click_button
+#   [scenario] step 3/3: assert_state
+#   [scenario] FAIL: assert_state gagal: score = 0.0, expected gt 100.0
+#
+# Langkah 2 LULUS padahal handler-nya crash; langkah 3 gagal membawa gejala, bukan sebab.
+# Agen yang membaca laporan hanya melihat "score = 0" dan tidak punya jalan ke penyebabnya.
+#
+# `--log-file` menyatukan stdout dan stderr dalam satu berkas berurutan, sehingga posisi
+# baris cukup untuk mengembalikan korelasinya: setiap diagnostik milik langkah yang
+# penanda "[scenario] step N/M:"-nya terakhir muncul sebelum baris itu.
+
+# Diagnostik dilekatkan ke SEMUA langkah yang jendelanya memuatnya, bukan hanya yang gagal.
+# Error yang terjadi selama langkah "lulus" justru yang paling tak terlihat -- persis kasus
+# di atas.
+function Get-GodotLogDiagnostics {
+    param([Parameter(Mandatory)][string] $LogPath)
+
+    $byStep = @{}
+    if (-not (Test-Path -LiteralPath $LogPath)) { return $byStep }
+
+    $curStep  = -1        # -1 = sebelum langkah pertama (bootstrap/autoload)
+    $curBlock = $null
+    $lines    = @(Get-Content -LiteralPath $LogPath -Encoding UTF8 -ErrorAction SilentlyContinue)
+
+    function Add-Block([hashtable] $map, [int] $step, [string[]] $block) {
+        if ($null -eq $block -or $block.Count -eq 0) { return }
+        if (-not $map.ContainsKey($step)) { $map[$step] = @() }
+        $map[$step] += ,(($block -join "`n"))
+    }
+
+    foreach ($line in $lines) {
+        if ($line -match '^\[scenario\] step (\d+)/\d+:') {
+            Add-Block $byStep $curStep $curBlock
+            $curBlock = $null
+            $curStep  = [int]$Matches[1] - 1      # step di JSON berbasis 0
+            continue
+        }
+        # Baris awal diagnostik. USER ERROR/USER WARNING berasal dari push_error/push_warning.
+        if ($line -match '^(USER )?(SCRIPT ERROR|ERROR|WARNING):') {
+            Add-Block $byStep $curStep $curBlock
+            # Diagnostik yang dipancarkan runner sendiri (invariant, dsb.) sudah punya
+            # representasinya di laporan. Menyalinnya lagi ke sini hanya membuat pembaca
+            # mengira ada dua masalah.
+            if ($line -match '\[scenario\]') { $curBlock = $null; continue }
+            $curBlock = @($line)
+            continue
+        }
+        # Lanjutan diagnostik: baris berindentasi ("   at: ...", backtrace).
+        if ($null -ne $curBlock -and $line -match '^\s+\S') {
+            $curBlock += $line
+            continue
+        }
+        Add-Block $byStep $curStep $curBlock
+        $curBlock = $null
+    }
+    Add-Block $byStep $curStep $curBlock
+    return $byStep
+}
+
+
+# Menulis diagnostik ke scenario_result.json. Kalau log tidak tertangkap, itu DICATAT --
+# laporan tanpa error dan laporan yang tidak pernah melihat error tidak boleh terlihat sama.
+function Add-GodotLogToScenarioResult {
+    param(
+        [Parameter(Mandatory)][string] $LogPath,
+        [Parameter(Mandatory)][string] $ResultPath
+    )
+    if (-not (Test-Path -LiteralPath $ResultPath)) { return $false }
+    try {
+        $res = Get-Content -LiteralPath $ResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    } catch { return $false }
+
+    if (-not (Test-Path -LiteralPath $LogPath)) {
+        $res | Add-Member -NotePropertyName "godot_log_captured" -NotePropertyValue $false -Force
+        $res | Add-Member -NotePropertyName "godot_log_note" `
+            -NotePropertyValue "log Godot tidak tertangkap -- ketiadaan error di laporan ini BUKAN bukti tidak ada error" -Force
+        $res | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+        return $false
+    }
+
+    $diag  = Get-GodotLogDiagnostics -LogPath $LogPath
+    $total = 0
+    $firstErrorStep = $null
+
+    # ScenarioRunner menamainya "step_results". Kalau field itu tidak ada, JANGAN melapor
+    # sukses: hasilnya akan terbaca sebagai "captured, 0 diagnostik" -- bentuk yang persis
+    # sama dengan "tidak ada error", padahal tidak satu langkah pun pernah diperiksa.
+    $stepsField = $null
+    foreach ($cand in @("step_results", "steps")) {
+        if ($res.PSObject.Properties.Name -contains $cand -and $null -ne $res.$cand) { $stepsField = $cand; break }
+    }
+    if ($null -eq $stepsField) {
+        $res | Add-Member -NotePropertyName "godot_log_captured" -NotePropertyValue $false -Force
+        $res | Add-Member -NotePropertyName "godot_log_note" `
+            -NotePropertyValue "scenario_result.json tidak punya daftar langkah -- diagnostik engine tidak bisa dikorelasikan" -Force
+        $res | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+        return $false
+    }
+    foreach ($s in @($res.$stepsField)) {
+        $idx = [int]$s.step
+        if ($diag.ContainsKey($idx)) {
+            $blocks = @($diag[$idx])
+            $s | Add-Member -NotePropertyName "godot_log" -NotePropertyValue $blocks -Force
+            $total += $blocks.Count
+            if ($null -eq $firstErrorStep) { $firstErrorStep = $idx }
+        }
+    }
+    # Diagnostik sebelum langkah pertama tidak punya langkah untuk ditempeli, tapi justru
+    # sering yang paling menentukan: error autoload membuat seluruh sisa run tak berarti.
+    if ($diag.ContainsKey(-1)) {
+        $b = @($diag[-1])
+        $res | Add-Member -NotePropertyName "godot_log_bootstrap" -NotePropertyValue $b -Force
+        $total += $b.Count
+    }
+
+    $res | Add-Member -NotePropertyName "godot_log_captured" -NotePropertyValue $true -Force
+    $res | Add-Member -NotePropertyName "godot_log_count"    -NotePropertyValue $total -Force
+    if ($null -ne $firstErrorStep) {
+        $res | Add-Member -NotePropertyName "godot_log_first_step" -NotePropertyValue $firstErrorStep -Force
+    }
+    $res | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ResultPath -Encoding UTF8
+    return $true
+}

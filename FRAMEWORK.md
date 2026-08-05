@@ -46,7 +46,7 @@ membaca nama lama, memindahkannya, lalu menuliskan nama baru — bukan sekadar f
 | `tools/run-and-analyze.ps1` | Loop otomatis QA: Observe, Generate, Run, Analyze, Report |
 | `tools/autonomous-qa.ps1` | Loop autonomous QA dengan anomaly detection dan iterasi mandiri |
 | `tools/feedback-bridge.ps1` | Petakan keluhan playtester ke screenshot dan lokasi kode |
-| `tools/test-pipeline.ps1` | Self-test framework (55 regression test) |
+| `tools/test-pipeline.ps1` | Self-test framework (57 regression test) |
 | `tools/_common.ps1` | Bersama: deteksi Godot/ImageMagick, pemetaan `user://`, metrik gambar |
 
 ### Commands (tersedia di semua project via global config)
@@ -303,6 +303,50 @@ Opt-out per scenario: `"allow_inert": true`. Field volatil tambahan: `"volatile_
 Terkait: `steps_pass + steps_fail + steps_skip` TIDAK menjumlah ke `steps_total` saat runner
 berhenti fail-fast. Selisihnya ada di **`steps_not_run`**; `steps_skip: 0` tidak berarti
 semua langkah sempat berjalan.
+
+Terkait juga: step type yang tidak diimplementasikan **gagal**, bukan dilewati. Sebelumnya
+di-skip, dan itu kelas false-verify tersendiri — scenario yang setiap langkahnya salah ketik
+berakhir `pass` tanpa mengirim satu pun input, dan gerbang liveness tidak menolong karena
+type asing tidak dikenali sebagai langkah input sehingga gerbangnya tidak pernah aktif.
+Daftar sahnya ada di `KNOWN_STEP_TYPES`, dan test-pipeline memeriksa daftar itu, cabang
+`_dispatch`, serta tabel di `command/scenario.md` tetap bertiga sepadan. Dokumentasi yang
+menjanjikan step type yang tidak ada adalah cara lain menghasilkan scenario yang "lulus"
+tanpa menguji apa pun — dan itu betul-betul terjadi: delapan type fiktif terdokumentasi
+selama berbulan-bulan.
+
+### Diagnostik engine ditempelkan ke langkah
+
+`scenario_result.json` ditulis dari DALAM Godot, dan GDScript tidak punya kait untuk error
+engine. Konsekuensinya laporan hanya memuat gejala. Terukur pada fixture:
+
+```
+step 2  click_button   pass     <- handler crash: akses properti pada Nil
+step 3  assert_state   fail     <- "score = 0.0, expected gt 100.0"
+```
+
+Sebabnya ada di langkah 2 yang LULUS; yang tercatat cuma kegagalan langkah 3. Pembaca laporan
+hanya punya "score tidak naik" dan tidak ada jalan menuju penyebabnya.
+
+`--log-file` menyatukan stdout dan stderr dalam satu berkas berurutan, dan urutan itulah yang
+mengembalikan korelasinya: tiap diagnostik dimiliki langkah yang penanda
+`[scenario] step N/M:`-nya terakhir muncul sebelum baris itu. `-RedirectStandardError` saja
+tidak cukup — begitu kedua aliran terpisah, tidak ada lagi cara mengetahui error terjadi saat
+langkah keberapa.
+
+Ditempelkan ke SEMUA langkah yang jendelanya memuat diagnostik, bukan hanya yang gagal; kasus
+di atas justru pada langkah yang lulus. Diagnostik sebelum langkah pertama masuk ke
+`godot_log_bootstrap` — error autoload membuat seluruh sisa run tak berarti.
+
+Diagnostik yang dipancarkan runner sendiri (pelanggaran invariant) sengaja tidak disalin ke
+sini; ia sudah punya representasinya, dan menyalinnya lagi membuat pembaca mengira ada dua
+masalah.
+
+**`godot_log_captured` bukan pelengkap.** Tanpa penanda itu, laporan tanpa error dan laporan
+yang tidak pernah melihat error terbaca sama persis — dan yang kedua lebih berbahaya karena
+memberi rasa aman yang tidak pernah diperiksa. Versi pertama fungsi ini melanggarnya sendiri:
+ia mencari field bernama `steps` padahal ScenarioRunner menulis `step_results`, lalu melapor
+`captured: true, count: 0`. Sekarang daftar langkah yang tidak ketemu menghasilkan
+`captured: false` beserta catatan sebabnya.
 
 ### Eksplorasi dan minimisasi jejak
 

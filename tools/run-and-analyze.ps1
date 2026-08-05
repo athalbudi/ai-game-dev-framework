@@ -803,9 +803,13 @@ if ($phase3Status -ne "skip_no_godot" -and (Test-Path -LiteralPath $projectGodot
     $scenarioLog = "$env:TEMP\kilo_scenario_stderr_$(Get-Date -Format 'yyyyMMddHHmmss').txt"
     try {
         $scenarioFlag = "user://shots/test_scenario.json"
+        # --log-file menyatukan stdout dan stderr dalam SATU berkas berurutan. Itu yang
+        # membuat diagnostik engine bisa dikembalikan ke langkah yang menghasilkannya:
+        # -RedirectStandardError saja memisahkan kedua aliran, dan begitu terpisah tidak ada
+        # lagi cara mengetahui error itu terjadi saat langkah keberapa.
         $proc = Start-Process -FilePath $GodotExe `
-            -ArgumentList "--path", "`"$worktreeProjectPath`"", "--", "--scenario", $scenarioFlag `
-            -PassThru -NoNewWindow -RedirectStandardError $scenarioLog
+            -ArgumentList "--path", "`"$worktreeProjectPath`"", "--log-file", "`"$scenarioLog`"", "--", "--scenario", $scenarioFlag `
+            -PassThru -NoNewWindow
         $proc.Handle | Out-Null
         $finished = $proc.WaitForExit($Timeout * 1000)
         if (-not $finished) {
@@ -833,7 +837,7 @@ if ($phase3Status -ne "skip_no_godot" -and (Test-Path -LiteralPath $projectGodot
     # baris yang hanya berisi "ERROR: " tanpa konten (false positive dari Godot editor noise).
     if (Test-Path -LiteralPath $scenarioLog) {
         try {
-            $scenarioLogLines = @(Get-Content $scenarioLog -ErrorAction SilentlyContinue)
+            $scenarioLogLines = @(Get-Content $scenarioLog -Encoding UTF8 -ErrorAction SilentlyContinue)
             $compileErrors = @($scenarioLogLines | Where-Object {
                 $_ -match "Compile Error|Failed to load script|SCRIPT ERROR.*Parse Error" `
                     -or ($_ -match "Cannot open file 'res://|Failed loading resource|ERROR:.*Parse Error.*non-existent resource" `
@@ -849,8 +853,8 @@ if ($phase3Status -ne "skip_no_godot" -and (Test-Path -LiteralPath $projectGodot
                 $phase3Status = "compile_error"
             }
         } catch { }
-        Remove-Item -LiteralPath $scenarioLog -ErrorAction SilentlyContinue
     }
+
 } elseif ($phase3Status -ne "skip_no_godot") {
     Write-Warn "project.godot tidak ditemukan — skip fase RUN"
     $phase3Status = "skip_no_project"
@@ -864,6 +868,20 @@ if (Test-Path -LiteralPath $scenarioResultPath) {
         $phase3Status = "stale_result"
     }
     if ($phase3Status -ne "stale_result") {
+        # Penempelan diagnostik HARUS setelah gerbang stale di atas. Menempel lebih dulu
+        # berarti menulis ulang scenario_result.json, mtime-nya jadi baru, dan gerbang itu
+        # tidak akan pernah bisa menyala lagi -- hasil lama dari run sebelumnya akan lolos
+        # sebagai hasil run ini. Versi pertama perubahan ini melakukannya, dan TEST 13
+        # menangkapnya.
+        if ($scenarioLog -ne "" -and (Test-Path -LiteralPath $scenarioLog)) {
+            try {
+                if (-not (Add-GodotLogToScenarioResult -LogPath $scenarioLog -ResultPath $scenarioResultPath)) {
+                    Write-Warn "log Godot tidak bisa ditempelkan — laporan ini tidak melihat error engine"
+                }
+            } catch {
+                Write-Warn "Gagal menempelkan log Godot: $_"
+            }
+        }
         try {
             $scenarioResult = Get-Content -LiteralPath $scenarioResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
             # Suport kedua kontrak field: steps_pass/steps_fail/steps_skip (ScenarioRunner v1)

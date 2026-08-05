@@ -242,7 +242,7 @@ function Invoke-GodotClassCachePreflight {
             }
             $resPath = "res://${dirPrefix}${filename}"
 
-            $isTool   = if ((Get-Content (Join-Path $projectPath ($resPath -replace '^res://', '')) -TotalCount 5 -ErrorAction SilentlyContinue) -match '@tool') { "true" } else { "false" }
+            $isTool   = if ((Get-Content (Join-Path $projectPath ($resPath -replace '^res://', '')) -TotalCount 5 -Encoding UTF8 -ErrorAction SilentlyContinue) -match '@tool') { "true" } else { "false" }
 
             $entries.Add(('{' + "`n" +
                 '"base": &"' + $baseClass + '",' + "`n" +
@@ -269,7 +269,7 @@ function Invoke-GodotClassCachePreflight {
     $entries = [System.Collections.Generic.List[string]]::new()
 
     foreach ($gd in $gdFiles) {
-        $lines    = Get-Content -LiteralPath $gd.FullName -ErrorAction SilentlyContinue
+        $lines    = Get-Content -LiteralPath $gd.FullName -Encoding UTF8 -ErrorAction SilentlyContinue
         if (-not $lines) { continue }
 
         $className = ""; $baseClass = "RefCounted"; $isTool = $false
@@ -355,7 +355,7 @@ function Invoke-HotReloadRiskCheck {
     $gdFiles = @(Get-ChildItem -LiteralPath $projectPath -Filter "*.gd" -Recurse -ErrorAction SilentlyContinue |
                  Where-Object { $_.FullName -notmatch '\\.godot\\' })
     foreach ($gd in $gdFiles) {
-        $firstLines = Get-Content -LiteralPath $gd.FullName -TotalCount 5 -ErrorAction SilentlyContinue
+        $firstLines = Get-Content -LiteralPath $gd.FullName -TotalCount 5 -Encoding UTF8 -ErrorAction SilentlyContinue
         foreach ($line in $firstLines) {
             if ($line -match '^class_name\s+(\w+)') {
                 $null = $classNames.Add($Matches[1])
@@ -366,7 +366,7 @@ function Invoke-HotReloadRiskCheck {
 
     # Scan main script untuk pola berisiko
     $risks = [System.Collections.Generic.List[string]]::new()
-    $scriptLines = Get-Content -LiteralPath $scriptPath -ErrorAction SilentlyContinue
+    $scriptLines = Get-Content -LiteralPath $scriptPath -Encoding UTF8 -ErrorAction SilentlyContinue
     $lineNum = 0
     foreach ($line in $scriptLines) {
         $lineNum++
@@ -436,7 +436,7 @@ if (-not $NoRun -and $GodotExe -ne "" -and (Test-Path -LiteralPath $GodotExe)) {
             $cacheFile  = Join-Path $godotDir "global_script_class_cache.cfg"
             $cacheCount = 0
             if (Test-Path -LiteralPath $cacheFile) {
-                $cacheCount = ([regex]::Matches((Get-Content $cacheFile -Raw -ErrorAction SilentlyContinue), '"class": &')).Count
+                $cacheCount = ([regex]::Matches((Get-Content $cacheFile -Raw -Encoding UTF8 -ErrorAction SilentlyContinue), '"class": &')).Count
             }
             Write-Step ("Import selesai (exit: " + $importProc.ExitCode + ", classes cached: " + $cacheCount + ")")
         } catch {
@@ -601,7 +601,7 @@ if ($NoRun) {
         $runtimeScriptFailed  = 0
         $hotReloadErrors      = 0
         if (Test-Path -LiteralPath $godotLog -ErrorAction SilentlyContinue) {
-            $logLines = @(Get-Content $godotLog -ErrorAction SilentlyContinue)
+            $logLines = @(Get-Content $godotLog -Encoding UTF8 -ErrorAction SilentlyContinue)
             if ($logLines.Count -gt 0) {
                 # Parse errors dari GDScript::reload = hot-reload artifact (known Godot 4.7 limitation)
                 $hotReloadErrors = @($logLines | Select-String "GDScript::reload").Count
@@ -836,7 +836,7 @@ if (Test-Path -LiteralPath $gameStateJson) {
 # Baca project name dari project.godot jika tersedia
 $projectNameForState = ""
 if (-not $skipProjectCheck) {
-    $rawForState = Get-Content -LiteralPath (Join-Path $ProjectPath "project.godot") -Raw -ErrorAction SilentlyContinue
+    $rawForState = Get-Content -LiteralPath (Join-Path $ProjectPath "project.godot") -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
     if ($rawForState -and $rawForState -match 'config/name="([^"]+)"') {
         $projectNameForState = $Matches[1]
     }

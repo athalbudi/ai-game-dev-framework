@@ -270,6 +270,40 @@ apa pun. Salah ketik `mouse_clik` sekarang berhenti dan menyebut daftar yang sah
 diam-diam begitu layout bergeser — kliknya mendarat di tempat kosong dan langkahnya tetap
 `pass`. Label tidak bisa gagal diam-diam.
 
+## Diagnostik engine: `godot_log`
+
+`scenario_result.json` ditulis dari DALAM Godot, dan GDScript tidak punya kait untuk error
+engine. Selama ini keluhan engine hanya ada di konsol, sehingga laporan cuma memuat gejala:
+
+```
+step 2  click_button   pass          <- handler-nya crash, tapi kliknya sendiri berhasil
+step 3  assert_state   fail          <- "score = 0.0, expected gt 100.0"
+```
+
+Membaca laporan itu, satu-satunya kesimpulan yang tersedia adalah "score tidak naik" — sebab
+sebenarnya tidak ada di sana sama sekali.
+
+`run-and-analyze` dan `autonomous-qa` sekarang menjalankan Godot dengan `--log-file`, yang
+menyatukan stdout dan stderr dalam satu berkas berurutan. Urutan itulah yang mengembalikan
+korelasinya: tiap diagnostik dimiliki langkah yang penanda `[scenario] step N/M:`-nya
+terakhir muncul sebelum baris tersebut.
+
+| Field | Isi |
+|---|---|
+| `step_results[].godot_log` | Diagnostik engine yang terjadi selama langkah itu |
+| `godot_log_bootstrap` | Diagnostik sebelum langkah pertama — error autoload membuat sisa run tak berarti |
+| `godot_log_first_step` | Langkah tempat diagnostik pertama muncul; biasanya di sinilah sebabnya |
+| `godot_log_count` | Jumlah blok diagnostik |
+| `godot_log_captured` | **Baca ini lebih dulu.** `false` berarti log tidak tertangkap |
+
+Field terakhir bukan pelengkap. Laporan tanpa error dan laporan yang **tidak pernah melihat**
+error akan terlihat persis sama tanpa penanda itu, dan yang kedua jauh lebih berbahaya karena
+ia memberi rasa aman yang tidak pernah diperiksa. Kalau `godot_log_captured` bernilai `false`,
+`godot_log_note` menyebutkan sebabnya.
+
+Yang ditempeli bukan hanya langkah yang gagal. Error selama langkah yang **lulus** justru yang
+paling tak terlihat — contoh di atas persis begitu.
+
 ## Status hasil: `pass`, `fail`, dan `inert`
 
 Selain `pass`/`fail`, scenario bisa berakhir **`inert`** (exit 1).

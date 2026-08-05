@@ -484,9 +484,13 @@ function Run-Scenario {
 
     Write-Info "Menjalankan scenario: $($scenario.scenario_id)"
     $ts_run = Get-Date
+    # Satu berkas untuk stdout DAN stderr, berurutan -- itu yang membuat diagnostik engine
+    # bisa dikembalikan ke langkah yang menghasilkannya. Loop ini berjalan tanpa ditunggui
+    # manusia, jadi error yang hanya muncul di konsol praktis hilang begitu saja.
+    $aqLog = Join-Path $OutputDir "godot_iter${iteration}_${ts_session}.log"
     try {
         $proc = Start-Process -FilePath $GodotExe `
-            -ArgumentList "--path", "`"$ProjectPath`"", "--", "--scenario", "user://shots/aq_test_scenario.json" `
+            -ArgumentList "--path", "`"$ProjectPath`"", "--log-file", "`"$aqLog`"", "--", "--scenario", "user://shots/aq_test_scenario.json" `
             -PassThru -NoNewWindow
         $finished = $proc.WaitForExit($Timeout * 1000)
         if (-not $finished) {
@@ -508,6 +512,13 @@ function Run-Scenario {
         if ($resultFile.LastWriteTime -lt $ts_run) {
             Write-Warn "scenario_result.json lebih lama dari run ini (stale) — mengabaikan"
             return $null
+        }
+        try {
+            if (-not (Add-GodotLogToScenarioResult -LogPath $aqLog -ResultPath $resultPath)) {
+                Write-Warn "log Godot tidak bisa ditempelkan — hasil iterasi ini tidak melihat error engine"
+            }
+        } catch {
+            Write-Warn "Gagal menempelkan log Godot: $_"
         }
         try {
             $result = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
