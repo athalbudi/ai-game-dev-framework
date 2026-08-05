@@ -163,7 +163,7 @@ function Test-Candidate {
         -PassThru -NoNewWindow -ErrorAction SilentlyContinue
     if ($p) {
         $p.Handle | Out-Null
-        if (-not $p.WaitForExit($Timeout * 1000)) { try { $p.Kill() } catch { }; Start-Sleep -Milliseconds 300 }
+        if (-not $p.WaitForExit($Timeout * 1000)) { $null = Stop-ProcessTree -Process $p }
     }
 
     $hit = $false

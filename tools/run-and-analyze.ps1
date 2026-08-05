@@ -550,7 +550,7 @@ if ($FixLoopMode -and $PatchBranch -ne "") {
                 $importProc.Handle | Out-Null
                 $importFinished = $importProc.WaitForExit(60000)
                 if (-not $importFinished) {
-                    $importProc.Kill()
+                    $null = Stop-ProcessTree -Process $importProc
                     Write-Warn "Import worktree timeout (60 detik) -- proses Godot dibunuh, lanjutkan tanpa .godot/"
                 } else {
                     Write-Ok "Import worktree selesai (exit: $($importProc.ExitCode))"
@@ -813,7 +813,9 @@ if ($phase3Status -ne "skip_no_godot" -and (Test-Path -LiteralPath $projectGodot
         $proc.Handle | Out-Null
         $finished = $proc.WaitForExit($Timeout * 1000)
         if (-not $finished) {
-            $proc.Kill()
+            if (-not (Stop-ProcessTree -Process $proc)) {
+                Write-Warn "Proses Godot tidak mau berhenti setelah dibunuh -- berkasnya mungkin masih terkunci"
+            }
             Write-Warn "Timeout ($($Timeout) detik) saat menjalankan scenario"
             $phase3Status = "timeout"
         } else {

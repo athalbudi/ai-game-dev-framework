@@ -46,7 +46,7 @@ membaca nama lama, memindahkannya, lalu menuliskan nama baru — bukan sekadar f
 | `tools/run-and-analyze.ps1` | Loop otomatis QA: Observe, Generate, Run, Analyze, Report |
 | `tools/autonomous-qa.ps1` | Loop autonomous QA dengan anomaly detection dan iterasi mandiri |
 | `tools/feedback-bridge.ps1` | Petakan keluhan playtester ke screenshot dan lokasi kode |
-| `tools/test-pipeline.ps1` | Self-test framework (59 regression test) |
+| `tools/test-pipeline.ps1` | Self-test framework (62 regression test) |
 | `tools/_common.ps1` | Bersama: deteksi Godot/ImageMagick, pemetaan `user://`, metrik gambar |
 
 ### Commands (tersedia di semua project via global config)
@@ -372,6 +372,29 @@ terhadap data run lain lalu melapor sukses.
 Dua sebab dibedakan karena perbaikannya berlawanan: berkas yang **belum pernah ada** tetap
 `skip` (fase prototype memang didukung), berkas yang **ada tapi basi** `fail` — ia terlihat
 seperti bukti, dan justru itu yang membuatnya berbahaya.
+
+### Nol langkah lulus bukan lulus
+
+Gerbang liveness hanya aktif bila scenario mengirim **input**. Scenario yang seluruhnya
+assertion — atau yang daftar langkahnya kosong — tidak punya satu pun, jadi ia lolos gerbang
+itu dan dulunya berakhir `pass`:
+
+- sepuluh `assert_state` terhadap game tanpa `game_state.json` → sepuluh `skip`, nol lulus
+- `"steps": []` → loop tidak pernah berjalan
+
+Keduanya kini `inert` (exit 1), opt-out `"allow_inert": true` yang sama.
+
+### `assert_no_error` dinaikkan dari luar
+
+`assert_no_error` hanya bisa membaca pencacah `ErrorTracker` — error yang **game** catat
+sendiri lewat `log_error()`. Error engine tidak pernah menambahnya, jadi langkah yang
+berjanji "tidak ada error" bisa lulus tepat di atas `SCRIPT ERROR`. Tanpa tracker sama
+sekali, ia bahkan lulus asalkan ada scene aktif — lulus atas ketiadaan pemeriksa.
+
+Karena `--log-file` sekarang membuat error engine terlihat dari luar, langkah `assert_no_error`
+yang lulus sementara jendelanya memuat diagnostik dinaikkan jadi gagal, dan indeksnya dicatat
+di `godot_log_escalated`. Dibatasi ke langkah itu saja: hanya klaim itu yang persis dibantah
+oleh isi log, dan gerbang yang menghukum tiap peringatan engine akan cepat dimatikan orang.
 
 ### Eksplorasi dan minimisasi jejak
 

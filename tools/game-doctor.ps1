@@ -42,10 +42,26 @@ if (-not (Test-Path -LiteralPath $projectGodotFile)) {
 }
 
 $findings = [System.Collections.Generic.List[object]]::new()
+# Hanya tiga severity yang dirender dan dihitung di bagian Laporan. Temuan dengan nilai di
+# luar itu dulunya HILANG total: tidak tampil, tidak terhitung, tidak memengaruhi exit code,
+# dan hanya tersisa di JSON yang jarang dibaca orang. Terukur saat menambah pemeriksaan step
+# type dengan severity "critical" -- laporannya berbunyi "0 error, 0 warning, 0 info" padahal
+# temuannya ada. Sebuah pemeriksa yang bisa kehilangan temuannya sendiri karena satu salah
+# ketik adalah bentuk lain dari melapor bersih atas ketiadaan pemeriksaan.
+#
+# Sekarang nilai asing dinaikkan jadi "error" dan salah ketiknya ikut disebutkan: temuan
+# tidak boleh hilang, dan penyebabnya harus kelihatan.
+$VALID_SEVERITIES = @("error", "warning", "info")
+
 function Add-Finding {
     param([string] $Id, [string] $Severity, [string] $Message, [string] $File = "", [int] $Line = 0, [string] $Fix = "")
+    $sev = $Severity
+    if ($VALID_SEVERITIES -notcontains $sev) {
+        $Message = "$Message  [severity '$Severity' tidak dikenal -- dinaikkan jadi error]"
+        $sev = "error"
+    }
     $findings.Add([ordered]@{
-        id = $Id; severity = $Severity; message = $Message
+        id = $Id; severity = $sev; message = $Message
         file = $File; line = $Line; fix = $Fix
     })
 }
@@ -214,6 +230,77 @@ if (Test-Path -LiteralPath $scenDir) {
         Add-Finding -Id "tanpa_klaim_visual" -Severity "info" `
             -Message "scenarios/ ada tetapi tanpa visual-claims.json. Tanpa itu tidak ada penilaian visual yang tersimpan lintas sesi" `
             -Fix "Salin scenarios-templates/visual-claims.json ke scenarios/ lalu sesuaikan."
+    }
+}
+
+# ── C7b: scenario memakai step type yang tidak ada ────────────────────────────
+# Runner memang menggagalkan step type asing sekarang, tapi itu baru ketahuan SETELAH
+# Godot dijalankan -- dan pada scenario panjang, setelah menunggu langkah-langkah
+# sebelumnya. Salah ketik adalah kesalahan statis; ia layak ketahuan statis.
+#
+# Daftar sahnya dibaca dari KNOWN_STEP_TYPES di ScenarioRunner.gd, bukan disalin ke sini.
+# Menyalinnya berarti membuat daftar KEDUA yang harus ikut diperbarui setiap kali ada step
+# type baru, dan daftar kedua yang tertinggal akan menuduh step type yang sebenarnya sah.
+$scenDirB = Join-Path $ProjectPath "scenarios"
+if (Test-Path -LiteralPath $scenDirB) {
+    $runnerForTypes = ""
+    foreach ($cand in @(
+        (Join-Path $env:USERPROFILE ".config\kilo\godot-templates\ScenarioRunner.gd"),
+        ($allGd | Where-Object { $_.Name -eq "ScenarioRunner.gd" } | Select-Object -First 1 -ExpandProperty FullName)
+    )) {
+        if ($cand -and (Test-Path -LiteralPath $cand)) { $runnerForTypes = $cand; break }
+    }
+    $knownTypes = @()
+    if ($runnerForTypes -ne "") {
+        $srcTypes = Get-Content -LiteralPath $runnerForTypes -Raw -Encoding UTF8
+        $blk = [regex]::Match($srcTypes, 'const\s+KNOWN_STEP_TYPES\s*:=\s*\[(?<b>[^\]]*)\]')
+        if ($blk.Success) {
+            foreach ($m in [regex]::Matches($blk.Groups["b"].Value, '"([a-z_]+)"')) { $knownTypes += $m.Groups[1].Value }
+        }
+    }
+    if ($knownTypes.Count -eq 0) {
+        # Gagal tertutup: daftar kosong akan menuduh SETIAP step type, jadi pemeriksaan
+        # ini lebih baik menyebut dirinya tidak bisa dijalankan daripada membanjiri
+        # laporan dengan tuduhan palsu.
+        Add-Finding -Id "step_type_tak_terperiksa" -Severity "info" `
+            -Message "KNOWN_STEP_TYPES tidak bisa dibaca dari ScenarioRunner.gd, jadi step type di scenarios/ tidak diperiksa" `
+            -Fix "Pastikan framework ter-install (setup.ps1) atau ScenarioRunner.gd ada di project."
+    } else {
+        foreach ($sf in @(Get-ChildItem -LiteralPath $scenDirB -Filter "*.json" -File -ErrorAction SilentlyContinue)) {
+            if ($sf.Name -in @("invariants.json", "visual-claims.json")) { continue }
+            try { $sj = Get-Content -LiteralPath $sf.FullName -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
+            $names = @($sj.PSObject.Properties | ForEach-Object { $_.Name })
+            if ($names -notcontains "steps") { continue }
+            # repeat menyarangkan steps -- salah ketik di dalamnya sama mematikannya.
+            $flat = New-Object System.Collections.ArrayList
+            function Add-StepsFlat([object] $Arr) {
+                foreach ($st in @($Arr)) {
+                    if ($null -eq $st) { continue }
+                    $null = $flat.Add($st)
+                    $n2 = @($st.PSObject.Properties | ForEach-Object { $_.Name })
+                    if ($n2 -contains "steps") { Add-StepsFlat $st.steps }
+                }
+            }
+            Add-StepsFlat $sj.steps
+            $bad = @()
+            foreach ($st in $flat) {
+                $n3 = @($st.PSObject.Properties | ForEach-Object { $_.Name })
+                if ($n3 -notcontains "type") { continue }
+                $t = "$($st.type)"
+                if ($t -ne "" -and $knownTypes -notcontains $t) { $bad += $t }
+            }
+            $bad = @($bad | Sort-Object -Unique)
+            if ($bad.Count -gt 0) {
+                Add-Finding -Id "step_type_tak_dikenal" -Severity "error" -File "scenarios/$($sf.Name)" `
+                    -Message "Memakai step type yang tidak diimplementasikan: $($bad -join ', '). Langkah itu akan menggagalkan scenario saat dijalankan" `
+                    -Fix "Betulkan nama type-nya. Yang sah: $($knownTypes -join ', ')."
+            }
+            if (@($sj.steps).Count -eq 0) {
+                Add-Finding -Id "scenario_kosong" -Severity "warning" -File "scenarios/$($sf.Name)" `
+                    -Message "Daftar steps kosong. Scenario ini tidak menguji apa pun dan sekarang berakhir 'inert', bukan 'pass'" `
+                    -Fix "Isi steps, atau hapus file ini kalau memang tidak dipakai."
+            }
+        }
     }
 }
 

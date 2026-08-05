@@ -304,9 +304,34 @@ ia memberi rasa aman yang tidak pernah diperiksa. Kalau `godot_log_captured` ber
 Yang ditempeli bukan hanya langkah yang gagal. Error selama langkah yang **lulus** justru yang
 paling tak terlihat — contoh di atas persis begitu.
 
+### `assert_no_error` dinaikkan oleh log engine
+
+Di dalam Godot, `assert_no_error` hanya bisa membaca pencacah milik `ErrorTracker` — yaitu
+error yang **game** catat sendiri lewat `log_error()`. `SCRIPT ERROR`, kegagalan resource
+loader, dan `push_error` dari engine tidak pernah menambahnya. Langkah yang namanya secara
+harfiah berjanji "tidak ada error" karena itu bisa lulus tepat di atas error engine — dan
+tanpa tracker sama sekali ia lulus asalkan masih ada scene aktif, yaitu lulus atas ketiadaan
+pemeriksa.
+
+Dari sisi PowerShell error itu terlihat. Kalau log memuat diagnostik engine di jendela
+sebuah `assert_no_error` yang lulus, langkah itu **dinaikkan jadi gagal** dan
+`godot_log_escalated` mencatat indeksnya.
+
+Sengaja hanya langkah itu. Menaikkan semua langkah akan menghukum peringatan engine yang
+tidak berbahaya, dan gerbang berisik akan dimatikan orang — lalu tidak menemukan apa pun.
+
 ## Status hasil: `pass`, `fail`, dan `inert`
 
-Selain `pass`/`fail`, scenario bisa berakhir **`inert`** (exit 1).
+Selain `pass`/`fail`, scenario bisa berakhir **`inert`** (exit 1). Ada **dua** jalan ke sana.
+
+**Pertama: tidak satu pun langkah lulus.** Sepuluh `assert_state` terhadap game yang belum
+menulis `game_state.json` menghasilkan sepuluh `skip`, nol lulus — dan itu dulunya berakhir
+`pass`. Begitu juga `"steps": []`. Orchestrator yang membaca exit code menyimpulkan scenario
+ini memverifikasi sesuatu; ia tidak memverifikasi apa pun. Gerbang liveness di bawah tidak
+menangkap keduanya, karena ia hanya aktif bila ada langkah **input** dan scenario yang
+seluruhnya assertion tidak punya satu pun.
+
+**Kedua: input dikirim tetapi tidak ada yang berubah.** Ini yang dijelaskan di bawah.
 
 Artinya scenario MENGIRIM INPUT tetapi tidak ada yang berubah: `game_state` identik dari
 awal sampai akhir (di luar field volatil seperti `timestamp`/`frame_count`) dan semua

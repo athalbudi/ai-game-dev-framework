@@ -95,10 +95,17 @@ make it impossible:
   whose every step was a typo finished `pass` without sending a single input.
 - Engine errors are attached to the step that produced them, and a report that could not read
   the engine log says so. "No errors found" and "never looked" must not read the same.
+- A scenario where **no step passed** is `inert`, not `pass` — ten assertions that all skipped
+  verified nothing, and neither did an empty step list.
+- `assert_state` refuses a `game_state.json` written by an earlier run. The file outlives the
+  run that produced it, and another run's data is not evidence about this one.
+- `assert_no_error` is escalated to a failure when the engine log shows errors inside its
+  window. Inside Godot it can only see errors the *game* chose to report.
 
 Every one of these was added after the framework reported success over nothing, on a real
-game, and the reports looked entirely reasonable at the time. The last two were found in the
-framework's own code, by turning its rules on itself.
+game, and the reports looked entirely reasonable at the time. Most of the later ones were
+found in the framework's own code, by turning its rules on itself and asking of one surface
+at a time: *what would a false PASS look like here?*
 
 ---
 
@@ -187,7 +194,7 @@ are hard to diagnose. `ErrorTracker` waits it out and then calls into your main 
 | `tools/run-and-analyze.ps1` | Run the game and analyze its output |
 | `tools/schema-migration.ps1` | Migrate manifest schema between versions |
 | `tools/doctor.ps1` | Health check for the **installation** |
-| `tools/test-pipeline.ps1` | Framework self-test (59 regression tests) |
+| `tools/test-pipeline.ps1` | Framework self-test (62 regression tests) |
 | `tools/_common.ps1` | Shared: Godot/ImageMagick detection, `user://` mapping, image metrics |
 
 `visual-diff` reports the kind of difference, not only its size — a percentage alone cannot
@@ -245,7 +252,7 @@ read.
 
 ## How this is verified
 
-The framework tests itself: `tools/test-pipeline.ps1` runs 59 regression tests covering the
+The framework tests itself: `tools/test-pipeline.ps1` runs 62 regression tests covering the
 harness, the gate, path resolution, bootstrap, project integration, invariants, exploration,
 visual verdicts, and the static game checks.
 

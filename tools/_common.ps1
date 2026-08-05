@@ -488,6 +488,41 @@ function Add-GodotLogToScenarioResult {
         $total += $b.Count
     }
 
+    # ── assert_no_error yang lulus di atas error engine dinaikkan jadi GAGAL ──────
+    # Di dalam Godot, assert_no_error hanya bisa membaca pencacah milik ErrorTracker --
+    # yaitu error yang GAME catat sendiri lewat log_error(). SCRIPT ERROR, kegagalan
+    # resource loader, dan push_error dari engine tidak pernah menambahnya. Langkah yang
+    # namanya secara harfiah berjanji "tidak ada error" karena itu bisa lulus tepat di atas
+    # error engine, dan celah ini sudah lama tercatat sebagai batasan.
+    #
+    # Dari sisi PowerShell error itu terlihat, dan jendelanya sudah diketahui. Eskalasi
+    # dibatasi pada assert_no_error saja: hanya langkah itu yang klaimnya persis dibantah
+    # oleh isi log. Menaikkan SEMUA langkah akan menghukum peringatan engine yang tidak
+    # berbahaya dan membuat gerbang ini cepat dimatikan orang.
+    $escalated = @()
+    foreach ($s in @($res.$stepsField)) {
+        if ("$($s.type)" -ne "assert_no_error") { continue }
+        if ("$($s.status)" -ne "pass") { continue }
+        $sn = @($s.PSObject.Properties | ForEach-Object { $_.Name })
+        if ($sn -notcontains "godot_log") { continue }
+        $s.status = "fail"
+        $s | Add-Member -NotePropertyName "reason" -NotePropertyValue (
+            "assert_no_error lulus terhadap pencacah ErrorTracker, tetapi log Godot memuat " +
+            "$(@($s.godot_log).Count) diagnostik engine di jendela langkah ini. " +
+            "Error engine (SCRIPT ERROR, kegagalan resource loader) tidak pernah menambah " +
+            "pencacah itu, jadi langkah ini tidak pernah melihatnya.") -Force
+        $escalated += [int]$s.step
+    }
+    if ($escalated.Count -gt 0) {
+        $res | Add-Member -NotePropertyName "godot_log_escalated" -NotePropertyValue $escalated -Force
+        $res.status = "fail"
+        # Pencacah ringkasan ikut disesuaikan; laporan yang bilang "fail" sambil
+        # steps_fail=0 hanya memindahkan kebingungan, tidak menghilangkannya.
+        $names = @($res.PSObject.Properties | ForEach-Object { $_.Name })
+        if ($names -contains "steps_fail") { $res.steps_fail = [int]$res.steps_fail + $escalated.Count }
+        if ($names -contains "steps_pass") { $res.steps_pass = [math]::Max(0, [int]$res.steps_pass - $escalated.Count) }
+    }
+
     $res | Add-Member -NotePropertyName "godot_log_captured" -NotePropertyValue $true -Force
     $res | Add-Member -NotePropertyName "godot_log_count"    -NotePropertyValue $total -Force
     if ($null -ne $firstErrorStep) {
@@ -495,4 +530,25 @@ function Add-GodotLogToScenarioResult {
     }
     $res | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ResultPath -Encoding UTF8
     return $true
+}
+
+
+# ── Terminasi proses yang benar-benar selesai ────────────────────────────────
+# Process.Kill() ASINKRON: ia meminta terminasi lalu langsung kembali. Kode yang langsung
+# menghapus direktori sesudahnya masih bisa menemukan berkasnya terkunci -- persis mode
+# kebocoran yang pernah terjadi di proyek ini (worktree gagal dihapus karena "used by
+# another process", dua PID Godot masih hidup). Menunggu sampai proses benar-benar keluar
+# adalah satu-satunya cara memastikan handle-nya dilepas.
+#
+# Kill() juga melempar kalau proses sudah keluar sendiri di antara pemeriksaan dan
+# pemanggilan -- balapan yang wajar, bukan kegagalan.
+function Stop-ProcessTree {
+    param(
+        [Parameter(Mandatory)] $Process,
+        [int] $WaitMs = 5000
+    )
+    if ($null -eq $Process) { return $true }
+    try { if ($Process.HasExited) { return $true } } catch { return $true }
+    try { $Process.Kill() } catch { }
+    try { return $Process.WaitForExit($WaitMs) } catch { return $false }
 }

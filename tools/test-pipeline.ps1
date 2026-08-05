@@ -1376,6 +1376,100 @@ function New-DoctorFixture {
     }
 }
 
+# ── Fixture project Godot untuk test scenario ────────────────────────────────
+# Enam test terakhir menyalin blok yang sama: bikin scripts/, salin tiga template sambil
+# membuang BOM, tulis project.godot + main.tscn, lalu --headless --import. Empat puluh
+# baris per test, dan setiap salinan adalah tempat drift baru bisa masuk -- yang ke-tujuh
+# akan menyalin salinan yang sudah bergeser. Semuanya melewati satu fungsi ini sekarang.
+#
+# Autoload diturunkan dari daftar template: ScenarioRunner TIDAK PERNAH didaftarkan (ia
+# di-load ErrorTracker saat --scenario terdeteksi), GameStateWriter didaftarkan hanya kalau
+# diminta -- beberapa test justru butuh project TANPA penyedia state.
+function New-ScenarioFixture {
+    param(
+        [Parameter(Mandatory)][string]   $Name,
+        [Parameter(Mandatory)][string]   $MainGd,
+        [string]                         $Dir       = "",
+        [string[]]                       $Templates = @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd"),
+        [hashtable]                      $Scenarios = @{},
+        [switch]                         $NoImport
+    )
+    if ($Dir -eq "") { $Dir = Join-Path $env:TEMP "kilo_fx_${Name}_$($PID)" }
+    Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue
+    $null = New-Item -ItemType Directory -Path "$Dir\scripts"   -Force
+    $null = New-Item -ItemType Directory -Path "$Dir\scenarios" -Force
+    $noBom   = New-Object System.Text.UTF8Encoding($false)
+    $tmplDir = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
+    foreach ($t in $Templates) {
+        # BOM dibuang eksplisit: Set-Content -Encoding UTF8 di PS 5.1 MENULIS BOM, dan
+        # Godot menolak scene/script tertentu karenanya.
+        $raw = [System.IO.File]::ReadAllBytes((Join-Path $tmplDir $t))
+        $off = if ($raw.Length -ge 3 -and $raw[0] -eq 0xEF) { 3 } else { 0 }
+        [System.IO.File]::WriteAllText("$Dir\scripts\$t",
+            [System.Text.Encoding]::UTF8.GetString($raw, $off, $raw.Length - $off), $noBom)
+    }
+    $auto = ""
+    if ($Templates -contains "GameStateWriter.gd") { $auto += "GameStateWriter=`"*res://scripts/GameStateWriter.gd`"`n" }
+    if ($Templates -contains "ErrorTracker.gd")    { $auto += "ErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n" }
+    [System.IO.File]::WriteAllText("$Dir\project.godot",
+        "config_version=5`n`n[application]`nconfig/name=`"$Name`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`n$auto", $noBom)
+    [System.IO.File]::WriteAllText("$Dir\main.tscn",
+        "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom)
+    [System.IO.File]::WriteAllText("$Dir\main.gd", $MainGd, $noBom)
+    foreach ($k in $Scenarios.Keys) {
+        [System.IO.File]::WriteAllText("$Dir\scenarios\$k.json", $Scenarios[$k], $noBom)
+    }
+    if (-not $NoImport -and $GodotExe -ne "" -and (Test-Path -LiteralPath $GodotExe)) {
+        $null = Start-Process $GodotExe -ArgumentList "--path", "`"$Dir`"", "--headless", "--import", "--quit" `
+            -PassThru -NoNewWindow -Wait
+    }
+    return $Dir
+}
+
+# Menjalankan satu scenario dan mengembalikan scenario_result.json yang sudah di-parse,
+# atau $null kalau berkasnya tidak ditulis. Hasil lama dihapus lebih dulu supaya hasil run
+# SEBELUMNYA tidak pernah terbaca sebagai hasil run ini -- kesalahan yang persis sedang
+# diuji oleh beberapa test di file ini.
+function Invoke-ScenarioFixture {
+    param(
+        [Parameter(Mandatory)][string] $Dir,
+        [Parameter(Mandatory)][string] $Name,
+        [Parameter(Mandatory)][string] $Scenario,
+        [int]                          $TimeoutMs = 60000
+    )
+    $res = "$env:APPDATA\Godot\app_userdata\$Name\shots\scenario_result.json"
+    Remove-Item -LiteralPath $res -Force -ErrorAction SilentlyContinue
+    $p = Start-Process $GodotExe -ArgumentList "--path", "`"$Dir`"", "--", "--scenario", "res://scenarios/$Scenario.json" `
+        -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+    if ($p) {
+        $p.Handle | Out-Null
+        $p.WaitForExit($TimeoutMs) | Out-Null
+        # Proses yang tidak pernah keluar akan menahan direktori fixture dan membocorkan
+        # PID -- pernah terjadi di proyek ini dan menyebabkan cleanup gagal senyap.
+        if (-not $p.HasExited) { $p.Kill(); $p.WaitForExit(5000) | Out-Null }
+    }
+    if (-not (Test-Path -LiteralPath $res)) { return $null }
+    return (Get-Content -LiteralPath $res -Raw -Encoding UTF8 | ConvertFrom-Json)
+}
+
+# Mengumpulkan field 'reason' dari step_results dengan aman. Langkah yang LULUS tidak punya
+# field itu, dan di bawah StrictMode membacanya melempar -- exception itu akan terbaca
+# sebagai kegagalan test, bukan sebagai kegagalan yang sedang diuji.
+function Get-StepReasons {
+    param([Parameter(Mandatory)] $Result)
+    return (@($Result.step_results | ForEach-Object {
+        if (@($_.PSObject.Properties | ForEach-Object { $_.Name }) -contains "reason") { "$($_.reason)" }
+    }) -join " ")
+}
+
+function Remove-ScenarioFixture {
+    param([string] $Dir, [string[]] $Names = @())
+    Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction SilentlyContinue
+    foreach ($n in $Names) {
+        Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\$n" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # ── TEST 20: doctor.ps1 harus MEMBEDAKAN instalasi sehat vs template .gd rusak ────
 # Test ini gagal terhadap doctor.ps1 tanpa compile-check: keduanya akan exit 0, sehingga
 # assertion "bersih=0 DAN rusak=1" tidak terpenuhi. Bukan sekadar "exit 0 berarti lulus".
@@ -4129,44 +4223,7 @@ if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
     $t54Base  = Join-Path $env:TEMP "kilo_t54_$($PID)_$(Get-Date -Format 'HHmmss')"
     $t54Probs = @()
     $noBom54  = New-Object System.Text.UTF8Encoding($false)
-    $t54Tmpl  = Join-Path $env:USERPROFILE ".config\kilo\godot-templates"
     try {
-        function New-T54Project {
-            param([string] $Name, [string] $MainGd, [bool] $WithWriter)
-            $d = Join-Path $t54Base $Name
-            $null = New-Item -ItemType Directory -Path "$d\scripts"   -Force
-            $null = New-Item -ItemType Directory -Path "$d\scenarios" -Force
-            $tmpls = if ($WithWriter) { @("ErrorTracker.gd", "GameStateWriter.gd", "ScenarioRunner.gd") }
-                     else             { @("ErrorTracker.gd", "ScenarioRunner.gd") }
-            foreach ($t in $tmpls) {
-                $raw = [System.IO.File]::ReadAllBytes((Join-Path $t54Tmpl $t))
-                $off = if ($raw.Length -ge 3 -and $raw[0] -eq 0xEF) { 3 } else { 0 }
-                [System.IO.File]::WriteAllText("$d\scripts\$t",
-                    [System.Text.Encoding]::UTF8.GetString($raw, $off, $raw.Length - $off), $noBom54)
-            }
-            $auto = if ($WithWriter) { "GameStateWriter=`"*res://scripts/GameStateWriter.gd`"`nErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n" }
-                    else             { "ErrorTracker=`"*res://scripts/ErrorTracker.gd`"`n" }
-            [System.IO.File]::WriteAllText("$d\project.godot",
-                "config_version=5`n`n[application]`nconfig/name=`"$Name`"`nrun/main_scene=`"res://main.tscn`"`n`n[autoload]`n$auto", $noBom54)
-            [System.IO.File]::WriteAllText("$d\main.tscn",
-                "[gd_scene load_steps=2 format=3]`n[ext_resource type=`"Script`" path=`"res://main.gd`" id=`"1`"]`n[node name=`"Main`" type=`"Node`"]`nscript = ExtResource(`"1`")`n", $noBom54)
-            [System.IO.File]::WriteAllText("$d\main.gd", $MainGd, $noBom54)
-            $null = Start-Process $GodotExe -ArgumentList "--path", "`"$d`"", "--headless", "--import", "--quit" `
-                -PassThru -NoNewWindow -Wait
-            return $d
-        }
-        function Invoke-T54 {
-            param([string] $Dir, [string] $Name, [string] $Scenario)
-            $shots = "$env:APPDATA\Godot\app_userdata\$Name\shots"
-            $res   = Join-Path $shots "scenario_result.json"
-            Remove-Item -LiteralPath $res -Force -ErrorAction SilentlyContinue
-            $p = Start-Process $GodotExe -ArgumentList "--path", "`"$Dir`"", "--", "--scenario", "res://scenarios/$Scenario.json" `
-                -PassThru -NoNewWindow -ErrorAction SilentlyContinue
-            if ($p) { $p.Handle | Out-Null; $p.WaitForExit(60000) | Out-Null; if (-not $p.HasExited) { $p.Kill() } }
-            if (-not (Test-Path -LiteralPath $res)) { return $null }
-            return (Get-Content -LiteralPath $res -Raw -Encoding UTF8 | ConvertFrom-Json)
-        }
-
         # ── P1: TANPA penyedia state apa pun ──────────────────────────────────
         $mainKosong = @'
 extends Node
@@ -4176,9 +4233,9 @@ func _ready() -> void:
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(root)
 '@
-        $d1 = New-T54Project -Name "KiloT54A" -MainGd $mainKosong -WithWriter $false
-        [System.IO.File]::WriteAllText("$d1\scenarios\cek.json",
-            '{"scenario_id":"cek","steps":[{"type":"wait_frames","frames":20},{"type":"assert_state","key":"score","op":"eq","expected":999}]}', $noBom54)
+        $d1 = New-ScenarioFixture -Name "KiloT54A" -MainGd $mainKosong `
+            -Dir (Join-Path $t54Base "A") -Templates @("ErrorTracker.gd", "ScenarioRunner.gd") `
+            -Scenarios @{ "cek" = '{"scenario_id":"cek","steps":[{"type":"wait_frames","frames":20},{"type":"assert_state","key":"score","op":"eq","expected":999}]}' }
         $shots1 = "$env:APPDATA\Godot\app_userdata\KiloT54A\shots"
         $null   = New-Item -ItemType Directory -Path $shots1 -Force
 
@@ -4186,16 +4243,14 @@ func _ready() -> void:
         $gs1 = Join-Path $shots1 "game_state.json"
         [System.IO.File]::WriteAllText($gs1, '{"schema_version":"1.0","score":999}', $noBom54)
         (Get-Item -LiteralPath $gs1).LastWriteTime = (Get-Date).AddHours(-2)
-        $r1 = Invoke-T54 -Dir $d1 -Name "KiloT54A" -Scenario "cek"
+        $r1 = Invoke-ScenarioFixture -Dir $d1 -Name "KiloT54A" -Scenario "cek"
         if ($null -eq $r1) {
             $t54Probs += "basi: scenario_result.json tidak ditulis"
         } else {
             if ("$($r1.status)" -ne "fail") {
                 $t54Probs += "basi: status '$($r1.status)', harus 'fail' -- state run lain bukan bukti run ini"
             }
-            $rs1 = (@($r1.step_results | ForEach-Object {
-                if (@($_.PSObject.Properties | ForEach-Object { $_.Name }) -contains "reason") { "$($_.reason)" }
-            }) -join " ")
+            $rs1 = Get-StepReasons -Result $r1
             if ($rs1 -notmatch "tidak ditulis run ini") {
                 $t54Probs += "basi: pesan tidak membedakan 'basi' dari 'belum ada'"
             }
@@ -4203,7 +4258,7 @@ func _ready() -> void:
 
         # -- kontrak 2: berkas TIDAK ADA -> tetap skip (fase prototype) -------------
         Remove-Item -LiteralPath $gs1 -Force -ErrorAction SilentlyContinue
-        $r2 = Invoke-T54 -Dir $d1 -Name "KiloT54A" -Scenario "cek"
+        $r2 = Invoke-ScenarioFixture -Dir $d1 -Name "KiloT54A" -Scenario "cek"
         if ($null -eq $r2) {
             $t54Probs += "kosong: scenario_result.json tidak ditulis"
         } elseif ([int]$r2.steps_skip -lt 1) {
@@ -4224,15 +4279,14 @@ func _ready() -> void:
 func _write_game_state() -> void:
 	pass
 '@
-        $d2 = New-T54Project -Name "KiloT54B" -MainGd $mainBohong -WithWriter $true
-        [System.IO.File]::WriteAllText("$d2\scenarios\tulis.json",
-            '{"scenario_id":"tulis","steps":[{"type":"wait_frames","frames":20},{"type":"write_state"}]}', $noBom54)
+        $d2 = New-ScenarioFixture -Name "KiloT54B" -MainGd $mainBohong -Dir (Join-Path $t54Base "B") `
+            -Scenarios @{ "tulis" = '{"scenario_id":"tulis","steps":[{"type":"wait_frames","frames":20},{"type":"write_state"}]}' }
         $shots2 = "$env:APPDATA\Godot\app_userdata\KiloT54B\shots"
         $null   = New-Item -ItemType Directory -Path $shots2 -Force
         $gs2 = Join-Path $shots2 "game_state.json"
         [System.IO.File]::WriteAllText($gs2, '{"schema_version":"1.0","score":1}', $noBom54)
         (Get-Item -LiteralPath $gs2).LastWriteTime = (Get-Date).AddHours(-2)
-        $r3 = Invoke-T54 -Dir $d2 -Name "KiloT54B" -Scenario "tulis"
+        $r3 = Invoke-ScenarioFixture -Dir $d2 -Name "KiloT54B" -Scenario "tulis"
         if ($null -eq $r3) {
             $t54Probs += "penulis-bohong: scenario_result.json tidak ditulis"
         } elseif ("$($r3.status)" -ne "fail") {
@@ -4251,16 +4305,13 @@ func _ready() -> void:
 func _get_game_state() -> Dictionary:
 	return {"schema_version": "1.0", "score": 999}
 '@
-        $d3 = New-T54Project -Name "KiloT54C" -MainGd $mainSehat -WithWriter $true
-        [System.IO.File]::WriteAllText("$d3\scenarios\sehat.json",
-            '{"scenario_id":"sehat","steps":[{"type":"wait_frames","frames":20},{"type":"write_state"},{"type":"assert_state","key":"score","op":"eq","expected":999}]}', $noBom54)
-        $r4 = Invoke-T54 -Dir $d3 -Name "KiloT54C" -Scenario "sehat"
+        $d3 = New-ScenarioFixture -Name "KiloT54C" -MainGd $mainSehat -Dir (Join-Path $t54Base "C") `
+            -Scenarios @{ "sehat" = '{"scenario_id":"sehat","steps":[{"type":"wait_frames","frames":20},{"type":"write_state"},{"type":"assert_state","key":"score","op":"eq","expected":999}]}' }
+        $r4 = Invoke-ScenarioFixture -Dir $d3 -Name "KiloT54C" -Scenario "sehat"
         if ($null -eq $r4) {
             $t54Probs += "sehat: scenario_result.json tidak ditulis"
         } elseif ("$($r4.status)" -ne "pass") {
-            $rs4 = (@($r4.step_results | ForEach-Object {
-                if (@($_.PSObject.Properties | ForEach-Object { $_.Name }) -contains "reason") { "$($_.reason)" }
-            }) -join " ")
+            $rs4 = Get-StepReasons -Result $r4
             $t54Probs += "sehat: status '$($r4.status)', harus 'pass' -- state yang ditulis run ini harus diterima [$rs4]"
         }
 
@@ -4269,10 +4320,255 @@ func _get_game_state() -> Dictionary:
     } catch {
         Add-Result "game_state basi ditolak + prototype tetap skip" $false ("Exception: " + $_)
     } finally {
-        Remove-Item -LiteralPath $t54Base -Recurse -Force -ErrorAction SilentlyContinue
-        foreach ($n in @("KiloT54A", "KiloT54B", "KiloT54C")) {
-            Remove-Item -LiteralPath "$env:APPDATA\Godot\app_userdata\$n" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-ScenarioFixture -Dir $t54Base -Names @("KiloT54A", "KiloT54B", "KiloT54C")
+    }
+}
+Write-S
+
+# ── TEST 55: scenario yang tak satu pun langkahnya lulus bukan scenario yang lulus ──
+# Dua bentuk yang sama-sama berakhir "pass" sebelum perbaikan ini:
+#   1. sepuluh assert_state terhadap game tanpa penyedia state -> 10 skip, 0 pass, "pass"
+#   2. "steps": [] -> loop tidak pernah berjalan -> langsung "pass"
+# Gerbang liveness tidak menangkap keduanya: ia hanya aktif kalau ada langkah INPUT, dan
+# scenario yang seluruhnya assertion (atau kosong) tidak punya satu pun. Orchestrator yang
+# membaca exit code menyimpulkan scenario ini memverifikasi sesuatu; ia tidak memverifikasi
+# apa pun -- persis definisi false-verify yang framework ini ada untuk mencegahnya.
+#
+# Kontrak ketiga menjaga perbaikannya sendiri: scenario normal harus tetap lulus. Keempat:
+# opt-out "allow_inert" harus dihormati, karena scenario yang memang sengaja tidak menguji
+# apa-apa (mis. hanya menyiapkan state) berhak ada.
+Write-T "TEST 55: nol langkah lulus -> inert, bukan pass"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "scenario tanpa langkah lulus ditolak" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t55Probs = @()
+    $t55Dir   = ""
+    try {
+        $t55Dir = New-ScenarioFixture -Name "KiloT55" -Templates @("ErrorTracker.gd", "ScenarioRunner.gd") -MainGd @'
+extends Node
+
+func _ready() -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+'@ -Scenarios @{
+            # Tanpa penyedia state, assert_state ini di-skip -- 0 lulus.
+            "semua_skip"  = '{"scenario_id":"semua_skip","steps":[{"type":"assert_state","key":"a","op":"eq","expected":1},{"type":"assert_state","key":"b","op":"eq","expected":2}]}'
+            "kosong"      = '{"scenario_id":"kosong","steps":[]}'
+            "diizinkan"   = '{"scenario_id":"diizinkan","allow_inert":true,"steps":[]}'
+            "normal"      = '{"scenario_id":"normal","steps":[{"type":"wait_frames","frames":15},{"type":"log","message":"halo"}]}'
         }
+
+        foreach ($case in @(
+            @{ n = "semua_skip"; harus = "inert" },
+            @{ n = "kosong";     harus = "inert" },
+            @{ n = "diizinkan";  harus = "pass"  },
+            @{ n = "normal";     harus = "pass"  }
+        )) {
+            $r55 = Invoke-ScenarioFixture -Dir $t55Dir -Name "KiloT55" -Scenario $case.n
+            if ($null -eq $r55) {
+                $t55Probs += "$($case.n): scenario_result.json tidak ditulis"
+            } elseif ("$($r55.status)" -ne $case.harus) {
+                $t55Probs += "$($case.n): status '$($r55.status)', harus '$($case.harus)'"
+            }
+        }
+
+        Add-Result "scenario tanpa langkah lulus ditolak" ($t55Probs.Count -eq 0) `
+            $(if ($t55Probs.Count -eq 0) { "semua-skip->inert, kosong->inert, allow_inert->pass, normal->pass" } else { ($t55Probs -join " | ") })
+    } catch {
+        Add-Result "scenario tanpa langkah lulus ditolak" $false ("Exception: " + $_)
+    } finally {
+        Remove-ScenarioFixture -Dir $t55Dir -Names @("KiloT55")
+    }
+}
+Write-S
+
+# ── TEST 56: assert_no_error tidak boleh lulus di atas error engine ──────────
+# Di dalam Godot, assert_no_error hanya bisa membaca pencacah ErrorTracker -- yaitu error
+# yang GAME catat sendiri lewat log_error(). SCRIPT ERROR, kegagalan resource loader, dan
+# push_error dari engine tidak pernah menambahnya. Langkah yang namanya secara harfiah
+# berjanji "tidak ada error" karena itu bisa lulus tepat di atas error engine. Celah ini
+# sudah lama tercatat sebagai batasan; --log-file membuatnya bisa ditutup dari luar.
+#
+# Fixture memicu error BERBASIS FRAME, bukan waktu: klik memasang hitung mundur 20 frame,
+# dan _process memancarkan satu error saat mencapai nol. Fixture berbasis jam dinding
+# adalah sumber test rewel, dan test rewel akhirnya dimatikan orang.
+#
+# Kontrol negatif wajib ada: run bersih harus tetap lulus. Tanpa itu, implementasi yang
+# menggagalkan SEMUA assert_no_error juga akan lolos kontrak pertama.
+Write-T "TEST 56: assert_no_error yang lulus di atas error engine dinaikkan jadi gagal"
+if ($GodotExe -eq "" -or -not (Test-Path -LiteralPath $GodotExe)) {
+    Add-Result "assert_no_error dieskalasi oleh log engine" $false "SKIP -- Godot tidak tersedia"
+} else {
+    $t56Probs = @()
+    $t56Dir   = ""
+    try {
+        $t56Dir = New-ScenarioFixture -Name "KiloT56" -MainGd @'
+extends Node
+
+var _countdown := -1
+
+func _ready() -> void:
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+	var b := Button.new()
+	b.text = "Boom"
+	b.position = Vector2(100, 100)
+	b.size = Vector2(200, 50)
+	root.add_child(b)
+	b.pressed.connect(_on_boom)
+
+func _on_boom() -> void:
+	_countdown = 20
+
+func _process(_delta: float) -> void:
+	if _countdown < 0:
+		return
+	_countdown -= 1
+	if _countdown == 0:
+		_countdown = -1
+		# Error ENGINE murni: tidak lewat ErrorTracker.log_error(), jadi pencacah yang
+		# dibaca assert_no_error tidak pernah bertambah.
+		var n: Node = null
+		print("child: ", n.get_child_count())
+
+func _get_game_state() -> Dictionary:
+	return {"ok": true}
+'@ -Scenarios @{
+            "berisik" = '{"scenario_id":"berisik","steps":[{"type":"wait_frames","frames":20},{"type":"click_button","label":"Boom","wait_frames":5},{"type":"assert_no_error","window_frames":60}]}'
+            "bersih"  = '{"scenario_id":"bersih","steps":[{"type":"wait_frames","frames":20},{"type":"assert_no_error","window_frames":60}]}'
+        }
+
+        foreach ($case in @(
+            @{ n = "berisik"; harusStatus = "fail"; harusEskalasi = $true  },
+            @{ n = "bersih";  harusStatus = "pass"; harusEskalasi = $false }
+        )) {
+            $log56 = Join-Path $t56Dir "$($case.n).log"
+            $res56 = "$env:APPDATA\Godot\app_userdata\KiloT56\shots\scenario_result.json"
+            Remove-Item -LiteralPath $res56 -Force -ErrorAction SilentlyContinue
+            $p56 = Start-Process $GodotExe `
+                -ArgumentList "--path", "`"$t56Dir`"", "--log-file", "`"$log56`"", "--", "--scenario", "res://scenarios/$($case.n).json" `
+                -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+            if ($p56) {
+                $p56.Handle | Out-Null
+                $p56.WaitForExit(60000) | Out-Null
+                if (-not $p56.HasExited) { $null = Stop-ProcessTree -Process $p56 }
+            }
+            if (-not (Test-Path -LiteralPath $res56)) {
+                $t56Probs += "$($case.n): scenario_result.json tidak ditulis"; continue
+            }
+            # Sebelum eskalasi, Godot sendiri HARUS melaporkan langkah itu lulus -- kalau
+            # tidak, kontraknya diuji terhadap kondisi yang salah dan hasilnya tak berarti.
+            $pre56 = Get-Content -LiteralPath $res56 -Raw -Encoding UTF8 | ConvertFrom-Json
+            $ane   = @($pre56.step_results | Where-Object { "$($_.type)" -eq "assert_no_error" })
+            if ($ane.Count -ne 1 -or "$($ane[0].status)" -ne "pass") {
+                $t56Probs += "$($case.n): prasyarat hilang -- assert_no_error harus 'pass' sebelum eskalasi (dapat: $($ane.Count) langkah, status '$(if ($ane.Count) { $ane[0].status } else { '-' })')"
+                continue
+            }
+            $null = Add-GodotLogToScenarioResult -LogPath $log56 -ResultPath $res56
+            $post56 = Get-Content -LiteralPath $res56 -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ("$($post56.status)" -ne $case.harusStatus) {
+                $t56Probs += "$($case.n): status '$($post56.status)', harus '$($case.harusStatus)'"
+            }
+            $adaEskalasi = (@($post56.PSObject.Properties | ForEach-Object { $_.Name }) -contains "godot_log_escalated")
+            if ($adaEskalasi -ne $case.harusEskalasi) {
+                $t56Probs += "$($case.n): godot_log_escalated=$adaEskalasi, harus $($case.harusEskalasi)"
+            }
+        }
+
+        Add-Result "assert_no_error dieskalasi oleh log engine" ($t56Probs.Count -eq 0) `
+            $(if ($t56Probs.Count -eq 0) { "error engine di jendela -> fail; run bersih tetap pass" } else { ($t56Probs -join " | ") })
+    } catch {
+        Add-Result "assert_no_error dieskalasi oleh log engine" $false ("Exception: " + $_)
+    } finally {
+        Remove-ScenarioFixture -Dir $t56Dir -Names @("KiloT56")
+    }
+}
+Write-S
+
+# ── TEST 57: salah ketik step type ketahuan STATIS, dan temuan tak bisa hilang ──
+# Runner memang menggagalkan step type asing, tapi baru setelah Godot dijalankan -- pada
+# scenario panjang, setelah menunggu semua langkah sebelumnya. Salah ketik adalah kesalahan
+# statis dan layak ketahuan statis, sebelum satu proses pun diluncurkan.
+#
+# Kontrak kedua lebih penting daripada kelihatannya. Bagian Laporan game-doctor hanya
+# merender dan menghitung tiga severity; temuan dengan nilai lain dulunya HILANG -- tidak
+# tampil, tidak terhitung, tidak memengaruhi exit code. Terukur saat pemeriksaan ini pertama
+# ditulis dengan severity "critical": laporannya berbunyi "0 error, 0 warning, 0 info"
+# padahal temuannya ada di dalam findings. Pemeriksa yang bisa kehilangan temuannya sendiri
+# karena satu salah ketik adalah bentuk lain dari melapor bersih atas ketiadaan pemeriksaan.
+Write-T "TEST 57: game-doctor menangkap step type asing, dan severity asing tidak menghilang"
+$t57Tool = Join-Path $PSScriptRoot "game-doctor.ps1"
+if (-not (Test-Path -LiteralPath $t57Tool)) {
+    Add-Result "game-doctor: step type asing + severity tak dikenal" $false "game-doctor.ps1 tidak ditemukan"
+} else {
+    $t57Probs = @()
+    $t57Dir   = Join-Path $env:TEMP "kilo_t57_$($PID)_$(Get-Date -Format 'HHmmss')"
+    try {
+        $null    = New-Item -ItemType Directory -Path "$t57Dir\scenarios" -Force
+        $noBom57 = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText("$t57Dir\project.godot",
+            "config_version=5`n`n[application]`nconfig/name=`"KiloT57`"`n", $noBom57)
+        # 'swipe' di tingkat atas dan 'mouse_clik' BERSARANG di dalam repeat: salah ketik di
+        # dalam repeat sama mematikannya, dan pemindaian satu tingkat akan melewatkannya.
+        [System.IO.File]::WriteAllText("$t57Dir\scenarios\salah.json",
+            '{"scenario_id":"salah","steps":[{"type":"wait_frames","frames":5},{"type":"swipe"},{"type":"repeat","count":2,"steps":[{"type":"mouse_clik","x":1,"y":1}]}]}', $noBom57)
+        [System.IO.File]::WriteAllText("$t57Dir\scenarios\benar.json",
+            '{"scenario_id":"benar","steps":[{"type":"wait_frames","frames":5},{"type":"repeat","count":2,"steps":[{"type":"mouse_click","x":1,"y":1}]}]}', $noBom57)
+        $rep57 = Join-Path $t57Dir "laporan.json"
+        & $t57Tool -ProjectPath $t57Dir -OutputPath $rep57 -Quiet *>$null
+        if (-not (Test-Path -LiteralPath $rep57)) {
+            $t57Probs += "laporan tidak ditulis"
+        } else {
+            $j57 = Get-Content -LiteralPath $rep57 -Raw -Encoding UTF8 | ConvertFrom-Json
+            $ft  = @($j57.findings | Where-Object { "$($_.id)" -eq "step_type_tak_dikenal" })
+            if ($ft.Count -lt 1) {
+                $t57Probs += "step type asing tidak terdeteksi secara statis"
+            } else {
+                $msg57 = ($ft | ForEach-Object { "$($_.message)" }) -join " "
+                foreach ($w in @("swipe", "mouse_clik")) {
+                    if ($msg57 -notmatch [regex]::Escape($w)) { $t57Probs += "'$w' tidak disebut dalam temuan" }
+                }
+                # Yang bersarang membuktikan pemindaian menembus repeat.
+                if (@($ft | Where-Object { "$($_.file)" -match "benar\.json" }).Count -gt 0) {
+                    $t57Probs += "scenario yang BENAR ikut dituduh -- false positive"
+                }
+                if ("$($ft[0].severity)" -ne "error") {
+                    $t57Probs += "severity temuan '$($ft[0].severity)', harus 'error' supaya menggagalkan"
+                }
+            }
+        }
+
+        # -- kontrak 2: severity asing tidak boleh menghilang --------------------
+        # Diuji lewat kontrak, bukan lewat isi file: dot-source game-doctor akan
+        # menjalankan seluruh pemeriksaannya. Yang diperiksa adalah PERILAKU Add-Finding
+        # sebagaimana ditulis di sumber, dijalankan terisolasi.
+        $src57 = Get-Content -LiteralPath $t57Tool -Raw -Encoding UTF8
+        $fnBlk = [regex]::Match($src57, '(?ms)^\$VALID_SEVERITIES.*?^\}')
+        if (-not $fnBlk.Success) {
+            $t57Probs += "blok VALID_SEVERITIES/Add-Finding tidak ditemukan di game-doctor.ps1"
+        } else {
+            $sb57 = [scriptblock]::Create(
+                '$findings = [System.Collections.Generic.List[object]]::new()' + "`n" +
+                $fnBlk.Value + "`n" +
+                'Add-Finding -Id "uji" -Severity "critical" -Message "pesan uji"' + "`n" +
+                '$findings[0]')
+            $hasil57 = & $sb57
+            if ("$($hasil57.severity)" -ne "error") {
+                $t57Probs += "severity 'critical' jadi '$($hasil57.severity)', harus dinaikkan ke 'error' supaya tidak hilang dari laporan"
+            }
+            if ("$($hasil57.message)" -notmatch "tidak dikenal") {
+                $t57Probs += "pesan tidak menyebut bahwa severity-nya tidak dikenal -- salah ketiknya jadi tak terlihat"
+            }
+        }
+
+        Add-Result "game-doctor: step type asing + severity tak dikenal" ($t57Probs.Count -eq 0) `
+            $(if ($t57Probs.Count -eq 0) { "swipe + mouse_clik (bersarang) terdeteksi statis; severity asing dinaikkan ke error" } else { ($t57Probs -join " | ") })
+    } catch {
+        Add-Result "game-doctor: step type asing + severity tak dikenal" $false ("Exception: " + $_)
+    } finally {
+        Remove-Item -LiteralPath $t57Dir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 Write-S

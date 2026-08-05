@@ -192,6 +192,34 @@ func _run_steps() -> int:
 				"mengubah apa-apa, set \"allow_inert\": true.") % _liveness_input_steps)
 			return 1
 
+	# Gerbang terakhir: scenario yang TIDAK SATU PUN langkahnya lulus bukan scenario yang
+	# lulus. Dua bentuknya sama-sama berakhir "pass" sebelum ini:
+	#
+	#   - scenario berisi 10 assert_state terhadap game tanpa penyedia state -> 10 skip,
+	#     0 pass, status "pass", exit 0. Orchestrator yang membaca exit code menyimpulkan
+	#     scenario ini memverifikasi sesuatu. Ia tidak memverifikasi apa pun.
+	#   - scenario dengan "steps": [] -> loop tidak pernah berjalan, langsung "pass".
+	#
+	# Gerbang liveness tidak menangkap keduanya: ia hanya aktif kalau ada langkah INPUT,
+	# sementara scenario yang seluruhnya assertion (atau kosong) tidak punya satu pun.
+	# Status "inert" dipakai ulang karena artinya memang sama -- berjalan tanpa menguji
+	# apa pun -- dan opt-out-nya pun sama: "allow_inert": true.
+	var pass_total := 0
+	for r: Dictionary in _step_results:
+		if r.get("status", "") == "pass":
+			pass_total += 1
+	if pass_total == 0 and not bool(_scenario.get("allow_inert", false)):
+		var skip_total := _steps.size() - _step_results.size()
+		for r2: Dictionary in _step_results:
+			if r2.get("status", "") == "skip":
+				skip_total += 1
+		_write_result("inert", ("Tidak satu pun dari %d langkah yang lulus (%d dilewati). " +
+			"Scenario ini tidak memverifikasi apa pun, dan melabelinya \"pass\" memberi lampu " +
+			"hijau atas ketiadaan pengujian. Penyebab tersering: seluruh assertion dilewati " +
+			"karena game belum menulis game_state.json, atau daftar steps kosong. " +
+			"Kalau memang disengaja, set \"allow_inert\": true.") % [_steps.size(), skip_total])
+		return 1
+
 	_write_result("pass", null)
 	return 0
 

@@ -39,7 +39,19 @@ Exit 1 bila ada `error`.
 | `scenario_berhenti_dini` | warning | cabang `--scenario` tampak `return` sebelum layar dibangun |
 | `tanpa_penyedia_state` | warning | tidak ada `_get_game_state()` / `_write_game_state()` |
 | `template_menyimpang` | warning | salinan template di game beda dari versi framework |
+| `step_type_tak_dikenal` | error | scenario memakai step type yang tidak diimplementasikan, termasuk yang bersarang di `repeat` |
+| `scenario_kosong` | warning | `"steps": []` — scenario itu sekarang berakhir `inert`, bukan `pass` |
 | `tanpa_invariant` / `tanpa_klaim_visual` | info | `scenarios/` ada tapi belum dipakai |
+
+Daftar step type yang sah **dibaca dari `KNOWN_STEP_TYPES` di `ScenarioRunner.gd`**, bukan
+disalin ke sini. Salinan kedua yang tertinggal satu versi akan menuduh step type yang
+sebenarnya sah, dan pemeriksa yang menuduh salah akan dimatikan orang. Kalau daftar itu tidak
+bisa dibaca, pemeriksaannya menyebut dirinya tidak berjalan (`step_type_tak_terperiksa`)
+alih-alih membanjiri laporan dengan tuduhan palsu.
+
+Runner memang menggagalkan step type asing saat dijalankan, tetapi baru setelah Godot
+diluncurkan — pada scenario panjang, setelah menunggu semua langkah sebelumnya. Salah ketik
+adalah kesalahan statis dan layak ketahuan statis.
 
 ## Tiga temuan yang paling sering disalahpahami
 

@@ -558,7 +558,7 @@ if ($NoRun) {
             if ($pngCountBefore -eq 0 -and $noProgressSec -gt ($Timeout * 0.8)) {
                 # Tidak ada satu pun PNG yang dihasilkan dan CPU idle lama — likely hang
                 $exitCondition = "timeout_hang"
-                $proc.Kill()
+                $null = Stop-ProcessTree -Process $proc
                 Write-Host ""
                 Write-Host "[shot] FAIL Timeout ($Timeout detik) — kemungkinan HANG terdeteksi:" -ForegroundColor Red
                 Write-Host "       - Tidak ada PNG dihasilkan selama run" -ForegroundColor Red
@@ -574,7 +574,7 @@ if ($NoRun) {
             } else {
                 # Ada sebagian PNG tapi belum selesai — game lambat atau shot tour tidak terminate
                 $exitCondition = "timeout_slow"
-                $proc.Kill()
+                $null = Stop-ProcessTree -Process $proc
                 Write-Host ""
                 Write-Host "[shot] FAIL Timeout ($Timeout detik) — game LAMBAT atau shot tour tidak terminate:" -ForegroundColor Red
                 Write-Host "       - $pngCountBefore PNG berhasil dihasilkan sebelum timeout" -ForegroundColor Yellow

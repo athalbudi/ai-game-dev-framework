@@ -494,7 +494,9 @@ function Run-Scenario {
             -PassThru -NoNewWindow
         $finished = $proc.WaitForExit($Timeout * 1000)
         if (-not $finished) {
-            $proc.Kill()
+            if (-not (Stop-ProcessTree -Process $proc)) {
+                Write-Warn "Proses Godot tidak mau berhenti setelah dibunuh -- berkasnya mungkin masih terkunci"
+            }
             Write-Warn "Scenario timeout ($($Timeout)s)"
             return $null
         }
